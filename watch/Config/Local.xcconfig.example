@@ -1,0 +1,10 @@
+// Copy to Local.xcconfig and fill in. Local.xcconfig is gitignored.
+
+// Your Apple Developer team ID and a bundle ID you own. The APNs topic for VoIP
+// pushes is this bundle ID plus ".voip", so the server's APNS_BUNDLE_ID must match.
+DEVELOPMENT_TEAM = ABCDE12345
+PRODUCT_BUNDLE_IDENTIFIER = com.yourname.walkiespike
+
+// Public host of the relay server (for example a Cloudflare quick tunnel), no scheme.
+SPIKE_SERVER_HOST = example.trycloudflare.com
+SPIKE_TOKEN = choose-a-long-random-string

@@ -1,0 +1,15 @@
+{
+  "//": "Editor settings only. Node runs the .ts files directly by stripping types; nothing is compiled.",
+  "compilerOptions": {
+    "target": "es2024",
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "strict": true,
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "erasableSyntaxOnly": true,
+    "verbatimModuleSyntax": true,
+    "types": ["node"]
+  },
+  "include": ["src", "tools", "test"]
+}

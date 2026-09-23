@@ -1,0 +1,15 @@
+{
+  "name": "walkie-spike-server",
+  "private": true,
+  "type": "module",
+  "description": "Relay and VoIP push server for the ring-to-start Apple Watch spike",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "start": "node src/main.ts",
+    "test": "node --test \"test/**/*.test.ts\"",
+    "bot": "node tools/bot.ts",
+    "report": "node tools/report.ts"
+  }
+}

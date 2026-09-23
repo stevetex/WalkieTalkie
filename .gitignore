@@ -1,0 +1,12 @@
+.DS_Store
+
+# Server
+server/data/
+server/node_modules/
+*.p8
+
+# Watch app
+watch/Config/Local.xcconfig
+xcuserdata/
+DerivedData/
+build/

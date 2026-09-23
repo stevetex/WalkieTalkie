@@ -1,0 +1,12 @@
+// Shared build settings for the spike. Put your own values in Local.xcconfig
+// (copy Local.xcconfig.example); it is gitignored and overrides anything here.
+
+PRODUCT_BUNDLE_IDENTIFIER = com.example.walkiespike
+DEVELOPMENT_TEAM =
+
+// Relay server host name, without a scheme (xcconfig treats "//" as a comment).
+// The app connects with https:// and wss://.
+SPIKE_SERVER_HOST =
+SPIKE_TOKEN =
+
+#include? "Local.xcconfig"

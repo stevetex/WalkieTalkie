@@ -1,0 +1,127 @@
+# Walkie-Talkie ring-to-start spike
+
+A prototype for the first item on the feasibility study's spike checklist: can a watch app use VoIP push and CallKit to ring once per conversation, replay the sender's first words after the user answers, and then play later messages instantly until the conversation goes quiet? It also measures how long each step takes.
+
+```
+server/   Relay + VoIP push server (Node 24+, no dependencies)
+watch/    Watch-only app (watchOS 26+, SwiftUI, CallKit, PushKit)
+```
+
+## How it works
+
+1. The sender presses Talk. The relay buffers the audio and sends the recipient's watch a VoIP push.
+2. The watch reports a CallKit incoming call, so it rings. When the user answers, the app opens the relay WebSocket and sends `join`.
+3. The relay replays the buffered audio, then forwards the rest live.
+4. Later messages play instantly. After `conversationWindowSeconds` of silence (45 s by default), the watch ends the call.
+
+Audio is Opus at 24 kbps in 20 ms frames, using Apple's built-in encoder. If a device can't create an Opus encoder, the app falls back to raw 16 kHz PCM, and the log in the app's Settings says which one it's using. The relay forwards frames without decoding them.
+
+The watch opens its WebSocket only while a CallKit call is active, because watchOS blocks low-level networking outside a call ([TN3135](https://developer.apple.com/documentation/technotes/tn3135-low-level-networking-on-watchos)). Device registration and metrics uploads use plain HTTPS, which is allowed at any time.
+
+## One-time setup
+
+**Apple Developer account**
+
+1. Create an App ID for your bundle ID, for example `com.yourname.walkiespike`, with Push Notifications enabled. Xcode's automatic signing will do this if the team has permission.
+2. Create an APNs auth key (`.p8`) under Certificates, Identifiers & Profiles → Keys. Note the key ID and your team ID.
+
+**Server**
+
+```bash
+cd server
+npm test
+```
+
+Run the server with APNs credentials and a shared token:
+
+```bash
+SPIKE_TOKEN=choose-a-long-random-string APNS_KEY_PATH=~/keys/AuthKey_ABC123.p8 APNS_KEY_ID=ABC123 APNS_TEAM_ID=ABCDE12345 APNS_BUNDLE_ID=com.yourname.walkiespike npm start
+```
+
+Without the `APNS_*` variables, the server runs in dry-run mode and only logs pushes. The watch has to reach the server over HTTPS, including on LTE, so expose it publicly. For example, with a Cloudflare quick tunnel, which supports WebSockets:
+
+```bash
+cloudflared tunnel --url http://localhost:8080
+```
+
+Always set `SPIKE_TOKEN` when the server is reachable from the internet.
+
+**Watch app**
+
+1. Copy `watch/Config/Local.xcconfig.example` to `watch/Config/Local.xcconfig` and fill in your team ID, bundle ID, tunnel host (no `https://`) and token. `APNS_BUNDLE_ID` on the server must match the bundle ID.
+2. Open `watch/WalkieSpike.xcodeproj`, select your watch as the destination, and run.
+3. On the watch, allow the microphone. The app registers its VoIP token with the server automatically, and Settings shows "Registered as watch-xxxx".
+4. In Settings → Talk to, pick who to talk to. The list shows every other registered device, including bots.
+
+Debug builds use the APNs sandbox environment, and Release builds use production.
+
+## Running the spike
+
+With one watch, use the bot as the other person:
+
+```bash
+cd server
+export SPIKE_SERVER=https://your-tunnel-host SPIKE_TOKEN=choose-a-long-random-string
+npm run bot -- send --to watch-xxxx --say "Hi, this is a ring-to-start test. Over."
+npm run bot -- listen --answer-delay 1500
+npm run report
+npm run report -- --all
+```
+
+- `bot send` rings the watch and speaks. With the watch app not running, answer the ring and you should hear the whole sentence.
+- `bot listen` answers like a watch would. Pick "Test Bot" on the watch and hold Talk to test the watch as the sender.
+- `npm run report` prints the latest conversation's timeline and intervals.
+- `npm run report -- --all` prints every run, plus medians.
+
+With two watches, install the app on both, pick each other in Settings, and hold Talk on one.
+
+Test each run in each of these network conditions:
+
+| Condition | How |
+| --- | --- |
+| Through the paired iPhone | iPhone nearby, as normal |
+| Watch Wi-Fi only | On the iPhone, turn off Wi-Fi and Bluetooth in **Settings** (not Control Center) |
+| Watch LTE only | Same as above, out of range of known Wi-Fi |
+| Cold start | Remove the app from the watch's app switcher before the run |
+| Inside the conversation window | Talk again within 45 s. There's no ring, so measure the delay until the reply plays |
+
+The report's key numbers:
+
+- **Watch: answer → first audio**: the technical delay after the user answers. Target: under 1 s.
+- **Push sent → watch woke**: APNs delivery time. This crosses devices, so it depends on the clock-offset estimate.
+- **Total: press → first audio**: what the sender experiences, including the time the recipient takes to answer.
+
+## Running in the simulator
+
+The watch simulator can run the whole flow against a local server without an Apple Developer account. Start the server without APNs credentials, so it runs in dry-run mode:
+
+```bash
+cd server && SPIKE_TOKEN=simtoken npm start
+```
+
+Build and install with the local host baked in:
+
+```bash
+cd watch && xcodebuild -project WalkieSpike.xcodeproj -target WalkieSpike -sdk watchsimulator SPIKE_SERVER_HOST=localhost:8080 SPIKE_TOKEN=simtoken build
+```
+
+Then install `build/Debug-watchsimulator/WalkieSpike.app` with `xcrun simctl install`. Use the bot commands from above with `SPIKE_SERVER=http://localhost:8080`.
+
+The simulator can't do several things a real watch does. Simulator builds work around them, so some of their timings aren't meaningful:
+
+| Simulator limitation | Workaround in simulator builds | Timing affected |
+| --- | --- | --- |
+| No VoIP token or VoIP pushes | Registers a stand-in token, and polls the dry-run server's `/v1/debug/rings` every 1.5 s | "Push sent → watch woke" is polling delay, not APNs |
+| Incoming CallKit calls are disconnected right away (reason 55), and there's no ringing screen | The ring stays inside the app, with Answer and Decline buttons that run the same code as CallKit's answer | Ring UI is only testable on a watch |
+| CallKit can't activate call audio ("Unsupported property" in `AVAudioSessionImpl_Simulator`) | The app activates the audio session itself if CallKit hasn't within 1 s | "Answer → audio session active" is about 1 s of waiting |
+| No microphone | Sends a 440 Hz test tone while Talk is held | None |
+| Sockets are allowed outside a call (TN3135) | None | Must be tested on a watch |
+
+Outgoing calls do go through CallKit in the simulator. Opus encoding and decoding, replay, the conversation window and metrics all behave as they do on a device.
+
+## Not in this spike yet
+
+- Turning unanswered rings, Do Not Disturb and Theater Mode into voice clips. The watch currently ends the ring after 30 s, and the relay drops unheard audio after 2 minutes.
+- Checking that the paired iPhone shows nothing, and whether double-tap answers the call. Watch for both during runs.
+- Battery measurement per conversation. Use the watch's battery level before and after a scripted series of runs.
+- iPhone PushToTalk, real accounts (Sign in with Apple), group channels and end-to-end encryption.
