@@ -3,8 +3,9 @@
 A prototype for the first item on the feasibility study's spike checklist: can a watch app use VoIP push and CallKit to ring once per conversation, replay the sender's first words after the user answers, and then play later messages instantly until the conversation goes quiet? It also measures how long each step takes.
 
 ```
-server/   Relay + VoIP push server (Node 24+, no dependencies)
-watch/    Watch-only app (watchOS 26+, SwiftUI, CallKit, PushKit)
+server/      Relay + VoIP push server (Node 24+, no dependencies)
+watch/       Watch-only app (watchOS 26+, SwiftUI, CallKit, PushKit)
+deploy/gcp/  Scripts to host the server on a Google Cloud e2-micro VM
 ```
 
 ## How it works
@@ -40,17 +41,13 @@ Run the server with APNs credentials and a shared token:
 SPIKE_TOKEN=choose-a-long-random-string APNS_KEY_PATH=~/keys/AuthKey_ABC123.p8 APNS_KEY_ID=ABC123 APNS_TEAM_ID=ABCDE12345 APNS_BUNDLE_ID=com.yourname.walkiespike npm start
 ```
 
-Without the `APNS_*` variables, the server runs in dry-run mode and only logs pushes. The watch has to reach the server over HTTPS, including on LTE, so expose it publicly. For example, with a Cloudflare quick tunnel, which supports WebSockets:
-
-```bash
-cloudflared tunnel --url http://localhost:8080
-```
+Without the `APNS_*` variables, the server runs in dry-run mode and only logs pushes. The watch has to reach the server over HTTPS, including on LTE, so it needs a public host. Deploy it to Google Cloud with the scripts in [deploy/gcp](deploy/gcp/README.md). They set up an e2-micro VM with automatic HTTPS for about $3.65 a month, and read the token and APNs settings from `deploy/gcp/config.sh`.
 
 Always set `SPIKE_TOKEN` when the server is reachable from the internet.
 
 **Watch app**
 
-1. Copy `watch/Config/Local.xcconfig.example` to `watch/Config/Local.xcconfig` and fill in your team ID, bundle ID, tunnel host (no `https://`) and token. `APNS_BUNDLE_ID` on the server must match the bundle ID.
+1. Copy `watch/Config/Local.xcconfig.example` to `watch/Config/Local.xcconfig` and fill in your team ID, bundle ID, server host (no `https://`) and token. `APNS_BUNDLE_ID` on the server must match the bundle ID.
 2. Open `watch/WalkieSpike.xcodeproj`, select your watch as the destination, and run.
 3. On the watch, allow the microphone. The app registers its VoIP token with the server automatically, and Settings shows "Registered as watch-xxxx".
 4. In Settings → Talk to, pick who to talk to. The list shows every other registered device, including bots.
@@ -63,7 +60,7 @@ With one watch, use the bot as the other person:
 
 ```bash
 cd server
-export SPIKE_SERVER=https://your-tunnel-host SPIKE_TOKEN=choose-a-long-random-string
+export SPIKE_SERVER=https://walkie.example.com SPIKE_TOKEN=choose-a-long-random-string
 npm run bot -- send --to watch-xxxx --say "Hi, this is a ring-to-start test. Over."
 npm run bot -- listen --answer-delay 1500
 npm run report
@@ -101,9 +98,9 @@ A free Apple account (Xcode's "Personal Team") can install the app on your own w
 2. In `watch/Config/Local.xcconfig`, set:
    - `DEVELOPMENT_TEAM` to the Personal Team's ID
    - a unique `PRODUCT_BUNDLE_IDENTIFIER`
-   - your tunnel host in `SPIKE_SERVER_HOST`, and `SPIKE_TOKEN`
+   - your server host in `SPIKE_SERVER_HOST`, and `SPIKE_TOKEN`
    - `SPIKE_PUSH_MODE = none`
-3. Start the server with `SPIKE_TOKEN` and no `APNS_*` variables, and expose it with `cloudflared tunnel --url http://localhost:8080`.
+3. Deploy the server with [deploy/gcp](deploy/gcp/README.md), leaving the `APNS_*` settings empty.
 4. On the watch, turn on Developer Mode (Settings → Privacy & Security → Developer Mode). Then run from Xcode with the watch as the destination. If the watch says the developer isn't trusted, trust your Apple ID's developer profile under VPN & Device Management in Settings.
 5. Keep the app on screen while being rung. It only checks for rings while it's open, so raise your wrist or tap the screen. Settings → Server → Rings shows "Polled (app open)".
 

@@ -1,6 +1,7 @@
 // Spike server: HTTP API for device registration and metrics, plus the relay WebSocket.
 //
 //   PORT              listen port (default 8080)
+//   HOST              listen address (default: all interfaces; 127.0.0.1 behind a proxy)
 //   DATA_DIR          where devices.json and metrics.jsonl live (default ./data)
 //   SPIKE_TOKEN       shared bearer token clients must present (unset = no auth, local only)
 //   APNS_KEY_PATH, APNS_KEY_ID, APNS_TEAM_ID, APNS_BUNDLE_ID
@@ -17,6 +18,7 @@ import type { ClientMessage, MetricsUpload } from "./protocol.ts";
 
 export interface ServerOptions {
   port: number;
+  host?: string;
   dataDir: string | null;
   token: string | null;
   pusher: VoipPusher;
@@ -132,7 +134,7 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
   });
 
   return new Promise((resolvePromise) => {
-    server.listen(options.port, () => {
+    server.listen(options.port, options.host, () => {
       const address = server.address();
       const port = typeof address === "object" && address ? address.port : options.port;
       resolvePromise({
@@ -172,8 +174,9 @@ if (import.meta.main) {
   const pusher = apnsConfig ? new ApnsPusher(apnsConfig) : new DryRunPusher();
   const dataDir = ensureDir(resolve(process.env.DATA_DIR ?? "data"));
   const token = process.env.SPIKE_TOKEN || null;
-  const running = await startServer({ port: Number(process.env.PORT ?? 8080), dataDir, token, pusher });
-  console.log(`[server] listening on :${running.port}, data in ${dataDir}`);
+  const host = process.env.HOST || undefined;
+  const running = await startServer({ port: Number(process.env.PORT ?? 8080), host, dataDir, token, pusher });
+  console.log(`[server] listening on ${host ?? ""}:${running.port}, data in ${dataDir}`);
   console.log(apnsConfig ? `[server] APNs topic ${apnsConfig.bundleId}.voip` : "[server] APNs not configured: dry-run pushes");
   if (!token) console.warn("[server] SPIKE_TOKEN not set: API and relay are unauthenticated");
 }

@@ -5,8 +5,8 @@
 DEVELOPMENT_TEAM = ABCDE12345
 PRODUCT_BUNDLE_IDENTIFIER = com.yourname.walkiespike
 
-// Public host of the relay server (for example a Cloudflare quick tunnel), no scheme.
-SPIKE_SERVER_HOST = example.trycloudflare.com
+// Public host of the relay server (see deploy/gcp/README.md), no scheme.
+SPIKE_SERVER_HOST = walkie.example.com
 SPIKE_TOKEN = choose-a-long-random-string
 
 // Until your Apple Developer Program membership is active, sign with your free

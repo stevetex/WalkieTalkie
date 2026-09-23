@@ -4,6 +4,7 @@
 server/data/
 server/node_modules/
 *.p8
+deploy/gcp/config.sh
 
 # Watch app
 watch/Config/Local.xcconfig
