@@ -46,6 +46,15 @@ struct APIClient {
         ])
     }
 
+    /// One clock sample: (server time, round trip), both in ms.
+    func timeSample() async throws -> (serverTime: Double, roundTripMs: Double) {
+        let sentAt = Timeline.nowMs()
+        let data = try await send("GET", "/v1/time")
+        let receivedAt = Timeline.nowMs()
+        let serverTime = (try JSONSerialization.jsonObject(with: data) as? [String: Any])?["serverTime"] as? Double ?? 0
+        return (serverTime - (sentAt + receivedAt) / 2, receivedAt - sentAt)
+    }
+
     /// Rings queued for this device when it registered without VoIP push.
     func polledRings() async throws -> [[String: Any]] {
         let data = try await send("GET", "/v1/rings/poll?userId=\(settings.userId)")

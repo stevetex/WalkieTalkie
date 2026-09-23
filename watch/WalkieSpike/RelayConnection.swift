@@ -72,6 +72,8 @@ final class RelayConnection: NSObject, URLSessionDataDelegate {
 
     private(set) var isReady = false
     private(set) var clockOffsetMs: Double = 0
+    /// A stream request is in flight or open (it may not have answered yet).
+    var isConnecting: Bool { streamTask != nil }
 
     private var session: URLSession?
     private var streamTask: URLSessionDataTask?

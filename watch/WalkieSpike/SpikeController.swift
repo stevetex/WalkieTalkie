@@ -66,6 +66,11 @@ final class SpikeController: NSObject, ObservableObject {
     private var idleTimer: Timer?
     private var ringTimer: Timer?
     private var activatingAudio = false
+    /// Server clock minus watch clock. The relay's hello-ack gives a first estimate, but the
+    /// watch's first request is slowed by its network starting up, so it's refined with a
+    /// few quick /v1/time samples once the network is up (smallest round trip wins).
+    private var clockOffsetMs: Double = 0
+    private var bestClockRoundTripMs = Double.infinity
     /// Set after answering: turn on the app's own audio once CallKit lets go of the session.
     private var awaitingOwnAudio = false
 
@@ -261,6 +266,7 @@ final class SpikeController: NSObject, ObservableObject {
             statusLine = "\(fromName) is calling"
             WKInterfaceDevice.current().play(.notification)
             startRingTimer(for: uuid)
+            connectRelay()
         }
         completion()
         #else
@@ -287,6 +293,9 @@ final class SpikeController: NSObject, ObservableObject {
                     self.call?.callKitActive = true
                     self.call?.timeline.mark("callReported")
                     self.startRingTimer(for: uuid)
+                    // Start the watch's network while it rings; HTTPS needs no call. Nothing
+                    // is joined (or played) until the user answers.
+                    self.connectRelay()
                 }
             }
         }
@@ -333,16 +342,42 @@ final class SpikeController: NSObject, ObservableObject {
 
     private func relayReady(clockOffsetMs: Double) {
         guard let current = call else { return }
-        self.call?.timeline.mark("socketOpen", detail: "clock offset \(Int(clockOffsetMs)) ms")
+        self.call?.timeline.mark("socketOpen")
+        self.clockOffsetMs = clockOffsetMs
+        bestClockRoundTripMs = .infinity
+        refineClockOffset()
         if current.outgoing {
             phase = .live
             statusLine = "Talking to \(current.peerName)"
             startBurstIfReady()
-        } else if let conversationId = current.conversationId {
-            relay.send(["type": "join", "conversationId": conversationId])
-            self.call?.timeline.mark("joinSent")
+            resetIdleTimer()
+        } else {
+            // Opened while ringing: join once answered (beginAnswer joins if already open).
+            joinIfAnswered()
         }
+    }
+
+    private func joinIfAnswered() {
+        guard let current = call, !current.outgoing, current.answered, relay.isReady,
+              let conversationId = current.conversationId, !current.timeline.has("joinSent") else { return }
+        relay.send(["type": "join", "conversationId": conversationId])
+        call?.timeline.mark("joinSent")
         resetIdleTimer()
+    }
+
+    private func refineClockOffset() {
+        guard let uuid = call?.uuid else { return }
+        let api = APIClient(settings: settings)
+        Task { @MainActor in
+            for _ in 0..<3 {
+                guard let sample = try? await api.timeSample(), call?.uuid == uuid else { return }
+                if sample.roundTripMs < bestClockRoundTripMs {
+                    bestClockRoundTripMs = sample.roundTripMs
+                    clockOffsetMs = sample.serverTime
+                }
+            }
+            call?.timeline.mark("clockSynced", detail: "offset \(Int(clockOffsetMs)) ms, round trip \(Int(bestClockRoundTripMs)) ms")
+        }
     }
 
     private func handle(_ message: RelayMessage) {
@@ -432,7 +467,6 @@ final class SpikeController: NSObject, ObservableObject {
     /// never used, since the call ends on answer). Works because the app is on screen.
     private func activateOwnAudio() {
         guard call != nil, call?.audioActive == false, !activatingAudio else { return }
-        awaitingOwnAudio = false
         activatingAudio = true
         let session = AVAudioSession.sharedInstance()
         do {
@@ -444,8 +478,10 @@ final class SpikeController: NSObject, ObservableObject {
             DispatchQueue.main.async {
                 self.activatingAudio = false
                 if success {
+                    self.awaitingOwnAudio = false
                     self.audioSessionActivated()
                 } else {
+                    // Expected if CallKit hasn't released the session yet; didDeactivate retries.
                     self.log("Audio activation failed: \(error?.localizedDescription ?? "unknown")")
                 }
             }
@@ -476,7 +512,7 @@ final class SpikeController: NSObject, ObservableObject {
         if let conversationId = ended.conversationId {
             relay.send(["type": "leave", "conversationId": conversationId])
         }
-        let offset = relay.clockOffsetMs
+        let offset = clockOffsetMs
         relay.close()
         audio.stop()
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
@@ -551,7 +587,8 @@ extension SpikeController: CXProviderDelegate {
         call?.timeline.mark("answerTapped")
         phase = .connecting
         statusLine = "Connecting…"
-        connectRelay()
+        // Usually already open since the ring; reconnect only if it dropped.
+        if relay.isReady { joinIfAnswered() } else if !relay.isConnecting { connectRelay() }
         reportAnswer()
     }
 
@@ -564,10 +601,12 @@ extension SpikeController: CXProviderDelegate {
             self.provider.reportCall(with: uuid, endedAt: Date(), reason: .remoteEnded)
             self.call?.callKitActive = false
             self.call?.timeline.mark("callKitEnded")
+            // Try right away; if CallKit still holds the session, didDeactivate (or the
+            // fallback below) retries.
             self.awaitingOwnAudio = true
-            // didDeactivate normally triggers this; don't wait on it forever.
+            self.activateOwnAudio()
             DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
-                if self.awaitingOwnAudio, self.call?.uuid == uuid { self.activateOwnAudio() }
+                if self.call?.uuid == uuid, self.call?.audioActive == false { self.activateOwnAudio() }
             }
         }
     }

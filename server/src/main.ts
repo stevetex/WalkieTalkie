@@ -154,6 +154,8 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
         return send(res, 200, { conversationId: match[1], timeline, attempts: summarizeAttempts(timeline) });
       }
       if (req.method === "GET" && url.pathname === "/v1/status") return send(res, 200, relay.snapshot());
+      // Clock-offset sampling: clients time the round trip and keep the fastest sample.
+      if (req.method === "GET" && url.pathname === "/v1/time") return send(res, 200, { serverTime: Date.now() });
       // The watch answered a ring. Sent over HTTPS because the relay socket can take
       // several seconds to open after the call starts.
       if (req.method === "POST" && url.pathname === "/v1/rings/answer") {

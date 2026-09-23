@@ -107,11 +107,14 @@ final class VoiceEncoder {
 /// Decodes frames of either codec to 16 kHz mono float buffers.
 final class VoiceDecoder {
     private let opusFormat = VoiceEncoder.makeOpusFormat()
-    private var opusConverter: AVAudioConverter?
+    // Created once and reset per burst; it used to be rebuilt for every burst.
+    private lazy var opusConverter: AVAudioConverter? = opusFormat.flatMap {
+        AVAudioConverter(from: $0, to: VoiceFrame.pcmFormat)
+    }
 
     /// Call at the start of each burst so Opus state from the previous speaker doesn't leak.
     func reset() {
-        opusConverter = nil
+        opusConverter?.reset()
     }
 
     func decode(codec: VoiceFrame.Codec, payload: Data) -> AVAudioPCMBuffer? {
@@ -131,7 +134,6 @@ final class VoiceDecoder {
             return output
         case .opus16k:
             guard let opusFormat else { return nil }
-            if opusConverter == nil { opusConverter = AVAudioConverter(from: opusFormat, to: VoiceFrame.pcmFormat) }
             guard let converter = opusConverter else { return nil }
             let input = AVAudioCompressedBuffer(format: opusFormat, packetCapacity: 1, maximumPacketSize: payload.count)
             payload.withUnsafeBytes { input.data.copyMemory(from: $0.baseAddress!, byteCount: payload.count) }

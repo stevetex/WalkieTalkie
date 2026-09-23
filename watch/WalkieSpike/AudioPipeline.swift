@@ -43,6 +43,18 @@ final class AudioPipeline {
     /// Frames of jitter buffer before a live burst starts playing (4 × 20 ms).
     private static let prebufferFrames = 4
 
+    init() {
+        // Build the Opus encoder and decoder at launch rather than on the first message.
+        queue.async {
+            let silence = [Float](repeating: 0, count: VoiceFrame.samplesPerFrame)
+            if let packet = self.encoder.encode(silence) {
+                _ = self.decoder.decode(codec: self.encoder.codec, payload: packet)
+            }
+            self.encoder.reset()
+            self.decoder.reset()
+        }
+    }
+
     func start() throws {
         if !attached {
             engine.attach(player)
