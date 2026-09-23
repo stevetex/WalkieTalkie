@@ -10,7 +10,7 @@ VM_NAME="walkie-relay"
 
 # Hostname the watch connects to. Point a DNS A record at the VM's static IP.
 DOMAIN="walkie.example.com"
-# Let's Encrypt sends certificate expiry notices here.
+# Optional: Let's Encrypt sends certificate expiry notices here.
 ACME_EMAIL="you@example.com"
 
 # Shared bearer token for the API and relay; must match SPIKE_TOKEN in the watch's

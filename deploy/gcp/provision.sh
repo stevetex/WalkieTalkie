@@ -78,15 +78,11 @@ PrivateTmp=true
 WantedBy=multi-user.target
 EOF
 
-cat >/etc/caddy/Caddyfile <<EOF
 {
-	email $ACME_EMAIL
-}
-
-$DOMAIN {
-	reverse_proxy 127.0.0.1:8080
-}
-EOF
+  # The ACME contact email is optional; without it there are no expiry notices.
+  if [ -n "$ACME_EMAIL" ]; then printf '{\n\temail %s\n}\n\n' "$ACME_EMAIL"; fi
+  printf '%s {\n\treverse_proxy 127.0.0.1:8080\n}\n' "$DOMAIN"
+} >/etc/caddy/Caddyfile
 
 systemctl daemon-reload
 systemctl enable --quiet walkie caddy
