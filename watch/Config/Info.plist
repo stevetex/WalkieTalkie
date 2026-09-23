@@ -12,6 +12,8 @@
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
+	<key>SpikePushMode</key>
+	<string>$(SPIKE_PUSH_MODE)</string>
 	<key>SpikeServerHost</key>
 	<string>$(SPIKE_SERVER_HOST)</string>
 	<key>SpikeToken</key>

@@ -37,9 +37,9 @@ struct APIClient {
         return try JSONDecoder().decode([User].self, from: data)
     }
 
-    /// Simulator only: VoIP pushes the dry-run server would have sent to this device.
-    func simulatedRings() async throws -> [[String: Any]] {
-        let data = try await send("GET", "/v1/debug/rings?userId=\(settings.userId)")
+    /// Rings queued for this device when it registered without VoIP push.
+    func polledRings() async throws -> [[String: Any]] {
+        let data = try await send("GET", "/v1/rings/poll?userId=\(settings.userId)")
         return (try JSONSerialization.jsonObject(with: data) as? [[String: Any]]) ?? []
     }
 

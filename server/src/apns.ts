@@ -44,19 +44,8 @@ export class DryRunPusher implements VoipPusher {
 
   async sendVoip(token: string, env: ApnsEnvironment, payload: object): Promise<PushResult> {
     this.sent.push({ token, env, payload });
-    this.undelivered.set(token, [...(this.undelivered.get(token) ?? []), payload]);
     console.log(`[apns:dry-run] voip -> ${token.slice(0, 8)}… (${env}) ${JSON.stringify(payload)}`);
     return { ok: true, status: 200, latencyMs: 0, dryRun: true };
-  }
-
-  // Pushes not yet collected, by device token. The watch simulator can't receive VoIP
-  // pushes, so simulator builds poll GET /v1/debug/rings to pick these up instead.
-  private undelivered = new Map<string, object[]>();
-
-  takeUndelivered(token: string): object[] {
-    const payloads = this.undelivered.get(token) ?? [];
-    this.undelivered.delete(token);
-    return payloads;
   }
 
   close(): void {}

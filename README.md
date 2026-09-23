@@ -93,6 +93,24 @@ The report's key numbers:
 - **Push sent → watch woke**: APNs delivery time. This crosses devices, so it depends on the clock-offset estimate.
 - **Total: press → first audio**: what the sender experiences, including the time the recipient takes to answer.
 
+## Testing on a watch before your membership is active
+
+A free Apple account (Xcode's "Personal Team") can install the app on your own watch, but it can't include the Push Notifications entitlement. Build with `SPIKE_PUSH_MODE = none`. That build has no push entitlement, and while the app is open it checks the server for rings every 1.5 s. A ring still goes through real CallKit, so the system ringing screen, answering, audio and networking are all real. The only thing missing is a push waking the app when it's closed.
+
+1. In Xcode → Settings → Accounts, add your Apple ID. This creates a Personal Team.
+2. In `watch/Config/Local.xcconfig`, set:
+   - `DEVELOPMENT_TEAM` to the Personal Team's ID
+   - a unique `PRODUCT_BUNDLE_IDENTIFIER`
+   - your tunnel host in `SPIKE_SERVER_HOST`, and `SPIKE_TOKEN`
+   - `SPIKE_PUSH_MODE = none`
+3. Start the server with `SPIKE_TOKEN` and no `APNS_*` variables, and expose it with `cloudflared tunnel --url http://localhost:8080`.
+4. On the watch, turn on Developer Mode (Settings → Privacy & Security → Developer Mode). Then run from Xcode with the watch as the destination. If the watch says the developer isn't trusted, trust your Apple ID's developer profile under VPN & Device Management in Settings.
+5. Keep the app on screen while being rung. It only checks for rings while it's open, so raise your wrist or tap the screen. Settings → Server → Rings shows "Polled (app open)".
+
+What this can measure on real hardware: the ringing screen and answering, including whether double-tap answers; how long CallKit takes to turn on call audio; real microphone and Opus audio quality; watchOS blocking sockets outside a call; Wi-Fi, LTE and paired-iPhone networking; whether the paired iPhone shows anything; and battery use per conversation. What it can't measure: VoIP push delivery and waking from closed. Free provisioning also expires after 7 days, so re-run from Xcode to renew it.
+
+When your membership is active, switch back to `SPIKE_PUSH_MODE = voip` (the default) and follow One-time setup above.
+
 ## Running in the simulator
 
 The watch simulator can run the whole flow against a local server without an Apple Developer account. Start the server without APNs credentials, so it runs in dry-run mode:
@@ -113,7 +131,7 @@ The simulator can't do several things a real watch does. Simulator builds work a
 
 | Simulator limitation | Workaround in simulator builds | Timing affected |
 | --- | --- | --- |
-| No VoIP token or VoIP pushes | Registers a stand-in token, and polls the dry-run server's `/v1/debug/rings` every 1.5 s | "Push sent → watch woke" is polling delay, not APNs |
+| No VoIP token or VoIP pushes | Registers a `poll:` token and collects rings from `/v1/rings/poll` every 1.5 s | "Push sent → watch woke" is polling delay, not APNs |
 | Incoming CallKit calls are disconnected right away (reason 55), and there's no ringing screen | The ring stays inside the app, with Answer and Decline buttons that run the same code as CallKit's answer | Ring UI is only testable on a watch |
 | CallKit can't activate call audio ("Unsupported property" in `AVAudioSessionImpl_Simulator`) | The app activates the audio session itself if CallKit hasn't within 1 s | "Answer → audio session active" is about 1 s of waiting |
 | No microphone | Sends a 440 Hz test tone while Talk is held | None |

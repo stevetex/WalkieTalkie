@@ -94,10 +94,9 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
         return send(res, 200, { conversationId: match[1], timeline, attempts: summarizeAttempts(timeline) });
       }
       if (req.method === "GET" && url.pathname === "/v1/status") return send(res, 200, relay.snapshot());
-      // Dry-run only: lets the watch simulator collect the VoIP pushes it can't receive.
-      if (req.method === "GET" && url.pathname === "/v1/debug/rings" && options.pusher instanceof DryRunPusher) {
-        const device = devices.get(url.searchParams.get("userId") ?? "");
-        return send(res, 200, device ? options.pusher.takeUndelivered(device.voipToken) : []);
+      // For devices registered with a "poll:" token (no VoIP push): collect pending rings.
+      if (req.method === "GET" && url.pathname === "/v1/rings/poll") {
+        return send(res, 200, relay.takePolledRings(url.searchParams.get("userId") ?? ""));
       }
       send(res, 404, { error: "not found" });
     } catch (err) {

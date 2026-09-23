@@ -31,6 +31,19 @@ struct SpikeSettings: Equatable {
         return components.url
     }
 
+    /// False when built with SPIKE_PUSH_MODE = none (no push entitlement).
+    static let pushEnabled = (Bundle.main.object(forInfoDictionaryKey: "SpikePushMode") as? String) != "none"
+
+    /// Without VoIP push (the simulator, or a no-push build), rings are collected by polling
+    /// the server while the app is open.
+    static var usesPolledRings: Bool {
+        #if targetEnvironment(simulator)
+        return true
+        #else
+        return !pushEnabled
+        #endif
+    }
+
     #if DEBUG
     static let apnsEnvironment = "sandbox"
     #else

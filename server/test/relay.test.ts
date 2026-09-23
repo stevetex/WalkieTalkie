@@ -204,21 +204,40 @@ test("an unanswered ring drops the unheard audio and the next talk rings again",
   );
 });
 
-test("dry-run pushes can be collected once by the simulator", async () => {
-  await withServer(async (s) => {
+test("rings for a polling device are collected once, and never sent to APNs", async () => {
+  await withServer(async (s, pusher) => {
     const alice = client(s, "alice");
-    const sim = client(s, "watch-sim");
+    const watch = client(s, "watch-nopush");
     await alice.register("Alice");
-    await sim.register("Simulator", "sim:watch-sim");
+    await watch.register("No-push watch", "poll:watch-nopush");
     await alice.connect();
-    const { conversationId } = await alice.talk("watch-sim", pcm(2), { realtime: false });
+    const { conversationId, pushed } = await alice.talk("watch-nopush", pcm(2), { realtime: false });
+    assert.equal(pushed, true);
+    assert.equal(pusher.sent.length, 0);
 
-    const rings = await sim.api("GET", "/v1/debug/rings?userId=watch-sim");
+    const rings = await watch.api("GET", "/v1/rings/poll?userId=watch-nopush");
     assert.equal(rings.length, 1);
     assert.equal(rings[0].conversationId, conversationId);
-    assert.deepEqual(await sim.api("GET", "/v1/debug/rings?userId=watch-sim"), []);
+    assert.deepEqual(await watch.api("GET", "/v1/rings/poll?userId=watch-nopush"), []);
     alice.close();
   });
+});
+
+test("a ring that times out before it's collected is withdrawn", async () => {
+  await withServer(
+    async (s) => {
+      const alice = client(s, "alice");
+      const watch = client(s, "watch-nopush");
+      await alice.register("Alice");
+      await watch.register("No-push watch", "poll:watch-nopush");
+      await alice.connect();
+      await alice.talk("watch-nopush", pcm(2), { realtime: false });
+      await alice.waitFor("ring-timeout");
+      assert.deepEqual(await watch.api("GET", "/v1/rings/poll?userId=watch-nopush"), []);
+      alice.close();
+    },
+    { ringTimeoutMs: 50 },
+  );
 });
 
 test("metrics uploads merge into one timeline with intervals", async () => {

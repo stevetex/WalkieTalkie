@@ -8,3 +8,7 @@ PRODUCT_BUNDLE_IDENTIFIER = com.yourname.walkiespike
 // Public host of the relay server (for example a Cloudflare quick tunnel), no scheme.
 SPIKE_SERVER_HOST = example.trycloudflare.com
 SPIKE_TOKEN = choose-a-long-random-string
+
+// Until your Apple Developer Program membership is active, sign with your free
+// Personal Team and turn off VoIP push (rings are polled while the app is open).
+// SPIKE_PUSH_MODE = none

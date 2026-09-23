@@ -20,6 +20,7 @@ struct SettingsView: View {
                 TextField("Host", text: $controller.settings.serverHost)
                     .textContentType(.URL)
                 LabeledContent("Token", value: controller.settings.token.isEmpty ? "Not set" : "Set")
+                LabeledContent("Rings", value: SpikeSettings.usesPolledRings ? "Polled (app open)" : "VoIP push")
             }
 
             Section("Talk to") {

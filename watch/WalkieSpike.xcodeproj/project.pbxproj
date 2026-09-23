@@ -11,6 +11,7 @@
 		AA0000000000000000000011 /* Base.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Base.xcconfig; sourceTree = "<group>"; };
 		AA0000000000000000000012 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		AA0000000000000000000013 /* WalkieSpike.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = WalkieSpike.entitlements; sourceTree = "<group>"; };
+		AA0000000000000000000014 /* WalkieSpike-NoPush.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = "WalkieSpike-NoPush.entitlements"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -55,6 +56,7 @@
 				AA0000000000000000000011 /* Base.xcconfig */,
 				AA0000000000000000000012 /* Info.plist */,
 				AA0000000000000000000013 /* WalkieSpike.entitlements */,
+				AA0000000000000000000014 /* WalkieSpike-NoPush.entitlements */,
 			);
 			path = Config;
 			sourceTree = "<group>";
@@ -187,7 +189,6 @@
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = AA0000000000000000000011 /* Base.xcconfig */;
 			buildSettings = {
-				CODE_SIGN_ENTITLEMENTS = Config/WalkieSpike.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_PREVIEWS = YES;
@@ -214,7 +215,6 @@
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = AA0000000000000000000011 /* Base.xcconfig */;
 			buildSettings = {
-				CODE_SIGN_ENTITLEMENTS = Config/WalkieSpike.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_PREVIEWS = YES;

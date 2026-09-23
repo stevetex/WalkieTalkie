@@ -10,6 +10,11 @@ import type { ClientMessage, RingPayload, ServerMessage } from "./protocol.ts";
 // relay socket instead of through APNs.
 export const LOCAL_TOKEN_PREFIX = "local:";
 
+// Devices that can't receive VoIP pushes (the simulator, or a watch signed without the
+// push entitlement) register with this prefix. Their rings are queued, and the app
+// collects them with GET /v1/rings/poll while it's open.
+export const POLL_TOKEN_PREFIX = "poll:";
+
 export interface Peer {
   userId: string;
   sendJSON(message: ServerMessage): void;
@@ -57,6 +62,7 @@ export class Relay {
   private byPair = new Map<string, Conversation>();
   private byId = new Map<string, Conversation>();
   private activeBursts = new Map<string, { conversation: Conversation; burst: Burst }>();
+  private polledRings = new Map<string, RingPayload[]>();
   private opts: Required<RelayOptions>;
 
   constructor(options: RelayOptions) {
@@ -119,6 +125,13 @@ export class Relay {
         this.opts.metrics.server(conversation.id, "firstFrameForwardedLive", this.opts.now());
       }
     }
+  }
+
+  // Rings queued for a polling device, removed as they're collected.
+  takePolledRings(userId: string): RingPayload[] {
+    const rings = this.polledRings.get(userId) ?? [];
+    this.polledRings.delete(userId);
+    return rings;
   }
 
   // Exposed for tests and the status endpoint.
@@ -255,6 +268,11 @@ export class Relay {
       this.opts.metrics.server(conversation.id, peer ? "pushAccepted" : "pushFailed", this.opts.now(), "local ring");
       return peer !== undefined;
     }
+    if (device.voipToken.startsWith(POLL_TOKEN_PREFIX)) {
+      this.polledRings.set(to, [...(this.polledRings.get(to) ?? []), payload]);
+      this.opts.metrics.server(conversation.id, "pushAccepted", this.opts.now(), "queued for polling");
+      return true;
+    }
     void this.opts.pusher.sendVoip(device.voipToken, device.apnsEnvironment, payload).then((result) => {
       const detail = `status ${result.status}${result.reason ? ` ${result.reason}` : ""} in ${result.latencyMs.toFixed(0)} ms${result.dryRun ? " (dry run)" : ""}`;
       this.opts.metrics.server(conversation.id, result.ok ? "pushAccepted" : "pushFailed", this.opts.now(), detail);
@@ -267,6 +285,10 @@ export class Relay {
   // starts a fresh ring instead of replaying stale audio.
   private ringTimedOut(conversation: Conversation, from: string, to: string): void {
     conversation.ringTimer = null;
+    // A polling device that wasn't open to collect the ring shouldn't ring later for it.
+    const queued = (this.polledRings.get(to) ?? []).filter((r) => r.conversationId !== conversation.id);
+    if (queued.length) this.polledRings.set(to, queued);
+    else this.polledRings.delete(to);
     if (conversation.joined.has(to)) return;
     const unheard = conversation.bursts.filter((b) => b.from !== to && !b.deliveredTo.has(to));
     conversation.bursts = conversation.bursts.filter((b) => !unheard.includes(b));

@@ -83,7 +83,7 @@ final class SpikeController: NSObject, ObservableObject {
         push.onIncomingPush = { [unowned self] payload, completion in
             handleIncomingPush(payload, completion: completion)
         }
-        push.start()
+        if !SpikeSettings.usesPolledRings { push.start() }
 
         relay.onReady = { [unowned self] offset in relayReady(clockOffsetMs: offset) }
         relay.onMessage = { [unowned self] message in handle(message) }
@@ -104,30 +104,27 @@ final class SpikeController: NSObject, ObservableObject {
             DispatchQueue.main.async { self?.call?.timeline.mark("firstAudioScheduled") }
         }
         log("Codec: \(audio.codecDescription)")
-        #if targetEnvironment(simulator)
-        startSimulatorRingPolling()
-        #endif
+        if SpikeSettings.usesPolledRings { startRingPolling() }
     }
 
-    #if targetEnvironment(simulator)
-    /// The simulator gets no VoIP token and no VoIP pushes. Register a stand-in token and
-    /// poll the dry-run server for the pushes it would have sent, then handle each one
-    /// exactly as a real push (it still rings through CallKit).
-    private func startSimulatorRingPolling() {
-        registrationStatus = "Simulator: stand-in push token"
+    /// Without VoIP push (the simulator, or a SPIKE_PUSH_MODE = none build), register a
+    /// "poll:" token and collect rings from the server every 1.5 s. Each one is handled
+    /// exactly like a push. On a watch it rings through CallKit, but only while the app
+    /// is running, since timers stop when it's suspended.
+    private func startRingPolling() {
+        registrationStatus = "No VoIP push: rings arrive while the app is open"
         registerDevice()
         Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [weak self] _ in
-            guard let self, call == nil, settings.baseURL != nil, !settings.serverHost.isEmpty else { return }
+            guard let self, call == nil, !settings.serverHost.isEmpty else { return }
             let api = APIClient(settings: settings)
             Task { @MainActor in
-                guard let rings = try? await api.simulatedRings() else { return }
+                guard let rings = try? await api.polledRings() else { return }
                 for payload in rings {
                     self.handleIncomingPush(payload) {}
                 }
             }
         }
     }
-    #endif
 
     // MARK: UI actions
 
@@ -138,11 +135,14 @@ final class SpikeController: NSObject, ObservableObject {
     }
 
     func registerDevice() {
-        #if targetEnvironment(simulator)
-        let token = push.token ?? "sim:\(settings.userId)"
-        #else
-        guard let token = push.token else { return }
-        #endif
+        let token: String
+        if SpikeSettings.usesPolledRings {
+            token = "poll:\(settings.userId)"
+        } else if let pushToken = push.token {
+            token = pushToken
+        } else {
+            return
+        }
         let api = APIClient(settings: settings)
         Task { @MainActor in
             do {

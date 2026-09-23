@@ -9,4 +9,14 @@ DEVELOPMENT_TEAM =
 SPIKE_SERVER_HOST =
 SPIKE_TOKEN =
 
+// How the watch learns it's being rung:
+//   voip  VoIP push via PushKit. Needs a paid Apple Developer Program membership,
+//         because free (Personal Team) signing can't include the push entitlement.
+//   none  No push entitlement. The app polls the server for rings while it's open
+//         and still rings through CallKit. Works with a free Personal Team.
+SPIKE_PUSH_MODE = voip
+SPIKE_ENTITLEMENTS_voip = Config/WalkieSpike.entitlements
+SPIKE_ENTITLEMENTS_none = Config/WalkieSpike-NoPush.entitlements
+CODE_SIGN_ENTITLEMENTS = $(SPIKE_ENTITLEMENTS_$(SPIKE_PUSH_MODE))
+
 #include? "Local.xcconfig"
