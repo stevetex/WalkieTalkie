@@ -21,6 +21,12 @@ struct SettingsView: View {
                     .textContentType(.URL)
                 LabeledContent("Token", value: controller.settings.token.isEmpty ? "Not set" : "Set")
                 LabeledContent("Rings", value: SpikeSettings.usesPolledRings ? "Polled (app open)" : "VoIP push")
+                #if !targetEnvironment(simulator)
+                if SpikeSettings.usesPolledRings {
+                    // Off: ring inside the app, with no CallKit (how option C's conversation runs).
+                    Toggle("Ring with CallKit", isOn: $controller.settings.ringWithCallKit)
+                }
+                #endif
             }
 
             Section("Talk to") {

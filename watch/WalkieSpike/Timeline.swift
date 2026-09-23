@@ -30,6 +30,13 @@ struct Timeline {
         events.append(Event(name: name, t: Self.nowMs(), detail: detail))
     }
 
+    /// Records an event that happened at `t` (device clock, ms), e.g. on another thread.
+    mutating func mark(_ name: String, at t: Double, detail: String? = nil, once: Bool = true) {
+        if once, seen.contains(name) { return }
+        seen.insert(name)
+        events.append(Event(name: name, t: t, detail: detail))
+    }
+
     func has(_ name: String) -> Bool { seen.contains(name) }
 
     /// Local-only intervals for the on-watch readout; the server computes the cross-device ones.

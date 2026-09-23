@@ -12,6 +12,9 @@ struct SpikeSettings: Equatable {
     var friendId: String
     var friendName: String
     var conversationWindowSeconds: Int
+    /// Polling mode on a watch only: ring through CallKit (option B) or inside the app,
+    /// which is how option C's conversation will run once a notification opens the app.
+    var ringWithCallKit: Bool
 
     var isConfigured: Bool { !serverHost.isEmpty && !friendId.isEmpty }
 
@@ -36,6 +39,17 @@ struct SpikeSettings: Equatable {
         #endif
     }
 
+    /// Ring inside the app instead of through CallKit. Always in the simulator (it can't
+    /// show incoming calls); on a watch only when polling and the setting is off. A real
+    /// VoIP push must always be reported to CallKit.
+    var ringsInApp: Bool {
+        #if targetEnvironment(simulator)
+        return true
+        #else
+        return Self.usesPolledRings && !ringWithCallKit
+        #endif
+    }
+
     #if DEBUG
     static let apnsEnvironment = "sandbox"
     #else
@@ -50,6 +64,7 @@ struct SpikeSettings: Equatable {
         static let friendId = "friendId"
         static let friendName = "friendName"
         static let window = "conversationWindowSeconds"
+        static let ringWithCallKit = "ringWithCallKit"
     }
 
     static func load(_ defaults: UserDefaults = .standard) -> SpikeSettings {
@@ -67,7 +82,8 @@ struct SpikeSettings: Equatable {
             displayName: defaults.string(forKey: Key.displayName) ?? WKInterfaceDevice.current().name,
             friendId: defaults.string(forKey: Key.friendId) ?? "",
             friendName: defaults.string(forKey: Key.friendName) ?? "",
-            conversationWindowSeconds: window > 0 ? window : 45
+            conversationWindowSeconds: window > 0 ? window : 45,
+            ringWithCallKit: defaults.object(forKey: Key.ringWithCallKit) as? Bool ?? true
         )
     }
 
@@ -79,5 +95,6 @@ struct SpikeSettings: Equatable {
         defaults.set(friendId, forKey: Key.friendId)
         defaults.set(friendName, forKey: Key.friendName)
         defaults.set(conversationWindowSeconds, forKey: Key.window)
+        defaults.set(ringWithCallKit, forKey: Key.ringWithCallKit)
     }
 }

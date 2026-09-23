@@ -208,6 +208,7 @@ export class Relay {
       pushed = this.ring(conversation, from, to, burstId);
     }
     peer.sendJSON({ type: "floor-granted", burstId, conversationId: conversation.id, pushed });
+    this.opts.metrics.server(conversation.id, "floorGrantSent", this.opts.now(), from);
   }
 
   private talkEnd(userId: string, burstId: string): void {

@@ -19,6 +19,7 @@ struct ContentView: View {
             TalkButton(
                 title: friendLabel.isEmpty ? "Talk" : friendLabel,
                 isTalking: controller.isTalking,
+                isWaiting: controller.phase != .idle && !controller.talkReady,
                 isDisabled: !controller.settings.isConfigured
             ) { pressed in
                 pressed ? controller.talkPressed() : controller.talkReleased()
@@ -55,6 +56,8 @@ struct ContentView: View {
 struct TalkButton: View {
     let title: String
     let isTalking: Bool
+    /// In a conversation but not ready to record yet (audio or relay still starting).
+    let isWaiting: Bool
     let isDisabled: Bool
     let onPressChange: (Bool) -> Void
 
@@ -63,12 +66,12 @@ struct TalkButton: View {
     var body: some View {
         ZStack {
             Circle()
-                .fill(isTalking ? Color.red : Color.yellow)
+                .fill(isWaiting ? Color.gray : isTalking ? Color.red : Color.yellow)
                 .opacity(isDisabled ? 0.3 : 1)
             VStack(spacing: 2) {
-                Image(systemName: isTalking ? "waveform" : "mic.fill")
+                Image(systemName: isWaiting ? "hourglass" : isTalking ? "waveform" : "mic.fill")
                     .font(.title2)
-                Text(isTalking ? "Talking" : title)
+                Text(isWaiting ? "Wait…" : isTalking ? "Talking" : title)
                     .font(.caption)
                     .lineLimit(1)
                     .minimumScaleFactor(0.6)

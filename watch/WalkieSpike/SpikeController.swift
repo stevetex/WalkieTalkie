@@ -33,6 +33,9 @@ final class SpikeController: NSObject, ObservableObject {
     @Published private(set) var statusLine = "Idle"
     @Published private(set) var isTalking = false
     @Published private(set) var remoteTalking = false
+    /// In a conversation and able to record right now (relay open and audio on). The Talk
+    /// button shows "Wait…" until then.
+    @Published private(set) var talkReady = false
     @Published private(set) var registrationStatus = "Waiting for VoIP push token"
     @Published private(set) var lastRun: [String] = []
     @Published private(set) var logLines: [String] = []
@@ -66,11 +69,14 @@ final class SpikeController: NSObject, ObservableObject {
     private var idleTimer: Timer?
     private var ringTimer: Timer?
     private var activatingAudio = false
+    private var watchdog: DispatchSourceTimer?
     /// Server clock minus watch clock. The relay's hello-ack gives a first estimate, but the
     /// watch's first request is slowed by its network starting up, so it's refined with a
     /// few quick /v1/time samples once the network is up (smallest round trip wins).
     private var clockOffsetMs: Double = 0
     private var bestClockRoundTripMs = Double.infinity
+    /// Uplink POSTs logged since the current burst started (only the first few are kept).
+    private var postsThisBurst = 0
     /// Set after answering: turn on the app's own audio once CallKit lets go of the session.
     private var awaitingOwnAudio = false
 
@@ -116,6 +122,20 @@ final class SpikeController: NSObject, ObservableObject {
         audio.onFirstPlayback = { [weak self] in
             DispatchQueue.main.async { self?.call?.timeline.mark("firstAudioScheduled") }
         }
+        audio.onFirstCapturedFrame = { [weak self] t in
+            DispatchQueue.main.async { self?.call?.timeline.mark("micFirstFrame", at: t, once: false) }
+        }
+        audio.onRestart = { [unowned self] detail in log("Audio: \(detail)") }
+        relay.onPostFinished = { [unowned self] started, finished, bytes, status in
+            guard burstId != nil || talkHeld, postsThisBurst < 3 else { return }
+            postsThisBurst += 1
+            call?.timeline.mark("post\(postsThisBurst)", at: finished,
+                                detail: "\(bytes) bytes, \(Int(finished - started)) ms, HTTP \(status)", once: false)
+        }
+        NotificationCenter.default.addObserver(
+            forName: AVAudioSession.interruptionNotification, object: nil, queue: .main
+        ) { [unowned self] note in handleAudioInterruption(note) }
+        startMainThreadWatchdog()
         log("Codec: \(audio.codecDescription)")
         if SpikeSettings.usesPolledRings { startRingPolling() }
     }
@@ -204,19 +224,20 @@ final class SpikeController: NSObject, ObservableObject {
         }
     }
 
-    /// Answer from inside the app. On a watch this goes through CallKit like the system
-    /// answer button; the simulator has no CallKit call to answer, so it answers directly.
+    /// Answer from inside the app. A CallKit ring goes through CallKit like the system
+    /// answer button; an in-app ring answers directly.
     func answer() {
         guard let call, !call.outgoing, !call.answered else { return }
-        #if targetEnvironment(simulator)
-        beginAnswer()
-        activateOwnAudio()
-        #else
+        guard call.callKitActive else {
+            // In-app ring: no CallKit call to answer.
+            beginAnswer()
+            activateOwnAudio()
+            return
+        }
         callController.request(CXTransaction(action: CXAnswerCallAction(call: call.uuid))) { [weak self] error in
             guard let error else { return }
             DispatchQueue.main.async { self?.log("Answer failed: \(error.localizedDescription)") }
         }
-        #endif
     }
 
     func endCall() {
@@ -254,22 +275,23 @@ final class SpikeController: NSObject, ObservableObject {
         update.supportsUngrouping = false
         update.supportsDTMF = false
 
-        #if targetEnvironment(simulator)
-        // The watch simulator disconnects reported incoming calls immediately (reason 55)
-        // because it can't present the incoming-call UI, so simulated rings stay in-app:
-        // the Answer button runs the same path CXAnswerCallAction would.
-        if call == nil {
-            call = ActiveCall(uuid: uuid, outgoing: false, conversationId: conversationId,
-                              peerId: from, peerName: fromName, timeline: timeline)
-            call?.timeline.mark("callReported", detail: "simulator: in-app ring")
-            phase = .ringing
-            statusLine = "\(fromName) is calling"
-            WKInterfaceDevice.current().play(.notification)
-            startRingTimer(for: uuid)
-            connectRelay()
+        // In-app ring: always in the simulator (it disconnects reported incoming calls at
+        // once, reason 55); on a watch in polling mode when "Ring with CallKit" is off. The
+        // Answer button then runs the same path CXAnswerCallAction would.
+        if settings.ringsInApp {
+            if call == nil {
+                call = ActiveCall(uuid: uuid, outgoing: false, conversationId: conversationId,
+                                  peerId: from, peerName: fromName, timeline: timeline)
+                call?.timeline.mark("callReported", detail: "in-app ring")
+                phase = .ringing
+                statusLine = "\(fromName) is calling"
+                WKInterfaceDevice.current().play(.notification)
+                startRingTimer(for: uuid)
+                connectRelay()
+            }
+            completion()
+            return
         }
-        completion()
-        #else
 
         // Apple requires a reported call for every VoIP push, even if we're already busy.
         let busy = call != nil
@@ -278,6 +300,9 @@ final class SpikeController: NSObject, ObservableObject {
                               peerId: from, peerName: fromName, timeline: timeline)
             phase = .ringing
             statusLine = "\(fromName) is calling"
+            // Start the watch's network right away; HTTPS needs no call, and CallKit's
+            // confirmation of the ring can take seconds. Nothing is joined until answered.
+            connectRelay()
         }
         provider.reportNewIncomingCall(with: uuid, update: update) { error in
             DispatchQueue.main.async {
@@ -293,13 +318,9 @@ final class SpikeController: NSObject, ObservableObject {
                     self.call?.callKitActive = true
                     self.call?.timeline.mark("callReported")
                     self.startRingTimer(for: uuid)
-                    // Start the watch's network while it rings; HTTPS needs no call. Nothing
-                    // is joined (or played) until the user answers.
-                    self.connectRelay()
                 }
             }
         }
-        #endif
     }
 
     /// Stop ringing after 30 s. The relay abandons the ring (and drops the unheard audio)
@@ -340,8 +361,13 @@ final class SpikeController: NSObject, ObservableObject {
         relay.connect(baseURL: baseURL, token: settings.token, userId: settings.userId)
     }
 
+    private func updateTalkReady() {
+        talkReady = call != nil && relay.isReady && call?.audioActive == true
+    }
+
     private func relayReady(clockOffsetMs: Double) {
         guard let current = call else { return }
+        defer { updateTalkReady() }
         self.call?.timeline.mark("socketOpen")
         self.clockOffsetMs = clockOffsetMs
         bestClockRoundTripMs = .infinity
@@ -427,8 +453,9 @@ final class SpikeController: NSObject, ObservableObject {
         let id = UUID().uuidString
         burstId = id
         sentFirstFrame = false
+        postsThisBurst = 0
         relay.send(["type": "talk-start", "to": current.peerId, "burstId": id])
-        call?.timeline.mark("captureStarted")
+        call?.timeline.mark("captureStarted", once: false)
         audio.beginCapture()
         // Signal "go ahead" only once the mic is live: on a cold start the call and audio
         // session take a moment, and anything said before this point isn't captured.
@@ -498,6 +525,7 @@ final class SpikeController: NSObject, ObservableObject {
         }
         // Playback runs even if capture couldn't start.
         call?.audioActive = true
+        updateTalkReady()
         startBurstIfReady()
     }
 
@@ -536,6 +564,7 @@ final class SpikeController: NSObject, ObservableObject {
 
     private func resetCallState() {
         call = nil
+        talkReady = false
         talkHeld = false
         isTalking = false
         remoteTalking = false
@@ -552,6 +581,7 @@ final class SpikeController: NSObject, ObservableObject {
         formatter.dateFormat = "HH:mm:ss"
         let entry = "\(formatter.string(from: Date())) \(line)"
         print("[spike] \(entry)")
+        call?.timeline.mark("log", detail: line, once: false)
         logLines.append(entry)
         if logLines.count > 60 { logLines.removeFirst(logLines.count - 60) }
     }
@@ -639,7 +669,53 @@ extension SpikeController: CXProviderDelegate {
         call?.timeline.mark("callKitAudioActivated")
     }
 
+    /// CallKit can release (and even activate) call audio seconds after the hand-off. If
+    /// the app's audio was already on, it has been taken away: turn it back on.
     func provider(_ provider: CXProvider, didDeactivate audioSession: AVAudioSession) {
-        if awaitingOwnAudio { activateOwnAudio() }
+        call?.timeline.mark("callKitAudioDeactivated")
+        guard let current = call, !current.callKitActive else { return }
+        if current.audioActive {
+            log("Reclaiming audio after CallKit released it")
+            audio.stop()
+            call?.audioActive = false
+            updateTalkReady()
+        }
+        activateOwnAudio()
+    }
+
+    /// Something else (a real call, Siri, CallKit) interrupted the app's audio.
+    fileprivate func handleAudioInterruption(_ note: Notification) {
+        guard call != nil,
+              let raw = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
+              let type = AVAudioSession.InterruptionType(rawValue: raw) else { return }
+        switch type {
+        case .began:
+            log("Audio interrupted")
+            audio.stop()
+            call?.audioActive = false
+            updateTalkReady()
+        case .ended:
+            log("Audio interruption ended")
+            activateOwnAudio()
+        @unknown default:
+            break
+        }
+    }
+
+    /// Diagnostics: notices when the main thread (UI, networking callbacks) stalls, which
+    /// happened while Talk was held on a real watch.
+    fileprivate func startMainThreadWatchdog() {
+        let timer = DispatchSource.makeTimerSource(queue: .global(qos: .utility))
+        timer.schedule(deadline: .now() + 1, repeating: .milliseconds(250))
+        timer.setEventHandler { [weak self] in
+            let queuedAt = Timeline.nowMs()
+            DispatchQueue.main.async {
+                let lag = Timeline.nowMs() - queuedAt
+                guard lag > 750, let self, self.call != nil else { return }
+                self.call?.timeline.mark("mainStall", at: queuedAt, detail: "\(Int(lag)) ms", once: false)
+            }
+        }
+        timer.resume()
+        watchdog = timer
     }
 }

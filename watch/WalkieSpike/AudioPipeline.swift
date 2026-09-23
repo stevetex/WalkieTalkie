@@ -11,6 +11,11 @@ final class AudioPipeline {
     var onFrame: ((Data) -> Void)?
     /// The first buffer of a received burst was handed to the player. Called on the audio queue.
     var onFirstPlayback: (() -> Void)?
+    /// The microphone produced the first frame of a burst (time in ms). Called on the audio queue.
+    var onFirstCapturedFrame: ((Double) -> Void)?
+    /// The engine was restarted after watchOS changed its configuration (for example
+    /// another session took the audio hardware). Called on the main queue.
+    var onRestart: ((String) -> Void)?
 
     var codecDescription: String {
         encoder.codec == .opus16k ? "Opus 24 kbps" : "PCM 256 kbps (no Opus encoder)"
@@ -27,6 +32,8 @@ final class AudioPipeline {
     private let encoder = VoiceEncoder()
     private let decoder = VoiceDecoder()
     private var attached = false
+    /// Main thread only: start() was called and stop() hasn't been since.
+    private var wantsRunning = false
 
     // Tap thread only.
     private var captureConverter: AVAudioConverter?
@@ -44,6 +51,9 @@ final class AudioPipeline {
     private static let prebufferFrames = 4
 
     init() {
+        NotificationCenter.default.addObserver(
+            forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main
+        ) { [weak self] _ in self?.restartAfterConfigurationChange() }
         // Build the Opus encoder and decoder at launch rather than on the first message.
         queue.async {
             let silence = [Float](repeating: 0, count: VoiceFrame.samplesPerFrame)
@@ -56,6 +66,7 @@ final class AudioPipeline {
     }
 
     func start() throws {
+        wantsRunning = true
         if !attached {
             engine.attach(player)
             engine.connect(player, to: engine.mainMixerNode, format: VoiceFrame.pcmFormat)
@@ -114,6 +125,7 @@ final class AudioPipeline {
     #endif
 
     func stop() {
+        wantsRunning = false
         #if targetEnvironment(simulator)
         toneTimer?.cancel()
         toneTimer = nil
@@ -126,6 +138,18 @@ final class AudioPipeline {
             self.capturing = false
             self.pendingSamples.removeAll()
             self.held.removeAll()
+        }
+    }
+
+    /// watchOS stops the engine when the audio configuration changes, for instance when
+    /// CallKit activates call audio after the app has already started its own.
+    private func restartAfterConfigurationChange() {
+        guard wantsRunning, attached, !engine.isRunning else { return }
+        do {
+            try start()
+            onRestart?("engine restarted after configuration change")
+        } catch {
+            onRestart?("engine restart failed: \(error.localizedDescription)")
         }
     }
 
@@ -185,6 +209,7 @@ final class AudioPipeline {
             let frame = Array(pendingSamples.prefix(size))
             pendingSamples.removeFirst(size)
             guard let payload = encoder.encode(frame) else { continue }
+            if sequence == 0 { onFirstCapturedFrame?(Timeline.nowMs()) }
             onFrame?(VoiceFrame.encode(codec: encoder.codec, seq: sequence, payload: payload))
             sequence &+= 1
         }

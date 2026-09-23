@@ -69,6 +69,8 @@ final class RelayConnection: NSObject, URLSessionDataDelegate {
     var onMessage: ((RelayMessage) -> Void)?
     var onFrame: ((Data) -> Void)?
     var onClose: ((_ reason: String) -> Void)?
+    /// Each uplink POST: when it started and finished (ms), bytes, HTTP status (0 = error).
+    var onPostFinished: ((_ startedAt: Double, _ finishedAt: Double, _ bytes: Int, _ status: Int) -> Void)?
 
     private(set) var isReady = false
     private(set) var clockOffsetMs: Double = 0
@@ -145,11 +147,14 @@ final class RelayConnection: NSObject, URLSessionDataDelegate {
         request.httpMethod = "POST"
         request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
         request.httpBody = outbox
+        let bytes = outbox.count
         outbox = Data()
+        let startedAt = Timeline.nowMs()
         session.dataTask(with: request) { [weak self] _, response, error in
             guard let self, self.session === session else { return }
             posting = false
             let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+            onPostFinished?(startedAt, Timeline.nowMs(), bytes, error == nil ? status : 0)
             if let error {
                 print("[relay] send failed: \(error.localizedDescription)")
             } else if status != 200 {
