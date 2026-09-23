@@ -81,7 +81,9 @@ EOF
 {
   # The ACME contact email is optional; without it there are no expiry notices.
   if [ -n "$ACME_EMAIL" ]; then printf '{\n\temail %s\n}\n\n' "$ACME_EMAIL"; fi
-  printf '%s {\n\treverse_proxy 127.0.0.1:8080\n}\n' "$DOMAIN"
+  # flush_interval -1: pass the relay's streaming responses (the watch's audio
+  # downlink) through immediately instead of buffering them.
+  printf '%s {\n\treverse_proxy 127.0.0.1:8080 {\n\t\tflush_interval -1\n\t}\n}\n' "$DOMAIN"
 } >/etc/caddy/Caddyfile
 
 systemctl daemon-reload

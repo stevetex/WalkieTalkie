@@ -3,15 +3,18 @@ import CallKit
 import Combine
 import WatchKit
 
-/// Coordinates the ring-to-start flow:
+/// Coordinates a conversation. CallKit is used only to ring (option B in the
+/// feasibility doc), because watchOS locks the screen into the system call UI for as long
+/// as a call is active, which would hide the Talk button:
 ///
-///   Receiver: VoIP push → report incoming CallKit call (ring) → user answers →
-///             open relay socket → join → buffered burst replays → conversation window.
-///   Sender:   press Talk → start outgoing CallKit call → open relay socket →
-///             audio session active → talk-start + stream frames.
+///   Receiver: ring (VoIP push, or polled while the app is open) → CallKit incoming call →
+///             user answers → the call is ended at once and the app is back on screen →
+///             the app turns on its own audio session and reaches the relay over HTTPS →
+///             join → buffered burst replays → conversation window.
+///   Sender:   press Talk → own audio session + HTTPS relay → talk-start + stream frames.
 ///
-/// The call ends by itself after `conversationWindowSeconds` with no audio either way.
-/// Everything here runs on the main queue: CallKit, PushKit and the relay all deliver
+/// The conversation ends by itself after `conversationWindowSeconds` with no audio either
+/// way. Everything here runs on the main queue: CallKit, PushKit and the relay all deliver
 /// there, and the audio pipeline hops back to it.
 final class SpikeController: NSObject, ObservableObject {
     static let shared = SpikeController()
@@ -45,6 +48,8 @@ final class SpikeController: NSObject, ObservableObject {
         var timeline: Timeline
         var audioActive = false
         var answered = false
+        /// True while the CallKit call (ringing only) is still up.
+        var callKitActive = false
     }
 
     private let push = PushService()
@@ -60,6 +65,9 @@ final class SpikeController: NSObject, ObservableObject {
     private var sentFirstFrame = false
     private var idleTimer: Timer?
     private var ringTimer: Timer?
+    private var activatingAudio = false
+    /// Set after answering: turn on the app's own audio once CallKit lets go of the session.
+    private var awaitingOwnAudio = false
 
     override init() {
         let configuration = CXProviderConfiguration()
@@ -165,7 +173,7 @@ final class SpikeController: NSObject, ObservableObject {
         idleTimer?.invalidate()
 
         if call == nil {
-            startOutgoingCall()
+            startOutgoingConversation()
         } else {
             call?.timeline.mark("talkPressedInWindow")
             startBurstIfReady()
@@ -197,7 +205,7 @@ final class SpikeController: NSObject, ObservableObject {
         guard let call, !call.outgoing, !call.answered else { return }
         #if targetEnvironment(simulator)
         beginAnswer()
-        activateAudioIfCallKitCannot(for: call.uuid)
+        activateOwnAudio()
         #else
         callController.request(CXTransaction(action: CXAnswerCallAction(call: call.uuid))) { [weak self] error in
             guard let error else { return }
@@ -208,6 +216,8 @@ final class SpikeController: NSObject, ObservableObject {
 
     func endCall() {
         guard let call else { return }
+        // After answering, the CallKit call is already gone; only a ringing call needs ending.
+        guard call.callKitActive else { return finishCall() }
         callController.request(CXTransaction(action: CXEndCallAction(call: call.uuid))) { [weak self] error in
             guard let error else { return }
             DispatchQueue.main.async {
@@ -274,6 +284,7 @@ final class SpikeController: NSObject, ObservableObject {
                     self.log("Push while busy; ending the extra call")
                     self.provider.reportCall(with: uuid, endedAt: nil, reason: .unanswered)
                 } else {
+                    self.call?.callKitActive = true
                     self.call?.timeline.mark("callReported")
                     self.startRingTimer(for: uuid)
                 }
@@ -289,49 +300,41 @@ final class SpikeController: NSObject, ObservableObject {
         ringTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: false) { [weak self] _ in
             guard let self, let call, call.uuid == uuid, !call.answered else { return }
             log("Ring timed out")
-            provider.reportCall(with: uuid, endedAt: Date(), reason: .unanswered)
-            finishCall()
+            finishCall(reason: .unanswered)
         }
     }
 
     // MARK: Outgoing
 
-    private func startOutgoingCall() {
+    /// No CallKit for the sender: the app is on screen, so it can use its own audio session,
+    /// and HTTPS to the relay works without a call.
+    private func startOutgoingConversation() {
         var timeline = Timeline(role: .sender)
         timeline.mark("talkPressed")
-        let uuid = UUID()
         let peerName = settings.friendName.isEmpty ? settings.friendId : settings.friendName
-        call = ActiveCall(uuid: uuid, outgoing: true, conversationId: nil,
+        call = ActiveCall(uuid: UUID(), outgoing: true, conversationId: nil,
                           peerId: settings.friendId, peerName: peerName, timeline: timeline)
         phase = .connecting
         statusLine = "Connecting to \(peerName)…"
-
-        let action = CXStartCallAction(call: uuid, handle: CXHandle(type: .generic, value: settings.friendId))
-        callController.request(CXTransaction(action: action)) { [weak self] error in
-            guard let error else { return }
-            DispatchQueue.main.async {
-                self?.log("Start call failed: \(error.localizedDescription)")
-                self?.resetCallState()
-            }
-        }
+        connectRelay()
+        activateOwnAudio()
     }
 
     // MARK: Relay
 
     private func connectRelay() {
-        guard let url = settings.relayURL else {
-            log("Relay URL isn't configured")
+        guard let baseURL = settings.baseURL, !settings.serverHost.isEmpty else {
+            log("Server host isn't configured")
             endCall()
             return
         }
-        relay.connect(url: url, token: settings.token)
+        relay.connect(baseURL: baseURL, token: settings.token, userId: settings.userId)
     }
 
     private func relayReady(clockOffsetMs: Double) {
         guard let current = call else { return }
         self.call?.timeline.mark("socketOpen", detail: "clock offset \(Int(clockOffsetMs)) ms")
         if current.outgoing {
-            provider.reportOutgoingCall(with: current.uuid, connectedAt: Date())
             phase = .live
             statusLine = "Talking to \(current.peerName)"
             startBurstIfReady()
@@ -423,24 +426,60 @@ final class SpikeController: NSObject, ObservableObject {
         }
     }
 
-    // MARK: Teardown
+    // MARK: Audio session
 
-    private func configureAudioSession() {
+    /// The app's own audio session, used for every conversation (CallKit's call audio is
+    /// never used, since the call ends on answer). Works because the app is on screen.
+    private func activateOwnAudio() {
+        guard call != nil, call?.audioActive == false, !activatingAudio else { return }
+        awaitingOwnAudio = false
+        activatingAudio = true
+        let session = AVAudioSession.sharedInstance()
         do {
-            try AVAudioSession.sharedInstance().setCategory(.playAndRecord, mode: .voiceChat, options: [])
+            try session.setCategory(.playAndRecord, mode: .voiceChat, options: [])
         } catch {
             log("Audio session setup failed: \(error.localizedDescription)")
         }
+        session.activate(options: []) { success, error in
+            DispatchQueue.main.async {
+                self.activatingAudio = false
+                if success {
+                    self.audioSessionActivated()
+                } else {
+                    self.log("Audio activation failed: \(error?.localizedDescription ?? "unknown")")
+                }
+            }
+        }
     }
 
-    private func finishCall() {
+    private func audioSessionActivated() {
+        guard call != nil, call?.audioActive == false else { return }
+        call?.timeline.mark("audioActivated")
+        do {
+            try audio.start()
+        } catch {
+            log("Audio: \(error.localizedDescription)")
+        }
+        // Playback runs even if capture couldn't start.
+        call?.audioActive = true
+        startBurstIfReady()
+    }
+
+    // MARK: Teardown
+
+    /// Ends the conversation. `reason` also ends a CallKit call that's still ringing.
+    private func finishCall(reason: CXCallEndedReason = .remoteEnded) {
         guard var ended = call else { return }
+        if ended.callKitActive {
+            provider.reportCall(with: ended.uuid, endedAt: Date(), reason: reason)
+        }
         if let conversationId = ended.conversationId {
             relay.send(["type": "leave", "conversationId": conversationId])
         }
         let offset = relay.clockOffsetMs
         relay.close()
         audio.stop()
+        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
         ended.timeline.mark("callEnded")
         resetCallState()
 
@@ -465,6 +504,7 @@ final class SpikeController: NSObject, ObservableObject {
         isTalking = false
         remoteTalking = false
         burstId = nil
+        awaitingOwnAudio = false
         idleTimer?.invalidate()
         ringTimer?.invalidate()
         phase = .idle
@@ -486,22 +526,13 @@ final class SpikeController: NSObject, ObservableObject {
 extension SpikeController: CXProviderDelegate {
     func providerDidReset(_ provider: CXProvider) {
         log("CallKit provider reset")
-        relay.close()
-        audio.stop()
-        resetCallState()
+        call?.callKitActive = false
+        finishCall()
     }
 
+    /// Outgoing conversations don't use CallKit.
     func provider(_ provider: CXProvider, perform action: CXStartCallAction) {
-        guard call?.uuid == action.callUUID else {
-            action.fail()
-            return
-        }
-        call?.timeline.mark("callStarted")
-        configureAudioSession()
-        provider.reportOutgoingCall(with: action.callUUID, startedConnectingAt: Date())
-        connectRelay()
-        action.fulfill()
-        activateAudioIfCallKitCannot(for: action.callUUID)
+        action.fail()
     }
 
     func provider(_ provider: CXProvider, perform action: CXAnswerCallAction) {
@@ -511,7 +542,7 @@ extension SpikeController: CXProviderDelegate {
         }
         beginAnswer()
         action.fulfill()
-        activateAudioIfCallKitCannot(for: action.callUUID)
+        handOffFromCallKit(action.callUUID)
     }
 
     private func beginAnswer() {
@@ -520,12 +551,28 @@ extension SpikeController: CXProviderDelegate {
         call?.timeline.mark("answerTapped")
         phase = .connecting
         statusLine = "Connecting…"
-        configureAudioSession()
         connectRelay()
         reportAnswer()
     }
 
-    /// HTTPS works immediately, unlike the relay socket, so tell the server right away.
+    /// End the CallKit call as soon as it's answered, so watchOS dismisses its call screen
+    /// and the app (on screen when the ring arrived) shows its Talk button again. The app
+    /// then turns on its own audio once CallKit has released the session.
+    private func handOffFromCallKit(_ uuid: UUID) {
+        DispatchQueue.main.async {
+            guard self.call?.uuid == uuid, self.call?.callKitActive == true else { return }
+            self.provider.reportCall(with: uuid, endedAt: Date(), reason: .remoteEnded)
+            self.call?.callKitActive = false
+            self.call?.timeline.mark("callKitEnded")
+            self.awaitingOwnAudio = true
+            // didDeactivate normally triggers this; don't wait on it forever.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+                if self.awaitingOwnAudio, self.call?.uuid == uuid { self.activateOwnAudio() }
+            }
+        }
+    }
+
+    /// HTTPS works immediately, so tell the server right away that the ring was answered.
     private func reportAnswer() {
         guard let uuid = call?.uuid, let conversationId = call?.conversationId else { return }
         let api = APIClient(settings: settings)
@@ -539,50 +586,21 @@ extension SpikeController: CXProviderDelegate {
         }
     }
 
+    /// Declined, or ended from the system call screen while ringing.
     func provider(_ provider: CXProvider, perform action: CXEndCallAction) {
-        if call?.uuid == action.callUUID { finishCall() }
+        if call?.uuid == action.callUUID {
+            call?.callKitActive = false
+            finishCall()
+        }
         action.fulfill()
     }
 
+    /// CallKit may briefly activate call audio before the hand-off; it isn't used.
     func provider(_ provider: CXProvider, didActivate audioSession: AVAudioSession) {
-        audioSessionActivated(detail: nil)
-    }
-
-    private func audioSessionActivated(detail: String?) {
-        guard call != nil, call?.audioActive == false else { return }
-        call?.timeline.mark("audioActivated", detail: detail)
-        do {
-            try audio.start()
-        } catch {
-            log("Audio: \(error.localizedDescription)")
-        }
-        // Playback runs even if capture couldn't start.
-        call?.audioActive = true
-        startBurstIfReady()
+        call?.timeline.mark("callKitAudioActivated")
     }
 
     func provider(_ provider: CXProvider, didDeactivate audioSession: AVAudioSession) {
-        audio.stop()
-        call?.audioActive = false
-    }
-
-    /// The simulator's CallKit can't activate call audio ("Unsupported property" from
-    /// AVAudioSessionImpl_Simulator), so `didActivate` never arrives there. In simulator
-    /// builds only, activate the session ourselves if CallKit hasn't within a second.
-    private func activateAudioIfCallKitCannot(for uuid: UUID) {
-        #if targetEnvironment(simulator)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
-            guard self.call?.uuid == uuid, self.call?.audioActive == false else { return }
-            AVAudioSession.sharedInstance().activate(options: []) { success, error in
-                DispatchQueue.main.async {
-                    if success {
-                        self.audioSessionActivated(detail: "simulator fallback")
-                    } else {
-                        self.log("Simulator audio activation failed: \(error?.localizedDescription ?? "unknown")")
-                    }
-                }
-            }
-        }
-        #endif
+        if awaitingOwnAudio { activateOwnAudio() }
     }
 }

@@ -14,6 +14,7 @@ import { ApnsPusher, DryRunPusher, apnsConfigFromEnv, type VoipPusher } from "./
 import { DeviceStore, MetricsStore, ensureDir } from "./store.ts";
 import { Relay, type Peer } from "./relay.ts";
 import { summarizeAttempts } from "./report.ts";
+import { RecordParser, RecordType, encodeJSONRecord, encodeRecord } from "./records.ts";
 import type { ClientMessage, MetricsUpload } from "./protocol.ts";
 
 export interface ServerOptions {
@@ -52,6 +53,60 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
   };
 
   const sockets = new Set<ReturnType<typeof acceptUpgrade>>();
+  // HTTP transport peers by user, so a POST can find the stream it belongs to.
+  const streams = new Map<string, { peer: Peer; res: ServerResponse }>();
+
+  // GET /v1/relay/stream: the server-to-client half of the HTTP transport. The response
+  // stays open for the conversation and carries the same messages as the WebSocket.
+  const openStream = (req: IncomingMessage, res: ServerResponse, url: URL): void => {
+    const userId = url.searchParams.get("userId");
+    if (!userId) return send(res, 400, { error: "userId is required" });
+    res.writeHead(200, {
+      "content-type": "application/octet-stream",
+      "cache-control": "no-store",
+      "x-accel-buffering": "no",
+    });
+    res.flushHeaders();
+    const peer: Peer = {
+      userId,
+      sendJSON: (m) => void res.write(encodeJSONRecord(m)),
+      sendBinary: (b) => void res.write(encodeRecord(RecordType.audio, b)),
+    };
+    streams.get(userId)?.res.end();
+    streams.set(userId, { peer, res });
+    relay.connect(peer);
+    console.log(`[relay] ${userId} connected (http)`);
+    // The stream's first message doubles as hello-ack for clock-offset estimates.
+    const clientTime = Number(url.searchParams.get("clientTime") ?? 0);
+    peer.sendJSON({ type: "hello-ack", clientTime, serverTime: Date.now() });
+    // Keepalive, so idle proxies and carrier NATs don't drop the connection.
+    const ping = setInterval(() => peer.sendJSON({ type: "ping" }), 15_000);
+    req.on("close", () => {
+      clearInterval(ping);
+      if (streams.get(userId)?.peer === peer) streams.delete(userId);
+      relay.disconnect(peer);
+      console.log(`[relay] ${userId} disconnected (http)`);
+    });
+  };
+
+  // POST /v1/relay/send: the client-to-server half. Each body is a batch of records
+  // (control messages and audio frames), applied in order.
+  const receiveRecords = async (req: IncomingMessage, res: ServerResponse, url: URL): Promise<void> => {
+    const stream = streams.get(url.searchParams.get("userId") ?? "");
+    if (!stream) return send(res, 409, { error: "open GET /v1/relay/stream first" });
+    const parser = new RecordParser();
+    for await (const chunk of req) {
+      for (const record of parser.push(chunk as Buffer)) {
+        if (record.type === RecordType.audio) {
+          relay.handleAudio(stream.peer, record.payload);
+        } else {
+          relay.handleMessage(stream.peer, JSON.parse(record.payload.toString("utf8")) as ClientMessage);
+        }
+      }
+    }
+    send(res, 200, {});
+  };
+
   const server = createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", "http://localhost");
     try {
@@ -108,6 +163,8 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
         }
         return send(res, relay.answered(userId, conversationId) ? 200 : 404, {});
       }
+      if (req.method === "GET" && url.pathname === "/v1/relay/stream") return openStream(req, res, url);
+      if (req.method === "POST" && url.pathname === "/v1/relay/send") return await receiveRecords(req, res, url);
       // For devices registered with a "poll:" token (no VoIP push): collect pending rings.
       if (req.method === "GET" && url.pathname === "/v1/rings/poll") {
         return send(res, 200, relay.takePolledRings(url.searchParams.get("userId") ?? ""));
@@ -147,6 +204,10 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
     });
   });
 
+  // The relay stream is a long-lived response; Node's default 5-minute request timeout
+  // would cut it off mid-conversation.
+  server.requestTimeout = 0;
+
   return new Promise((resolvePromise) => {
     server.listen(options.port, options.host, () => {
       const address = server.address();
@@ -163,6 +224,7 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
             options.pusher.close();
             // Upgraded WebSocket sockets aren't covered by closeAllConnections().
             for (const ws of sockets) ws?.close(1001);
+            for (const { res } of streams.values()) res.end();
             server.closeAllConnections();
             server.close(() => done());
           }),

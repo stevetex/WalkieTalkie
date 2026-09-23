@@ -15,21 +15,13 @@ struct SpikeSettings: Equatable {
 
     var isConfigured: Bool { !serverHost.isEmpty && !friendId.isEmpty }
 
-    /// A server on this Mac (for the simulator) is reached over plain HTTP/WS;
+    /// A server on this Mac (for the simulator) is reached over plain HTTP;
     /// everything else uses TLS.
     private var isLocalServer: Bool {
         serverHost.hasPrefix("localhost") || serverHost.hasPrefix("127.0.0.1")
     }
 
     var baseURL: URL? { URL(string: "\(isLocalServer ? "http" : "https")://\(serverHost)") }
-
-    var relayURL: URL? {
-        guard var components = baseURL.flatMap({ URLComponents(url: $0, resolvingAgainstBaseURL: false) }) else { return nil }
-        components.scheme = isLocalServer ? "ws" : "wss"
-        components.path = "/v1/relay"
-        components.queryItems = [URLQueryItem(name: "userId", value: userId)]
-        return components.url
-    }
 
     /// False when built with SPIKE_PUSH_MODE = none (no push entitlement).
     static let pushEnabled = (Bundle.main.object(forInfoDictionaryKey: "SpikePushMode") as? String) != "none"

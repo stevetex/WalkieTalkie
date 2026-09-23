@@ -36,6 +36,8 @@ export type ServerMessage =
   | { type: "ring-timeout"; conversationId: string; peer: string; droppedBursts: number }
   // Stand-in for the VoIP push, used for test bots registered with a "local:" token.
   | ({ type: "ring" } & RingPayload)
+  // HTTP transport keepalive; clients ignore it.
+  | { type: "ping" }
   | { type: "error"; message: string };
 
 // Timing events are posted over HTTPS (POST /v1/metrics) rather than the socket,

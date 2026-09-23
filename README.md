@@ -10,16 +10,16 @@ deploy/gcp/  Scripts to host the server on a Google Cloud e2-micro VM
 
 ## How it works
 
-1. The sender presses Talk. The relay buffers the audio and sends the recipient's watch a VoIP push.
-2. The watch reports a CallKit incoming call, so it rings. When the user answers, the app opens the relay WebSocket and sends `join`.
-3. The relay replays the buffered audio, then forwards the rest live.
-4. Later messages play instantly. After `conversationWindowSeconds` of silence (45 s by default), the watch ends the call.
+1. The sender presses Talk. The relay buffers the audio and rings the recipient's watch, by VoIP push or, without push, by the app checking the server while it's open.
+2. The watch shows a CallKit incoming call. CallKit is used **only to ring**: watchOS locks the screen into the system call UI for as long as a call is active, which would hide the Talk button ([Apple DTS](https://developer.apple.com/forums/thread/818140)). So when the user answers, the app ends the call right away and is back on screen.
+3. The app turns on its own audio session, tells the relay it answered, opens the relay stream and sends `join`. The relay replays the buffered audio, then forwards the rest live.
+4. Later messages play instantly. After `conversationWindowSeconds` of silence (45 s by default), the conversation ends.
 
-If nobody answers, the watch stops ringing at 30 s. At 35 s the relay drops the audio nobody heard and tells the sender, so the next Talk starts a new ring instead of replaying old audio.
+If nobody answers, the watch stops ringing at 30 s. At 35 s the relay drops the audio nobody heard and tells the sender, so the next Talk starts a new ring instead of replaying old audio. That timer restarts when a polling watch collects the ring. Once the watch reports it answered, it has 30 s to join.
 
 Audio is Opus at 24 kbps in 20 ms frames, using Apple's built-in encoder. If a device can't create an Opus encoder, the app falls back to raw 16 kHz PCM, and the log in the app's Settings says which one it's using. The relay forwards frames without decoding them.
 
-The watch opens its WebSocket only while a CallKit call is active, because watchOS blocks low-level networking outside a call ([TN3135](https://developer.apple.com/documentation/technotes/tn3135-low-level-networking-on-watchos)). Device registration and metrics uploads use plain HTTPS, which is allowed at any time.
+The watch talks to the relay over plain HTTPS: a long-lived `GET /v1/relay/stream` for the relay-to-watch direction, and back-to-back `POST /v1/relay/send` batches for the watch-to-relay direction. It can't use a WebSocket, because watchOS only allows those during a CallKit call ([TN3135](https://developer.apple.com/documentation/technotes/tn3135-low-level-networking-on-watchos)), and conversations happen after the call has ended. The bots and tests can use either transport.
 
 ## One-time setup
 
@@ -104,7 +104,7 @@ A free Apple account (Xcode's "Personal Team") can install the app on your own w
 4. On the watch, turn on Developer Mode (Settings → Privacy & Security → Developer Mode). Then run from Xcode with the watch as the destination. If the watch says the developer isn't trusted, trust your Apple ID's developer profile under VPN & Device Management in Settings.
 5. Keep the app on screen while being rung. It only checks for rings while it's open, so raise your wrist or tap the screen. Settings → Server → Rings shows "Polled (app open)".
 
-What this can measure on real hardware: the ringing screen and answering, including whether double-tap answers; how long CallKit takes to turn on call audio; real microphone and Opus audio quality; watchOS blocking sockets outside a call; Wi-Fi, LTE and paired-iPhone networking; whether the paired iPhone shows anything; and battery use per conversation. What it can't measure: VoIP push delivery and waking from closed. Free provisioning also expires after 7 days, so re-run from Xcode to renew it.
+What this can measure on real hardware: the ringing screen and answering, including whether double-tap answers; whether the app comes back on screen when the call ends after answering; how long the app's own audio session and the HTTPS relay take to start; real microphone and Opus audio quality; Wi-Fi, LTE and paired-iPhone networking; whether the paired iPhone shows anything; and battery use per conversation. What it can't measure: VoIP push delivery and waking from closed. Free provisioning also expires after 7 days, so re-run from Xcode to renew it.
 
 When your membership is active, switch back to `SPIKE_PUSH_MODE = voip` (the default) and follow One-time setup above.
 
@@ -130,11 +130,10 @@ The simulator can't do several things a real watch does. Simulator builds work a
 | --- | --- | --- |
 | No VoIP token or VoIP pushes | Registers a `poll:` token and collects rings from `/v1/rings/poll` every 1.5 s | "Push sent → watch woke" is polling delay, not APNs |
 | Incoming CallKit calls are disconnected right away (reason 55), and there's no ringing screen | The ring stays inside the app, with Answer and Decline buttons that run the same code as CallKit's answer | Ring UI is only testable on a watch |
-| CallKit can't activate call audio ("Unsupported property" in `AVAudioSessionImpl_Simulator`) | The app activates the audio session itself if CallKit hasn't within 1 s | "Answer → audio session active" is about 1 s of waiting |
 | No microphone | Sends a 440 Hz test tone while Talk is held | None |
-| Sockets are allowed outside a call (TN3135) | None | Must be tested on a watch |
+| No system call screen to return from after answering | None | Whether the app comes back on screen must be tested on a watch |
 
-Outgoing calls do go through CallKit in the simulator. Opus encoding and decoding, replay, the conversation window and metrics all behave as they do on a device.
+The app's own audio session, the HTTPS relay transport, Opus encoding and decoding, replay, the conversation window and metrics all behave as they do on a device.
 
 ## Not in this spike yet
 
