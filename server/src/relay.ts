@@ -39,8 +39,9 @@ interface Conversation {
   bursts: Burst[];
   floor: { userId: string; burstId: string } | null;
   lastRingAt: number | null;
-  // Set while a ring is waiting to be answered.
+  // Set while a ring is waiting to be answered (or, once answered, to be joined).
   ringTimer: NodeJS.Timeout | null;
+  ringFrom: string | null;
 }
 
 export interface RelayOptions {
@@ -55,6 +56,9 @@ export interface RelayOptions {
   // in time doesn't lose the message. (Design decision: unheard messages are dropped
   // rather than kept as clips; see the feasibility doc's "Design decisions".)
   ringTimeoutMs?: number;
+  // After the watch reports it answered, how long it has to open the relay socket and
+  // join before the ring is abandoned. Socket setup on a real watch took ~7 s.
+  answerJoinTimeoutMs?: number;
 }
 
 export class Relay {
@@ -66,7 +70,7 @@ export class Relay {
   private opts: Required<RelayOptions>;
 
   constructor(options: RelayOptions) {
-    this.opts = { now: Date.now, bufferTtlMs: 120_000, ringTimeoutMs: 35_000, ...options };
+    this.opts = { now: Date.now, bufferTtlMs: 120_000, ringTimeoutMs: 35_000, answerJoinTimeoutMs: 30_000, ...options };
   }
 
   close(): void {
@@ -128,10 +132,29 @@ export class Relay {
   }
 
   // Rings queued for a polling device, removed as they're collected.
+  // Collecting a ring is when the watch starts ringing, so the timeout restarts then.
   takePolledRings(userId: string): RingPayload[] {
     const rings = this.polledRings.get(userId) ?? [];
     this.polledRings.delete(userId);
+    for (const ring of rings) {
+      const conversation = this.byId.get(ring.conversationId);
+      if (!conversation?.ringTimer) continue;
+      this.opts.metrics.server(conversation.id, "ringCollected", this.opts.now());
+      this.armRingTimer(conversation, userId, this.opts.ringTimeoutMs);
+    }
     return rings;
+  }
+
+  // The watch answered (reported over HTTPS, which works before its socket can open).
+  // Keep the buffered audio and give it time to connect and join.
+  answered(userId: string, conversationId: string): boolean {
+    const conversation = this.byId.get(conversationId);
+    if (!conversation || !conversation.members.includes(userId)) return false;
+    this.opts.metrics.server(conversation.id, "answerReported", this.opts.now());
+    if (conversation.ringTimer && !conversation.joined.has(userId)) {
+      this.armRingTimer(conversation, userId, this.opts.answerJoinTimeoutMs);
+    }
+    return true;
   }
 
   // Exposed for tests and the status endpoint.
@@ -252,8 +275,8 @@ export class Relay {
       return false;
     }
     conversation.lastRingAt = this.opts.now();
-    conversation.ringTimer = setTimeout(() => this.ringTimedOut(conversation, from, to), this.opts.ringTimeoutMs);
-    conversation.ringTimer.unref();
+    conversation.ringFrom = from;
+    this.armRingTimer(conversation, to, this.opts.ringTimeoutMs);
     const payload: RingPayload = {
       conversationId: conversation.id,
       from,
@@ -303,6 +326,13 @@ export class Relay {
     this.prune(conversation);
   }
 
+  private armRingTimer(conversation: Conversation, to: string, ms: number): void {
+    if (conversation.ringTimer) clearTimeout(conversation.ringTimer);
+    const from = conversation.ringFrom ?? otherMember(conversation, to);
+    conversation.ringTimer = setTimeout(() => this.ringTimedOut(conversation, from, to), ms);
+    conversation.ringTimer.unref();
+  }
+
   private clearRing(conversation: Conversation): void {
     if (conversation.ringTimer) clearTimeout(conversation.ringTimer);
     conversation.ringTimer = null;
@@ -321,6 +351,7 @@ export class Relay {
         floor: null,
         lastRingAt: null,
         ringTimer: null,
+        ringFrom: null,
       };
       this.byPair.set(key, conversation);
       this.byId.set(conversation.id, conversation);

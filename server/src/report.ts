@@ -27,6 +27,7 @@ const INTERVALS: Array<[string, string, string]> = [
   ["Push sent → watch woke (cross-device)", "server.pushSent", "receiver.pushReceived"],
   ["Watch: push → call reported", "receiver.pushReceived", "receiver.callReported"],
   ["Human: ring → answer tap", "receiver.callReported", "receiver.answerTapped"],
+  ["Watch: answer → server told (HTTPS)", "receiver.answerTapped", "receiver.answerReported"],
   ["Watch: answer → socket open", "receiver.answerTapped", "receiver.socketOpen"],
   ["Watch: answer → audio session active", "receiver.answerTapped", "receiver.audioActivated"],
   ["Watch: answer → first audio", "receiver.answerTapped", "receiver.firstAudioScheduled"],

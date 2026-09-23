@@ -37,6 +37,15 @@ struct APIClient {
         return try JSONDecoder().decode([User].self, from: data)
     }
 
+    /// Tells the server the ring was answered, so it keeps the buffered audio while the
+    /// relay socket (which can take several seconds on a real watch) opens.
+    func reportAnswer(conversationId: String) async throws {
+        try await send("POST", "/v1/rings/answer", body: [
+            "userId": settings.userId,
+            "conversationId": conversationId,
+        ])
+    }
+
     /// Rings queued for this device when it registered without VoIP push.
     func polledRings() async throws -> [[String: Any]] {
         let data = try await send("GET", "/v1/rings/poll?userId=\(settings.userId)")

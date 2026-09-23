@@ -522,6 +522,21 @@ extension SpikeController: CXProviderDelegate {
         statusLine = "Connecting…"
         configureAudioSession()
         connectRelay()
+        reportAnswer()
+    }
+
+    /// HTTPS works immediately, unlike the relay socket, so tell the server right away.
+    private func reportAnswer() {
+        guard let uuid = call?.uuid, let conversationId = call?.conversationId else { return }
+        let api = APIClient(settings: settings)
+        Task { @MainActor in
+            do {
+                try await api.reportAnswer(conversationId: conversationId)
+                if call?.uuid == uuid { call?.timeline.mark("answerReported") }
+            } catch {
+                log("Answer report failed: \(error.localizedDescription)")
+            }
+        }
     }
 
     func provider(_ provider: CXProvider, perform action: CXEndCallAction) {

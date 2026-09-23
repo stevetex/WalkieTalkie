@@ -6,7 +6,7 @@ import { SpikeClient } from "../tools/client.ts";
 
 async function withServer(
   fn: (s: RunningServer, pusher: DryRunPusher) => Promise<void>,
-  options: { ringTimeoutMs?: number } = {},
+  options: { ringTimeoutMs?: number; answerJoinTimeoutMs?: number } = {},
 ): Promise<void> {
   const pusher = new DryRunPusher();
   const running = await startServer({ port: 0, dataDir: null, token: "secret", pusher, ...options });
@@ -237,6 +237,75 @@ test("a ring that times out before it's collected is withdrawn", async () => {
       alice.close();
     },
     { ringTimeoutMs: 50 },
+  );
+});
+
+test("a polled ring's timeout restarts when the watch collects it", async () => {
+  await withServer(
+    async (s) => {
+      const alice = client(s, "alice");
+      const watch = client(s, "watch-nopush");
+      await alice.register("Alice");
+      await watch.register("No-push watch", "poll:watch-nopush");
+      await alice.connect();
+      await watch.connect(); // connected but not joined, so only the join is timed
+      const { conversationId } = await alice.talk("watch-nopush", pcm(3), { realtime: false });
+
+      // Collected at ~200 ms, joined at ~650 ms: past a 600 ms timeout counted from the
+      // push, but inside it counted from collection (~800 ms).
+      await new Promise((r) => setTimeout(r, 200));
+      assert.equal((await watch.api("GET", "/v1/rings/poll?userId=watch-nopush")).length, 1);
+      await new Promise((r) => setTimeout(r, 450));
+      watch.send({ type: "join", conversationId });
+      assert.equal((await watch.waitFor("joined")).replayBursts, 1);
+      alice.close();
+      watch.close();
+    },
+    { ringTimeoutMs: 600 },
+  );
+});
+
+test("reporting an answer keeps the audio while the socket is slow to open", async () => {
+  await withServer(
+    async (s) => {
+      const alice = client(s, "alice");
+      const bob = client(s, "bob");
+      await alice.register("Alice");
+      await bob.register("Bob", "abcdef0123456789");
+      await alice.connect();
+      await bob.connect(); // stands in for the watch's socket; only the join is timed
+      const { conversationId } = await alice.talk("bob", pcm(4), { realtime: false });
+
+      await new Promise((r) => setTimeout(r, 50));
+      await bob.api("POST", "/v1/rings/answer", { userId: "bob", conversationId });
+      // Joined at ~300 ms: past the 150 ms ring timeout, inside the 600 ms join allowance.
+      await new Promise((r) => setTimeout(r, 250));
+      bob.send({ type: "join", conversationId });
+      assert.equal((await bob.waitFor("joined")).replayBursts, 1);
+      await bob.waitFor("burst-end");
+      assert.equal(bob.frames.length, 4);
+      alice.close();
+      bob.close();
+    },
+    { ringTimeoutMs: 150, answerJoinTimeoutMs: 600 },
+  );
+});
+
+test("an answer that never joins still times out", async () => {
+  await withServer(
+    async (s) => {
+      const alice = client(s, "alice");
+      const bob = client(s, "bob");
+      await alice.register("Alice");
+      await bob.register("Bob", "abcdef0123456789");
+      await alice.connect();
+      const { conversationId } = await alice.talk("bob", pcm(2), { realtime: false });
+      await bob.api("POST", "/v1/rings/answer", { userId: "bob", conversationId });
+      const timeout = await alice.waitFor("ring-timeout");
+      assert.equal(timeout.droppedBursts, 1);
+      alice.close();
+    },
+    { ringTimeoutMs: 50, answerJoinTimeoutMs: 100 },
   );
 });
 

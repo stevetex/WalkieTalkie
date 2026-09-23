@@ -8,7 +8,7 @@
   },
   "scripts": {
     "start": "node src/main.ts",
-    "test": "node --test \"test/**/*.test.ts\"",
+    "test": "node --test --test-timeout=20000 \"test/**/*.test.ts\"",
     "bot": "node tools/bot.ts",
     "report": "node tools/report.ts"
   }

@@ -23,6 +23,7 @@ export interface ServerOptions {
   token: string | null;
   pusher: VoipPusher;
   ringTimeoutMs?: number;
+  answerJoinTimeoutMs?: number;
 }
 
 export interface RunningServer {
@@ -42,6 +43,7 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
     pusher: options.pusher,
     metrics,
     ...(options.ringTimeoutMs ? { ringTimeoutMs: options.ringTimeoutMs } : {}),
+    ...(options.answerJoinTimeoutMs ? { answerJoinTimeoutMs: options.answerJoinTimeoutMs } : {}),
   });
 
   const authorized = (req: IncomingMessage, url: URL): boolean => {
@@ -49,6 +51,7 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
     return req.headers.authorization === `Bearer ${options.token}` || url.searchParams.get("token") === options.token;
   };
 
+  const sockets = new Set<ReturnType<typeof acceptUpgrade>>();
   const server = createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", "http://localhost");
     try {
@@ -96,6 +99,15 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
         return send(res, 200, { conversationId: match[1], timeline, attempts: summarizeAttempts(timeline) });
       }
       if (req.method === "GET" && url.pathname === "/v1/status") return send(res, 200, relay.snapshot());
+      // The watch answered a ring. Sent over HTTPS because the relay socket can take
+      // several seconds to open after the call starts.
+      if (req.method === "POST" && url.pathname === "/v1/rings/answer") {
+        const { userId, conversationId } = (await readJSON(req)) as Record<string, unknown>;
+        if (typeof userId !== "string" || typeof conversationId !== "string") {
+          return send(res, 400, { error: "userId and conversationId are required" });
+        }
+        return send(res, relay.answered(userId, conversationId) ? 200 : 404, {});
+      }
       // For devices registered with a "poll:" token (no VoIP push): collect pending rings.
       if (req.method === "GET" && url.pathname === "/v1/rings/poll") {
         return send(res, 200, relay.takePolledRings(url.searchParams.get("userId") ?? ""));
@@ -113,6 +125,7 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
     if (!authorized(req, url)) return rejectUpgrade(socket, 401, "Unauthorized");
     const ws = acceptUpgrade(req, socket);
     if (!ws) return;
+    sockets.add(ws);
 
     const peer: Peer = { userId, sendJSON: (m) => ws.sendJSON(m), sendBinary: (b) => ws.sendBinary(b) };
     relay.connect(peer);
@@ -128,6 +141,7 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
     });
     ws.on("binary", (frame: Buffer) => relay.handleAudio(peer, frame));
     ws.on("close", () => {
+      sockets.delete(ws);
       relay.disconnect(peer);
       console.log(`[relay] ${userId} disconnected`);
     });
@@ -147,6 +161,8 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
           new Promise<void>((done) => {
             relay.close();
             options.pusher.close();
+            // Upgraded WebSocket sockets aren't covered by closeAllConnections().
+            for (const ws of sockets) ws?.close(1001);
             server.closeAllConnections();
             server.close(() => done());
           }),
