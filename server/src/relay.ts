@@ -34,6 +34,8 @@ interface Conversation {
   bursts: Burst[];
   floor: { userId: string; burstId: string } | null;
   lastRingAt: number | null;
+  // Set while a ring is waiting to be answered.
+  ringTimer: NodeJS.Timeout | null;
 }
 
 export interface RelayOptions {
@@ -41,10 +43,13 @@ export interface RelayOptions {
   pusher: VoipPusher;
   metrics: MetricsStore;
   now?: () => number;
-  // Unheard bursts older than this are dropped (clip fallback is a later spike item).
+  // Backstop for audio that was never rung (for example, no registered device).
   bufferTtlMs?: number;
-  // Don't ring again while an earlier ring for the same conversation is still pending.
-  ringCooldownMs?: number;
+  // An unanswered ring is abandoned after this long and its unheard audio dropped.
+  // Slightly longer than the watch's 30 s ring, so a late push that's still answered
+  // in time doesn't lose the message. (Design decision: unheard messages are dropped
+  // rather than kept as clips; see the feasibility doc's "Design decisions".)
+  ringTimeoutMs?: number;
 }
 
 export class Relay {
@@ -55,7 +60,11 @@ export class Relay {
   private opts: Required<RelayOptions>;
 
   constructor(options: RelayOptions) {
-    this.opts = { now: Date.now, bufferTtlMs: 120_000, ringCooldownMs: 30_000, ...options };
+    this.opts = { now: Date.now, bufferTtlMs: 120_000, ringTimeoutMs: 35_000, ...options };
+  }
+
+  close(): void {
+    for (const conversation of this.byId.values()) this.clearRing(conversation);
   }
 
   connect(peer: Peer): void {
@@ -158,7 +167,8 @@ export class Relay {
     let pushed = false;
     if (conversation.joined.has(to) && this.peers.has(to)) {
       this.startDelivery(conversation, burst, to, false);
-    } else if (conversation.lastRingAt === null || now - conversation.lastRingAt > this.opts.ringCooldownMs) {
+    } else if (!conversation.ringTimer) {
+      // One ring per conversation start; further bursts queue behind the pending ring.
       pushed = this.ring(conversation, from, to, burstId);
     }
     peer.sendJSON({ type: "floor-granted", burstId, conversationId: conversation.id, pushed });
@@ -192,7 +202,7 @@ export class Relay {
     const now = this.opts.now();
     this.pruneBursts(conversation);
     conversation.joined.add(peer.userId);
-    conversation.lastRingAt = null;
+    this.clearRing(conversation);
     const pending = conversation.bursts.filter((b) => b.from !== peer.userId && !b.deliveredTo.has(peer.userId));
     const other = otherMember(conversation, peer.userId);
     peer.sendJSON({ type: "joined", conversationId, peer: other, replayBursts: pending.length });
@@ -229,6 +239,8 @@ export class Relay {
       return false;
     }
     conversation.lastRingAt = this.opts.now();
+    conversation.ringTimer = setTimeout(() => this.ringTimedOut(conversation, from, to), this.opts.ringTimeoutMs);
+    conversation.ringTimer.unref();
     const payload: RingPayload = {
       conversationId: conversation.id,
       from,
@@ -251,12 +263,43 @@ export class Relay {
     return true;
   }
 
+  // Nobody answered: drop what they didn't hear and tell the sender, so the next Talk
+  // starts a fresh ring instead of replaying stale audio.
+  private ringTimedOut(conversation: Conversation, from: string, to: string): void {
+    conversation.ringTimer = null;
+    if (conversation.joined.has(to)) return;
+    const unheard = conversation.bursts.filter((b) => b.from !== to && !b.deliveredTo.has(to));
+    conversation.bursts = conversation.bursts.filter((b) => !unheard.includes(b));
+    const frames = unheard.reduce((n, b) => n + b.frames.length, 0);
+    this.opts.metrics.server(conversation.id, "ringTimedOut", this.opts.now(), `dropped ${unheard.length} bursts (${frames} frames)`);
+    this.peers.get(from)?.sendJSON({
+      type: "ring-timeout",
+      conversationId: conversation.id,
+      peer: to,
+      droppedBursts: unheard.length,
+    });
+    this.prune(conversation);
+  }
+
+  private clearRing(conversation: Conversation): void {
+    if (conversation.ringTimer) clearTimeout(conversation.ringTimer);
+    conversation.ringTimer = null;
+  }
+
   private conversationFor(a: string, b: string): Conversation {
     const key = pairKey(a, b);
     let conversation = this.byPair.get(key);
     if (!conversation) {
       const members = [a, b].sort() as [string, string];
-      conversation = { id: randomUUID(), members, joined: new Set(), bursts: [], floor: null, lastRingAt: null };
+      conversation = {
+        id: randomUUID(),
+        members,
+        joined: new Set(),
+        bursts: [],
+        floor: null,
+        lastRingAt: null,
+        ringTimer: null,
+      };
       this.byPair.set(key, conversation);
       this.byId.set(conversation.id, conversation);
     }
@@ -278,6 +321,7 @@ export class Relay {
   private prune(conversation: Conversation): void {
     this.pruneBursts(conversation);
     if (conversation.joined.size === 0 && conversation.bursts.length === 0 && !conversation.floor) {
+      this.clearRing(conversation);
       this.byId.delete(conversation.id);
       this.byPair.delete(pairKey(...conversation.members));
     }

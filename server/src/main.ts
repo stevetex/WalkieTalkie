@@ -20,6 +20,7 @@ export interface ServerOptions {
   dataDir: string | null;
   token: string | null;
   pusher: VoipPusher;
+  ringTimeoutMs?: number;
 }
 
 export interface RunningServer {
@@ -34,7 +35,12 @@ export interface RunningServer {
 export function startServer(options: ServerOptions): Promise<RunningServer> {
   const devices = new DeviceStore(options.dataDir);
   const metrics = new MetricsStore(options.dataDir);
-  const relay = new Relay({ devices, pusher: options.pusher, metrics });
+  const relay = new Relay({
+    devices,
+    pusher: options.pusher,
+    metrics,
+    ...(options.ringTimeoutMs ? { ringTimeoutMs: options.ringTimeoutMs } : {}),
+  });
 
   const authorized = (req: IncomingMessage, url: URL): boolean => {
     if (!options.token) return true;
@@ -138,6 +144,7 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
         port,
         close: () =>
           new Promise<void>((done) => {
+            relay.close();
             options.pusher.close();
             server.closeAllConnections();
             server.close(() => done());

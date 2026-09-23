@@ -282,6 +282,8 @@ final class SpikeController: NSObject, ObservableObject {
         #endif
     }
 
+    /// Stop ringing after 30 s. The relay abandons the ring (and drops the unheard audio)
+    /// at 35 s, so an answer just before this fires still gets the message.
     private func startRingTimer(for uuid: UUID) {
         ringTimer?.invalidate()
         ringTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: false) { [weak self] _ in
@@ -367,6 +369,12 @@ final class SpikeController: NSObject, ObservableObject {
             resetIdleTimer()
         case "peer-left":
             log("\(message.peer ?? "Peer") left")
+        case "ring-timeout":
+            // The relay dropped what they didn't hear; the next Talk rings them again.
+            WKInterfaceDevice.current().play(.failure)
+            statusLine = "\(call?.peerName ?? "They") didn't answer"
+            call?.timeline.mark("ringTimedOut", detail: "\(message.droppedBursts ?? 0) bursts dropped")
+            log("Ring unanswered; \(message.droppedBursts ?? 0) unheard bursts dropped")
         case "error":
             log("Relay error: \(message.message ?? "unknown")")
         default:

@@ -4,9 +4,12 @@ import { startServer, type RunningServer } from "../src/main.ts";
 import { DryRunPusher } from "../src/apns.ts";
 import { SpikeClient } from "../tools/client.ts";
 
-async function withServer(fn: (s: RunningServer, pusher: DryRunPusher) => Promise<void>): Promise<void> {
+async function withServer(
+  fn: (s: RunningServer, pusher: DryRunPusher) => Promise<void>,
+  options: { ringTimeoutMs?: number } = {},
+): Promise<void> {
   const pusher = new DryRunPusher();
-  const running = await startServer({ port: 0, dataDir: null, token: "secret", pusher });
+  const running = await startServer({ port: 0, dataDir: null, token: "secret", pusher, ...options });
   try {
     await fn(running, pusher);
   } finally {
@@ -162,6 +165,43 @@ test("after both leave, the next talk rings again in a new conversation", async 
     alice.close();
     bob.close();
   });
+});
+
+test("an unanswered ring drops the unheard audio and the next talk rings again", async () => {
+  await withServer(
+    async (s, pusher) => {
+      const alice = client(s, "alice");
+      const bob = client(s, "bob");
+      await alice.register("Alice");
+      await bob.register("Bob", "abcdef0123456789");
+      await alice.connect();
+
+      const first = await alice.talk("bob", pcm(10), { realtime: false });
+      assert.equal(first.pushed, true);
+      // A second burst while the ring is pending doesn't ring again.
+      const queued = await alice.talk("bob", pcm(5), { realtime: false });
+      assert.equal(queued.pushed, false);
+
+      const timeout = await alice.waitFor("ring-timeout");
+      assert.equal(timeout.peer, "bob");
+      assert.equal(timeout.droppedBursts, 2);
+
+      // Bob answering late hears nothing stale.
+      await bob.connect();
+      bob.send({ type: "join", conversationId: first.conversationId });
+      const joined = await bob.waitFor("joined");
+      assert.equal(joined.replayBursts, 0);
+      bob.send({ type: "leave", conversationId: first.conversationId });
+      await new Promise((r) => setTimeout(r, 20));
+
+      const next = await alice.talk("bob", pcm(2), { realtime: false });
+      assert.equal(next.pushed, true);
+      assert.equal(pusher.sent.length, 2);
+      alice.close();
+      bob.close();
+    },
+    { ringTimeoutMs: 100 },
+  );
 });
 
 test("dry-run pushes can be collected once by the simulator", async () => {

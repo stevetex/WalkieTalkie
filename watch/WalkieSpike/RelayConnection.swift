@@ -11,6 +11,7 @@ struct RelayMessage: Decodable {
     var holder: String?
     var peer: String?
     var replayBursts: Int?
+    var droppedBursts: Int?
     var from: String?
     var replay: Bool?
     var message: String?

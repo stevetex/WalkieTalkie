@@ -32,6 +32,8 @@ export type ServerMessage =
   | { type: "burst-start"; conversationId: string; burstId: string; from: string; replay: boolean }
   | { type: "burst-end"; conversationId: string; burstId: string }
   | { type: "peer-left"; conversationId: string; peer: string }
+  // The ring went unanswered; the sender's unheard audio was dropped.
+  | { type: "ring-timeout"; conversationId: string; peer: string; droppedBursts: number }
   // Stand-in for the VoIP push, used for test bots registered with a "local:" token.
   | ({ type: "ring" } & RingPayload)
   | { type: "error"; message: string };

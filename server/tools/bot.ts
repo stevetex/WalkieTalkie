@@ -98,6 +98,8 @@ function reportIncoming(c: SpikeClient): void {
       console.log(`← burst ended after ${frames} frames (${((frames * 20) / 1000).toFixed(1)} s)`);
     } else if (m.type === "peer-left") {
       console.log(`← ${m.peer} left the conversation`);
+    } else if (m.type === "ring-timeout") {
+      console.log(`← ${m.peer} didn't answer; ${m.droppedBursts} unheard burst(s) dropped`);
     }
   };
   const previous = c.onFrame;

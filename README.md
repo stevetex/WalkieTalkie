@@ -14,6 +14,8 @@ watch/    Watch-only app (watchOS 26+, SwiftUI, CallKit, PushKit)
 3. The relay replays the buffered audio, then forwards the rest live.
 4. Later messages play instantly. After `conversationWindowSeconds` of silence (45 s by default), the watch ends the call.
 
+If nobody answers, the watch stops ringing at 30 s. At 35 s the relay drops the audio nobody heard and tells the sender, so the next Talk starts a new ring instead of replaying old audio.
+
 Audio is Opus at 24 kbps in 20 ms frames, using Apple's built-in encoder. If a device can't create an Opus encoder, the app falls back to raw 16 kHz PCM, and the log in the app's Settings says which one it's using. The relay forwards frames without decoding them.
 
 The watch opens its WebSocket only while a CallKit call is active, because watchOS blocks low-level networking outside a call ([TN3135](https://developer.apple.com/documentation/technotes/tn3135-low-level-networking-on-watchos)). Device registration and metrics uploads use plain HTTPS, which is allowed at any time.
@@ -105,7 +107,7 @@ Build and install with the local host baked in:
 cd watch && xcodebuild -project WalkieSpike.xcodeproj -target WalkieSpike -sdk watchsimulator SPIKE_SERVER_HOST=localhost:8080 SPIKE_TOKEN=simtoken build
 ```
 
-Then install `build/Debug-watchsimulator/WalkieSpike.app` with `xcrun simctl install`. Use the bot commands from above with `SPIKE_SERVER=http://localhost:8080`.
+Then install `build/Debug-watchsimulator/WalkieSpike.app` with `xcrun simctl install`. Don't pass `CODE_SIGNING_ALLOWED=NO` for simulator builds: CallKit needs the local ad-hoc signature and rejects unsigned apps as "unentitled". Use the bot commands from above with `SPIKE_SERVER=http://localhost:8080`.
 
 The simulator can't do several things a real watch does. Simulator builds work around them, so some of their timings aren't meaningful:
 
@@ -121,7 +123,7 @@ Outgoing calls do go through CallKit in the simulator. Opus encoding and decodin
 
 ## Not in this spike yet
 
-- Turning unanswered rings, Do Not Disturb and Theater Mode into voice clips. The watch currently ends the ring after 30 s, and the relay drops unheard audio after 2 minutes.
+- Voice clips for unanswered rings, Do Not Disturb and Theater Mode. This is deferred by design: the watch stops ringing at 30 s, then at 35 s the relay drops the unheard audio and tells the sender "didn't answer". See "Design decisions" in the feasibility doc for why, and when to revisit.
 - Checking that the paired iPhone shows nothing, and whether double-tap answers the call. Watch for both during runs.
 - Battery measurement per conversation. Use the watch's battery level before and after a scripted series of runs.
 - iPhone PushToTalk, real accounts (Sign in with Apple), group channels and end-to-end encryption.
