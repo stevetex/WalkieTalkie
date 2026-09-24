@@ -754,17 +754,22 @@ extension SpikeController: UNUserNotificationCenterDelegate {
         phase = .connecting
         statusLine = "Connecting…"
         rejoinedOnFreshStream = false
-        if relay.isReady {
-            clockOffsetMs = relay.clockOffsetMs
-            bestClockRoundTripMs = .infinity
+        if relay.isReady || relay.isConnecting {
+            // Opened at launch. Even if it doesn't look ready yet, keep it: the server may
+            // already have answered while the app was suspended (run 13), and "join" is
+            // queued until its hello-ack is handled.
+            call?.timeline.mark("joinSent", detail: relay.isReady ? "over the open stream" : "queued on the opening stream")
+            if relay.isReady {
+                clockOffsetMs = relay.clockOffsetMs
+                bestClockRoundTripMs = .infinity
+                refineClockOffset()
+            }
             relay.send(["type": "join", "conversationId": "pending"])
-            call?.timeline.mark("joinSent", detail: "over the open stream")
-            refineClockOffset()
             // The stream may have gone stale while the app was suspended without saying so.
             let uuid = call?.uuid
-            DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+            DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in
                 guard let self, call?.uuid == uuid, call?.conversationId == nil else { return }
-                rejoinOnFreshStream("not joined after 3 s")
+                rejoinOnFreshStream("not joined after 4 s")
             }
         } else {
             call?.timeline.mark("joinSent", detail: "with the stream")
