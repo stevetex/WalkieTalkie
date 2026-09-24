@@ -1,8 +1,12 @@
 // Scripted participant for spike runs with a single watch.
 //
 //   node tools/bot.ts send --to <userId> [--say "text" | --wav file.wav] [--stay 45]
+//                         [--ring-until-answered] [--again 20 [--say-again "text"]]
 //       Rings <userId>, streams the audio in real time, then stays in the conversation
 //       for --stay seconds so replies from the watch are heard (and counted).
+//       --ring-until-answered rings again whenever a ring times out unanswered (for a
+//       watch app that's closed until a notification opens it). --again sends a second
+//       message that many seconds after the first (for testing with the wrist down).
 //
 //   node tools/bot.ts listen [--answer-delay 1500] [--stay 45]
 //       Registers as a bot, waits to be rung, "answers" after the delay, and saves what it
@@ -27,6 +31,9 @@ const { positionals, values } = parseArgs({
     say: { type: "string", default: "Hey, it's the test bot. Can you hear me? Over." },
     wav: { type: "string" },
     stay: { type: "string", default: "45" },
+    "ring-until-answered": { type: "boolean", default: false },
+    again: { type: "string" },
+    "say-again": { type: "string", default: "This is the second message. Did it play with your wrist down? Over." },
     "answer-delay": { type: "string", default: "1500" },
   },
 });
@@ -44,9 +51,28 @@ if (mode === "send") {
   await client.register(values.name!);
   await client.connect();
   console.log(`Talking to ${values.to} for ${(pcm.length / 32000).toFixed(1)} s…`);
-  const { conversationId, pushed } = await client.talk(values.to, pcm);
+  let { conversationId, pushed } = await client.talk(values.to, pcm);
   console.log(pushed ? `Rang ${values.to} (conversation ${conversationId})` : `${values.to} was already live`);
   reportIncoming(client);
+  if (values["ring-until-answered"] && pushed) {
+    // A ring for a closed app waits on the server until a notification opens the app, and
+    // the relay abandons it after 35 s. Ring again after each timeout until the watch joins.
+    for (let attempt = 2; attempt <= 10; ) {
+      await sleep(1000);
+      const events = await serverEvents(conversationId);
+      if (events.includes("receiverJoined")) break;
+      if (events.filter((e) => e === "ringTimedOut").length >= attempt - 1) {
+        ({ conversationId } = await client.talk(values.to, pcm));
+        console.log(`Rang again, attempt ${attempt}`);
+        attempt++;
+      }
+    }
+  }
+  if (values.again) {
+    await sleep(Number(values.again) * 1000);
+    console.log(`Sending the second message…`);
+    ({ conversationId } = await client.talk(values.to, synthesize(values["say-again"]!)));
+  }
   await sleep(Number(values.stay) * 1000);
   client.send({ type: "leave", conversationId });
   await client.uploadMetrics(conversationId, "sender");
@@ -86,6 +112,16 @@ if (mode === "send") {
 } else {
   console.error("usage: node tools/bot.ts send --to <userId> | listen");
   process.exit(2);
+}
+
+// Server-side event names in a conversation's timeline, oldest first.
+async function serverEvents(conversationId: string): Promise<string[]> {
+  const res = await fetch(new URL(`/v1/metrics/${conversationId}`, server), {
+    headers: token ? { authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) return [];
+  const { timeline } = (await res.json()) as { timeline: Array<{ source: string; name: string }> };
+  return timeline.filter((e) => e.source === "server").map((e) => e.name);
 }
 
 function reportIncoming(c: SpikeClient): void {

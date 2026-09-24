@@ -1,6 +1,7 @@
 import AVFoundation
 import CallKit
 import Combine
+import UserNotifications
 import WatchKit
 
 /// Coordinates a conversation. CallKit is used only to ring (option B in the
@@ -39,6 +40,8 @@ final class SpikeController: NSObject, ObservableObject {
     @Published private(set) var registrationStatus = "Waiting for VoIP push token"
     @Published private(set) var lastRun: [String] = []
     @Published private(set) var logLines: [String] = []
+    /// Notification ring test: shown under Settings → Experiments.
+    @Published private(set) var notificationTestStatus = ""
 
     var codecDescription: String { audio.codecDescription }
 
@@ -79,6 +82,11 @@ final class SpikeController: NSObject, ObservableObject {
     private var postsThisBurst = 0
     /// Set after answering: turn on the app's own audio once CallKit lets go of the session.
     private var awaitingOwnAudio = false
+    /// Notification ring test (a local notification standing in for option C's push): after
+    /// the notification is opened, the next collected ring is answered at once, and these
+    /// events (scheduled, delivered, opened, cold launch) go into its timeline.
+    private var answerNextRing = false
+    private var pendingRingEvents: [(name: String, t: Double, detail: String?)] = []
 
     override init() {
         let configuration = CXProviderConfiguration()
@@ -94,6 +102,12 @@ final class SpikeController: NSObject, ObservableObject {
         guard !started else { return }
         started = true
         provider.setDelegate(self, queue: nil)
+        UNUserNotificationCenter.current().delegate = self
+        if let armedAt = NotificationRingTest.armedAt {
+            // Launched while a test notification was pending: a cold launch from it, most likely.
+            pendingRingEvents.append(("appLaunched", NotificationRingTest.processStartMs() ?? Timeline.nowMs(), nil))
+            notificationTestStatus = "Armed at \(NotificationRingTest.clock(armedAt))"
+        }
 
         push.onToken = { [unowned self] _ in
             registrationStatus = "Push token received"
@@ -120,7 +134,10 @@ final class SpikeController: NSObject, ObservableObject {
             DispatchQueue.main.async { self?.sendCaptured(frame) }
         }
         audio.onFirstPlayback = { [weak self] in
-            DispatchQueue.main.async { self?.call?.timeline.mark("firstAudioScheduled") }
+            DispatchQueue.main.async {
+                self?.call?.timeline.mark("firstAudioScheduled")
+                self?.call?.timeline.mark("burstAudioStarted", once: false)
+            }
         }
         audio.onFirstCapturedFrame = { [weak self] t in
             DispatchQueue.main.async { self?.call?.timeline.mark("micFirstFrame", at: t, once: false) }
@@ -148,13 +165,19 @@ final class SpikeController: NSObject, ObservableObject {
         registrationStatus = "No VoIP push: rings arrive while the app is open"
         registerDevice()
         Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [weak self] _ in
-            guard let self, call == nil, !settings.serverHost.isEmpty else { return }
-            let api = APIClient(settings: settings)
-            Task { @MainActor in
-                guard let rings = try? await api.polledRings() else { return }
-                for payload in rings {
-                    self.handleIncomingPush(payload) {}
-                }
+            // While a test notification is armed, the ring waits for the notification instead.
+            guard NotificationRingTest.armedAt == nil else { return }
+            self?.pollRings()
+        }
+    }
+
+    private func pollRings() {
+        guard call == nil, !settings.serverHost.isEmpty else { return }
+        let api = APIClient(settings: settings)
+        Task { @MainActor in
+            guard let rings = try? await api.polledRings() else { return }
+            for payload in rings {
+                self.handleIncomingPush(payload) {}
             }
         }
     }
@@ -200,7 +223,7 @@ final class SpikeController: NSObject, ObservableObject {
         if call == nil {
             startOutgoingConversation()
         } else {
-            call?.timeline.mark("talkPressedInWindow")
+            call?.timeline.mark("talkPressedInWindow", once: false)
             startBurstIfReady()
         }
     }
@@ -209,7 +232,7 @@ final class SpikeController: NSObject, ObservableObject {
         guard talkHeld else { return }
         talkHeld = false
         isTalking = false
-        call?.timeline.mark("talkReleased")
+        call?.timeline.mark("talkReleased", once: false)
         guard let id = burstId else {
             resetIdleTimer()
             return
@@ -261,6 +284,13 @@ final class SpikeController: NSObject, ObservableObject {
         let fromName = payload["fromName"] as? String ?? from
         let uuid = UUID()
         var timeline = Timeline(role: .receiver)
+        // Opened from the test notification: tapping it is the answer, as in option C.
+        let viaNotification = answerNextRing && call == nil
+        if viaNotification {
+            answerNextRing = false
+            for event in pendingRingEvents { timeline.mark(event.name, at: event.t, detail: event.detail) }
+            pendingRingEvents = []
+        }
         timeline.mark("pushReceived", detail: "from \(fromName)")
         if let sentAt = payload["pushSentAt"] as? Double {
             timeline.mark("pushSentAtServer", detail: String(Int(sentAt)))
@@ -278,16 +308,21 @@ final class SpikeController: NSObject, ObservableObject {
         // In-app ring: always in the simulator (it disconnects reported incoming calls at
         // once, reason 55); on a watch in polling mode when "Ring with CallKit" is off. The
         // Answer button then runs the same path CXAnswerCallAction would.
-        if settings.ringsInApp {
+        if settings.ringsInApp || viaNotification {
             if call == nil {
                 call = ActiveCall(uuid: uuid, outgoing: false, conversationId: conversationId,
                                   peerId: from, peerName: fromName, timeline: timeline)
-                call?.timeline.mark("callReported", detail: "in-app ring")
+                call?.timeline.mark("callReported", detail: viaNotification ? "notification ring" : "in-app ring")
                 phase = .ringing
                 statusLine = "\(fromName) is calling"
-                WKInterfaceDevice.current().play(.notification)
                 startRingTimer(for: uuid)
                 connectRelay()
+                if viaNotification {
+                    notificationTestStatus = ""
+                    answer()
+                } else {
+                    WKInterfaceDevice.current().play(.notification)
+                }
             }
             completion()
             return
@@ -421,7 +456,7 @@ final class SpikeController: NSObject, ObservableObject {
             phase = .live
             statusLine = "With \(call?.peerName ?? "friend")"
         case "burst-start":
-            call?.timeline.mark("burstStartReceived", detail: message.replay == true ? "replay" : "live")
+            call?.timeline.mark("burstStartReceived", detail: message.replay == true ? "replay" : "live", once: false)
             remoteTalking = true
             statusLine = "\(call?.peerName ?? "Friend") is talking"
             idleTimer?.invalidate()
@@ -576,6 +611,11 @@ final class SpikeController: NSObject, ObservableObject {
         statusLine = "Idle"
     }
 
+    /// Diagnostics: application state changes (wrist down, system call screen on top).
+    func noteAppState(_ state: String) {
+        call?.timeline.mark("app", detail: state, once: false)
+    }
+
     private func log(_ line: String) {
         let formatter = DateFormatter()
         formatter.dateFormat = "HH:mm:ss"
@@ -584,6 +624,104 @@ final class SpikeController: NSObject, ObservableObject {
         call?.timeline.mark("log", detail: line, once: false)
         logLines.append(entry)
         if logLines.count > 60 { logLines.removeFirst(logLines.count - 60) }
+    }
+}
+
+// MARK: - Notification ring test
+
+extension SpikeController: UNUserNotificationCenterDelegate {
+    /// Schedules the test notification. Leave the app (or quit it) before it fires; the ring
+    /// sent meanwhile waits on the server, since polling pauses while the test is armed.
+    func armNotificationRing(after seconds: TimeInterval) {
+        let center = UNUserNotificationCenter.current()
+        center.requestAuthorization(options: [.alert, .sound]) { granted, _ in
+            DispatchQueue.main.async {
+                guard granted else {
+                    self.notificationTestStatus = "Notifications aren't allowed"
+                    return
+                }
+                let content = UNMutableNotificationContent()
+                content.title = self.settings.friendName.isEmpty ? "Walkie Spike" : self.settings.friendName
+                content.body = "Tap to listen"
+                content.sound = .default
+                // Needs the time-sensitive entitlement (not on a Personal Team); without it
+                // the notification is delivered as "active".
+                content.interruptionLevel = .timeSensitive
+                let trigger = UNTimeIntervalNotificationTrigger(timeInterval: seconds, repeats: false)
+                let request = UNNotificationRequest(identifier: NotificationRingTest.identifier, content: content, trigger: trigger)
+                center.add(request) { error in
+                    DispatchQueue.main.async {
+                        if let error {
+                            self.notificationTestStatus = "Couldn't schedule: \(error.localizedDescription)"
+                            return
+                        }
+                        let now = Timeline.nowMs()
+                        NotificationRingTest.armedAt = now
+                        self.notificationTestStatus = "Fires at \(NotificationRingTest.clock(now + seconds * 1000)). Leave the app now."
+                    }
+                }
+            }
+        }
+    }
+
+    func disarmNotificationRing() {
+        UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: [NotificationRingTest.identifier])
+        NotificationRingTest.armedAt = nil
+        answerNextRing = false
+        pendingRingEvents = []
+        notificationTestStatus = ""
+    }
+
+    func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification,
+                                withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
+        completionHandler([.banner, .sound])
+    }
+
+    func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,
+                                withCompletionHandler completionHandler: @escaping () -> Void) {
+        let openedAt = Timeline.nowMs()
+        let deliveredAt = response.notification.date.timeIntervalSince1970 * 1000
+        let isTest = response.notification.request.identifier == NotificationRingTest.identifier
+        DispatchQueue.main.async {
+            defer { completionHandler() }
+            guard isTest, let armedAt = NotificationRingTest.armedAt else { return }
+            NotificationRingTest.armedAt = nil
+            self.pendingRingEvents += [
+                ("notificationScheduled", armedAt, nil),
+                ("notificationDelivered", deliveredAt, nil),
+                ("notificationOpened", openedAt, nil),
+            ]
+            self.answerNextRing = true
+            self.notificationTestStatus = "Opened; collecting the ring"
+            self.pollRings()
+        }
+    }
+}
+
+/// State for the notification ring test that has to survive the app being quit.
+enum NotificationRingTest {
+    static let identifier = "notification-ring-test"
+    private static let armedKey = "notificationRingArmedAt"
+
+    static var armedAt: Double? {
+        get { UserDefaults.standard.object(forKey: armedKey) as? Double }
+        set { UserDefaults.standard.set(newValue, forKey: armedKey) }
+    }
+
+    static func clock(_ ms: Double) -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss"
+        return formatter.string(from: Date(timeIntervalSince1970: ms / 1000))
+    }
+
+    /// When this process started (ms since epoch), to time a cold launch.
+    static func processStartMs() -> Double? {
+        var info = kinfo_proc()
+        var size = MemoryLayout<kinfo_proc>.stride
+        var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, getpid()]
+        guard sysctl(&mib, u_int(mib.count), &info, &size, nil, 0) == 0 else { return nil }
+        let start = info.kp_proc.p_un.__p_starttime
+        return Double(start.tv_sec) * 1000 + Double(start.tv_usec) / 1000
     }
 }
 
@@ -703,12 +841,21 @@ extension SpikeController: CXProviderDelegate {
     }
 
     /// Diagnostics: notices when the main thread (UI, networking callbacks) stalls, which
-    /// happened while Talk was held on a real watch.
+    /// happened while Talk was held on a real watch. A tick that arrives late means the whole
+    /// process was paused (suspended by the system), not just the main thread.
     fileprivate func startMainThreadWatchdog() {
         let timer = DispatchSource.makeTimerSource(queue: .global(qos: .utility))
         timer.schedule(deadline: .now() + 1, repeating: .milliseconds(250))
+        var lastTick = Timeline.nowMs()
         timer.setEventHandler { [weak self] in
             let queuedAt = Timeline.nowMs()
+            let gap = queuedAt - lastTick
+            lastTick = queuedAt
+            if gap > 1_000 {
+                DispatchQueue.main.async {
+                    self?.call?.timeline.mark("processPaused", at: queuedAt - gap, detail: "\(Int(gap)) ms", once: false)
+                }
+            }
             DispatchQueue.main.async {
                 let lag = Timeline.nowMs() - queuedAt
                 guard lag > 750, let self, self.call != nil else { return }

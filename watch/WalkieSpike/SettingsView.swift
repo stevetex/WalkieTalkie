@@ -2,6 +2,7 @@ import SwiftUI
 
 struct SettingsView: View {
     @ObservedObject var controller: SpikeController
+    @Environment(\.dismiss) private var dismiss
     @State private var users: [APIClient.User] = []
     @State private var usersError: String?
 
@@ -27,6 +28,23 @@ struct SettingsView: View {
                     Toggle("Ring with CallKit", isOn: $controller.settings.ringWithCallKit)
                 }
                 #endif
+            }
+
+            Section("Experiments") {
+                // Option C stand-in: a local notification rings, and opening it answers.
+                if controller.notificationTestStatus.isEmpty || controller.notificationTestStatus.hasPrefix("Opened") {
+                    Button("Notification ring in 30 s") {
+                        controller.armNotificationRing(after: 30)
+                        dismiss() // Back to the Talk screen, where the notification returns.
+                    }
+                } else {
+                    Button("Cancel notification ring", role: .destructive) { controller.disarmNotificationRing() }
+                }
+                if !controller.notificationTestStatus.isEmpty {
+                    Text(controller.notificationTestStatus)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
             }
 
             Section("Talk to") {

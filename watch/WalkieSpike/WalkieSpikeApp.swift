@@ -20,4 +20,10 @@ final class AppDelegate: NSObject, WKApplicationDelegate {
     func applicationDidFinishLaunching() {
         SpikeController.shared.start()
     }
+
+    // Diagnostics: the app looked paused for seconds at a time on a real watch.
+    func applicationDidBecomeActive() { SpikeController.shared.noteAppState("active") }
+    func applicationWillResignActive() { SpikeController.shared.noteAppState("inactive") }
+    func applicationDidEnterBackground() { SpikeController.shared.noteAppState("background") }
+    func applicationWillEnterForeground() { SpikeController.shared.noteAppState("foreground") }
 }
