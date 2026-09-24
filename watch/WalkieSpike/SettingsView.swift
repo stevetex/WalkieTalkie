@@ -37,6 +37,10 @@ struct SettingsView: View {
                         controller.armNotificationRing(after: 30)
                         dismiss() // Back to the Talk screen, where the notification returns.
                     }
+                    // A cold start from the notification, since watchOS 27 has no app switcher.
+                    Button("Notification ring in 30 s, then quit") {
+                        controller.armNotificationRing(after: 30, thenQuit: true)
+                    }
                 } else {
                     Button("Cancel notification ring", role: .destructive) { controller.disarmNotificationRing() }
                 }

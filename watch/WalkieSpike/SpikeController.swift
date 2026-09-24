@@ -665,7 +665,9 @@ final class SpikeController: NSObject, ObservableObject {
 extension SpikeController: UNUserNotificationCenterDelegate {
     /// Schedules the test notification. Leave the app (or quit it) before it fires; the ring
     /// sent meanwhile waits on the server, since polling pauses while the test is armed.
-    func armNotificationRing(after seconds: TimeInterval) {
+    /// `thenQuit` exits the app once it's scheduled, so opening the notification is a cold
+    /// launch (a test-only shortcut: watchOS 27 has no app switcher to quit from).
+    func armNotificationRing(after seconds: TimeInterval, thenQuit: Bool = false) {
         let center = UNUserNotificationCenter.current()
         center.requestAuthorization(options: [.alert, .sound]) { granted, _ in
             DispatchQueue.main.async {
@@ -691,6 +693,10 @@ extension SpikeController: UNUserNotificationCenterDelegate {
                         let now = Timeline.nowMs()
                         NotificationRingTest.armedAt = now
                         self.notificationTestStatus = "Fires at \(NotificationRingTest.clock(now + seconds * 1000)). Leave the app now."
+                        if thenQuit {
+                            UserDefaults.standard.synchronize()
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { exit(0) }
+                        }
                     }
                 }
             }
