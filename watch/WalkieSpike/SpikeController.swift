@@ -106,6 +106,7 @@ final class SpikeController: NSObject, ObservableObject {
         if let armedAt = NotificationRingTest.armedAt {
             // Launched while a test notification was pending: a cold launch from it, most likely.
             pendingRingEvents.append(("appLaunched", NotificationRingTest.processStartMs() ?? Timeline.nowMs(), nil))
+            pendingRingEvents.append(("appStarted", Timeline.nowMs(), "didFinishLaunching"))
             notificationTestStatus = "Armed at \(NotificationRingTest.clock(armedAt))"
         }
 
@@ -387,13 +388,13 @@ final class SpikeController: NSObject, ObservableObject {
 
     // MARK: Relay
 
-    private func connectRelay() {
+    private func connectRelay(join: String? = nil) {
         guard let baseURL = settings.baseURL, !settings.serverHost.isEmpty else {
             log("Server host isn't configured")
             endCall()
             return
         }
-        relay.connect(baseURL: baseURL, token: settings.token, userId: settings.userId)
+        relay.connect(baseURL: baseURL, token: settings.token, userId: settings.userId, join: join)
     }
 
     private func updateTalkReady() {
@@ -452,6 +453,13 @@ final class SpikeController: NSObject, ObservableObject {
             audio.endCapture {}
             burstId = nil
         case "joined":
+            if call?.conversationId == nil {
+                // Joined by the stream request after opening the notification.
+                call?.conversationId = message.conversationId
+                if let peer = message.peer { call?.peerId = peer }
+                answerNextRing = false
+                pendingRingEvents = []
+            }
             call?.timeline.mark("joined", detail: "\(message.replayBursts ?? 0) buffered bursts")
             phase = .live
             statusLine = "With \(call?.peerName ?? "friend")"
@@ -476,6 +484,11 @@ final class SpikeController: NSObject, ObservableObject {
             log("Ring unanswered; \(message.droppedBursts ?? 0) unheard bursts dropped")
         case "error":
             log("Relay error: \(message.message ?? "unknown")")
+            if message.message == "no pending ring", call?.conversationId == nil, answerNextRing {
+                // Opened before the ring was sent: drop this attempt and answer the ring
+                // when polling collects it.
+                finishCall()
+            }
         default:
             break
         }
@@ -613,6 +626,9 @@ final class SpikeController: NSObject, ObservableObject {
 
     /// Diagnostics: application state changes (wrist down, system call screen on top).
     func noteAppState(_ state: String) {
+        if call == nil, NotificationRingTest.armedAt != nil {
+            pendingRingEvents.append(("app", Timeline.nowMs(), state))
+        }
         call?.timeline.mark("app", detail: state, once: false)
     }
 
@@ -692,9 +708,30 @@ extension SpikeController: UNUserNotificationCenterDelegate {
                 ("notificationOpened", openedAt, nil),
             ]
             self.answerNextRing = true
-            self.notificationTestStatus = "Opened; collecting the ring"
-            self.pollRings()
+            self.notificationTestStatus = ""
+            self.answerFromNotification()
         }
+    }
+
+    /// Opening the notification is the answer. The ring is collected and joined by the
+    /// request that opens the relay stream: one round trip on a network that's still waking
+    /// up, instead of three (poll, stream, join). A real option C push would carry the
+    /// conversation ID; the test asks the server for the queued ring instead.
+    private func answerFromNotification() {
+        guard call == nil else { return }
+        var timeline = Timeline(role: .receiver)
+        for event in pendingRingEvents { timeline.mark(event.name, at: event.t, detail: event.detail) }
+        let peerName = settings.friendName.isEmpty ? settings.friendId : settings.friendName
+        call = ActiveCall(uuid: UUID(), outgoing: false, conversationId: nil,
+                          peerId: settings.friendId, peerName: peerName, timeline: timeline)
+        call?.answered = true
+        call?.timeline.mark("answerTapped", detail: "notification")
+        call?.timeline.mark("joinSent", detail: "with the stream")
+        phase = .connecting
+        statusLine = "Connecting…"
+        connectRelay(join: "pending")
+        activateOwnAudio()
+        resetIdleTimer()
     }
 }
 

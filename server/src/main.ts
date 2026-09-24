@@ -79,6 +79,16 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
     // The stream's first message doubles as hello-ack for clock-offset estimates.
     const clientTime = Number(url.searchParams.get("clientTime") ?? 0);
     peer.sendJSON({ type: "hello-ack", clientTime, serverTime: Date.now() });
+    // ?join=<conversationId> answers and joins in this same request, saving the watch two
+    // round trips on a network that's still waking up (option C: the notification carries
+    // the ID). ?join=pending takes the user's newest queued ring instead, for the watch's
+    // local-notification test, which can't know the ID in advance.
+    const join = url.searchParams.get("join");
+    if (join) {
+      const conversationId = join === "pending" ? relay.takePolledRings(userId).at(-1)?.conversationId : join;
+      if (conversationId) relay.handleMessage(peer, { type: "join", conversationId });
+      else peer.sendJSON({ type: "error", message: "no pending ring" });
+    }
     // Keepalive, so idle proxies and carrier NATs don't drop the connection.
     const ping = setInterval(() => peer.sendJSON({ type: "ping" }), 15_000);
     req.on("close", () => {

@@ -64,6 +64,34 @@ test("a watch on the HTTP transport answers, gets the replay, and talks back", a
   });
 });
 
+test("opening the HTTP stream can join in the same request", async () => {
+  await withServer(async (s) => {
+    const server = `http://localhost:${s.port}`;
+    const bot = new SpikeClient({ server, userId: "bot", token: "secret" });
+    const watch = new SpikeClient({ server, userId: "watch", token: "secret", transport: "http" });
+    await bot.register("Bot");
+    await watch.register("Watch", "poll:watch");
+    await bot.connect();
+
+    // No ring queued yet: the stream opens but says so.
+    await watch.connect("pending");
+    assert.equal((await watch.waitFor("error")).message, "no pending ring");
+    watch.close();
+
+    // A queued ring is collected and joined by the stream request itself.
+    const { conversationId } = await bot.talk("watch", pcm(10), { realtime: false });
+    await watch.connect("pending");
+    const joined = await watch.waitFor("joined");
+    assert.equal(joined.conversationId, conversationId);
+    assert.equal(joined.peer, "bot");
+    await watch.waitFor("burst-end");
+    assert.equal(watch.frames.length, 10);
+    assert.deepEqual(await watch.api("GET", "/v1/rings/poll?userId=watch"), []);
+    watch.close();
+    bot.close();
+  });
+});
+
 test("the HTTP stream disconnecting leaves the conversation", async () => {
   await withServer(async (s) => {
     const server = `http://localhost:${s.port}`;

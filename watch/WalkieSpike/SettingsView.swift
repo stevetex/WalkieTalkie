@@ -32,7 +32,7 @@ struct SettingsView: View {
 
             Section("Experiments") {
                 // Option C stand-in: a local notification rings, and opening it answers.
-                if controller.notificationTestStatus.isEmpty || controller.notificationTestStatus.hasPrefix("Opened") {
+                if controller.notificationTestStatus.isEmpty {
                     Button("Notification ring in 30 s") {
                         controller.armNotificationRing(after: 30)
                         dismiss() // Back to the Talk screen, where the notification returns.

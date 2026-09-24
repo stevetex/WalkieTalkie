@@ -58,8 +58,9 @@ export class SpikeClient {
     return this.api("POST", "/v1/devices", { userId: this.userId, name, voipToken, apnsEnvironment: "sandbox" });
   }
 
-  async connect(): Promise<void> {
-    if (this.opts.transport === "http") return this.connectHttp();
+  // `join` (HTTP transport only) joins a conversation in the request that opens the stream.
+  async connect(join?: string): Promise<void> {
+    if (this.opts.transport === "http") return this.connectHttp(join);
     const url = new URL("/v1/relay", this.opts.server);
     url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
     url.searchParams.set("userId", this.userId);
@@ -82,9 +83,10 @@ export class SpikeClient {
     this.clockOffsetMs = ack.serverTime - (sentAt + receivedAt) / 2;
   }
 
-  private async connectHttp(): Promise<void> {
+  private async connectHttp(join?: string): Promise<void> {
     const url = new URL("/v1/relay/stream", this.opts.server);
     url.searchParams.set("userId", this.userId);
+    if (join) url.searchParams.set("join", join);
     const sentAt = Date.now();
     url.searchParams.set("clientTime", String(sentAt));
     this.stream = new AbortController();

@@ -86,7 +86,9 @@ final class RelayConnection: NSObject, URLSessionDataDelegate {
     private var outbox = Data()
     private var posting = false
 
-    func connect(baseURL: URL, token: String, userId: String) {
+    /// `join` also answers and joins that conversation in the stream request itself
+    /// ("pending": the user's newest queued ring).
+    func connect(baseURL: URL, token: String, userId: String, join: String? = nil) {
         close()
         self.token = token
         let configuration = URLSessionConfiguration.default
@@ -100,7 +102,7 @@ final class RelayConnection: NSObject, URLSessionDataDelegate {
         stream?.queryItems = [
             URLQueryItem(name: "userId", value: userId),
             URLQueryItem(name: "clientTime", value: String(Int(helloSentAt))),
-        ]
+        ] + (join.map { [URLQueryItem(name: "join", value: $0)] } ?? [])
         var send = URLComponents(url: baseURL.appendingPathComponent("v1/relay/send"), resolvingAgainstBaseURL: false)
         send?.queryItems = [URLQueryItem(name: "userId", value: userId)]
         guard let streamURL = stream?.url, let sendURL = send?.url else { return }

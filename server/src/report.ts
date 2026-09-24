@@ -35,7 +35,9 @@ const INTERVALS: Array<[string, string, string]> = [
   // Notification ring test (option C stand-in): opening the notification is the answer.
   ["Notification: delivered → opened (human tap)", "receiver.notificationDelivered", "receiver.notificationOpened"],
   ["Cold launch: process start → notification opened", "receiver.appLaunched", "receiver.notificationOpened"],
+  ["Cold launch: process start → app started", "receiver.appLaunched", "receiver.appStarted"],
   ["Notification: opened → ring collected", "receiver.notificationOpened", "receiver.pushReceived"],
+  ["Notification: opened → joined", "receiver.notificationOpened", "receiver.joined"],
   ["Notification: opened → first audio", "receiver.notificationOpened", "receiver.firstAudioScheduled"],
   ["Total: press → first audio (cross-device)", "sender.talkPressed", "receiver.firstAudioScheduled"],
   ["Total: push sent → first audio, minus human answer time", "server.pushSent", "receiver.firstAudioScheduled"],
