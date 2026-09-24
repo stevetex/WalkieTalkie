@@ -14,7 +14,7 @@ Read this first. The spike is finished: it proved on a real Apple Watch that the
 A third-party replacement for Apple's Watch Walkie-Talkie app, which Apple removed in watchOS 27. It should be push-to-talk between friends, ringing the watch, answered with a tap, then a hold-to-talk conversation.
 
 - **Feasibility doc (Claude Docs):** https://claude.ai/code/artifact/59ab6e47-6e5d-4698-8bd1-173293953df9. Log design decisions in its "Design decisions" table (date, decision, why, revisit if), and add measured results to Prototype results.
-- **Repo:** https://github.com/stevetex/WalkieTalkie. `main` is pushed and clean at `2378422`.
+- **Repo:** https://github.com/stevetex/WalkieTalkie. `main` is pushed and clean (the last spike commit is the one that added this handoff).
 
 ## The design to build: option C (decided 2026-09-23)
 
