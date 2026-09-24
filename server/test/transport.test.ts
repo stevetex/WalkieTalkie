@@ -88,6 +88,18 @@ test("opening the HTTP stream can join in the same request", async () => {
     assert.equal(watch.frames.length, 10);
     assert.deepEqual(await watch.api("GET", "/v1/rings/poll?userId=watch"), []);
     watch.close();
+
+    // Or join over a stream that's already open, as the watch does when it opened the
+    // stream while the notification was being delivered.
+    while ((await bot.api("GET", "/v1/status")).some((c: { joined: string[] }) => c.joined.includes("watch"))) {
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    const second = await bot.talk("watch", pcm(5), { realtime: false });
+    assert.equal(second.pushed, true);
+    await watch.connect();
+    watch.send({ type: "join", conversationId: "pending" });
+    assert.equal((await watch.waitFor("joined")).conversationId, second.conversationId);
+    watch.close();
     bot.close();
   });
 });

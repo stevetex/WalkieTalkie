@@ -86,6 +86,8 @@ final class SpikeController: NSObject, ObservableObject {
     /// the notification is opened, the next collected ring is answered at once, and these
     /// events (scheduled, delivered, opened, cold launch) go into its timeline.
     private var answerNextRing = false
+    /// Answering from the notification already retried on a fresh stream once.
+    private var rejoinedOnFreshStream = false
     private var pendingRingEvents: [(name: String, t: Double, detail: String?)] = []
 
     override init() {
@@ -126,7 +128,10 @@ final class SpikeController: NSObject, ObservableObject {
             audio.enqueue(frame)
         }
         relay.onClose = { [unowned self] reason in
-            guard call != nil else { return }
+            guard let current = call else { return }
+            if !current.outgoing, current.answered, current.conversationId == nil {
+                return rejoinOnFreshStream("relay closed before joining: \(reason)")
+            }
             log("Relay closed: \(reason)")
             endCall()
         }
@@ -156,6 +161,13 @@ final class SpikeController: NSObject, ObservableObject {
         startMainThreadWatchdog()
         log("Codec: \(audio.codecDescription)")
         if SpikeSettings.usesPolledRings { startRingPolling() }
+        if NotificationRingTest.armedAt != nil {
+            // Most likely launched in the background as the test notification is delivered
+            // (watchOS does this before the tap): open the relay stream now, while the app
+            // still runs, so the tap only has to send "join" over it.
+            pendingRingEvents.append(("preconnectStarted", Timeline.nowMs(), nil))
+            connectRelay()
+        }
     }
 
     /// Without VoIP push (the simulator, or a SPIKE_PUSH_MODE = none build), register a
@@ -402,7 +414,12 @@ final class SpikeController: NSObject, ObservableObject {
     }
 
     private func relayReady(clockOffsetMs: Double) {
-        guard let current = call else { return }
+        guard let current = call else {
+            if NotificationRingTest.armedAt != nil || answerNextRing {
+                pendingRingEvents.append(("preconnected", Timeline.nowMs(), nil))
+            }
+            return
+        }
         defer { updateTalkReady() }
         self.call?.timeline.mark("socketOpen")
         self.clockOffsetMs = clockOffsetMs
@@ -683,6 +700,7 @@ extension SpikeController: UNUserNotificationCenterDelegate {
     func disarmNotificationRing() {
         UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: [NotificationRingTest.identifier])
         NotificationRingTest.armedAt = nil
+        if call == nil { relay.close() } // A stream opened at launch for the test.
         answerNextRing = false
         pendingRingEvents = []
         notificationTestStatus = ""
@@ -713,10 +731,11 @@ extension SpikeController: UNUserNotificationCenterDelegate {
         }
     }
 
-    /// Opening the notification is the answer. The ring is collected and joined by the
-    /// request that opens the relay stream: one round trip on a network that's still waking
-    /// up, instead of three (poll, stream, join). A real option C push would carry the
-    /// conversation ID; the test asks the server for the queued ring instead.
+    /// Opening the notification is the answer. If the stream was opened when the app was
+    /// launched for the notification, "join" goes over it; otherwise the request that opens
+    /// the stream joins, one round trip on a waking network instead of three (poll, stream,
+    /// join). A real option C push would carry the conversation ID; the test asks the
+    /// server for the queued ring ("pending") instead.
     private func answerFromNotification() {
         guard call == nil else { return }
         var timeline = Timeline(role: .receiver)
@@ -726,12 +745,38 @@ extension SpikeController: UNUserNotificationCenterDelegate {
                           peerId: settings.friendId, peerName: peerName, timeline: timeline)
         call?.answered = true
         call?.timeline.mark("answerTapped", detail: "notification")
-        call?.timeline.mark("joinSent", detail: "with the stream")
         phase = .connecting
         statusLine = "Connecting…"
-        connectRelay(join: "pending")
+        rejoinedOnFreshStream = false
+        if relay.isReady {
+            clockOffsetMs = relay.clockOffsetMs
+            bestClockRoundTripMs = .infinity
+            relay.send(["type": "join", "conversationId": "pending"])
+            call?.timeline.mark("joinSent", detail: "over the open stream")
+            refineClockOffset()
+            // The stream may have gone stale while the app was suspended without saying so.
+            let uuid = call?.uuid
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+                guard let self, call?.uuid == uuid, call?.conversationId == nil else { return }
+                rejoinOnFreshStream("not joined after 3 s")
+            }
+        } else {
+            call?.timeline.mark("joinSent", detail: "with the stream")
+            connectRelay(join: "pending")
+        }
         activateOwnAudio()
         resetIdleTimer()
+    }
+
+    private func rejoinOnFreshStream(_ why: String) {
+        guard !rejoinedOnFreshStream else {
+            log("Couldn't join: \(why)")
+            return endCall()
+        }
+        rejoinedOnFreshStream = true
+        log("Rejoining on a fresh stream (\(why))")
+        call?.timeline.mark("joinSent", detail: "fresh stream", once: false)
+        connectRelay(join: "pending")
     }
 }
 

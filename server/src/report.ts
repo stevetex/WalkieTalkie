@@ -38,6 +38,7 @@ const INTERVALS: Array<[string, string, string]> = [
   ["Cold launch: process start → app started", "receiver.appLaunched", "receiver.appStarted"],
   ["Notification: opened → ring collected", "receiver.notificationOpened", "receiver.pushReceived"],
   ["Notification: opened → joined", "receiver.notificationOpened", "receiver.joined"],
+  ["Preconnect: launch → stream open (before the tap)", "receiver.preconnectStarted", "receiver.preconnected"],
   ["Notification: opened → first audio", "receiver.notificationOpened", "receiver.firstAudioScheduled"],
   ["Total: press → first audio (cross-device)", "sender.talkPressed", "receiver.firstAudioScheduled"],
   ["Total: push sent → first audio, minus human answer time", "server.pushSent", "receiver.firstAudioScheduled"],

@@ -14,6 +14,7 @@ export const LOCAL_TOKEN_PREFIX = "local:";
 // push entitlement) register with this prefix. Their rings are queued, and the app
 // collects them with GET /v1/rings/poll while it's open.
 export const POLL_TOKEN_PREFIX = "poll:";
+export const PENDING_RING = "pending";
 
 export interface Peer {
   userId: string;
@@ -230,7 +231,14 @@ export class Relay {
     this.prune(conversation);
   }
 
+  // conversationId "pending" joins the user's newest queued ring instead, for the watch's
+  // local-notification test, which can't know the ID in advance.
   private join(peer: Peer, conversationId: string): void {
+    if (conversationId === PENDING_RING) {
+      const newest = this.takePolledRings(peer.userId).at(-1);
+      if (!newest) return peer.sendJSON({ type: "error", message: "no pending ring" });
+      conversationId = newest.conversationId;
+    }
     const conversation = this.byId.get(conversationId);
     if (!conversation || !conversation.members.includes(peer.userId)) {
       peer.sendJSON({ type: "error", message: "unknown conversation" });
