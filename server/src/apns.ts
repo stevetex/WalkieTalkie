@@ -1,9 +1,11 @@
-// APNs provider for VoIP pushes (token-based auth, HTTP/2). Without credentials it
-// runs in dry-run mode and only logs, which is what the tests use.
+// APNs provider for ring notifications (token-based auth, HTTP/2). A ring is a
+// time-sensitive alert push that opens the app on tap (option C: no CallKit or VoIP push).
+// Without credentials it runs in dry-run mode and only logs, which is what the tests use.
 
 import { connect, type ClientHttp2Session } from "node:http2";
 import { createPrivateKey, sign, type KeyObject } from "node:crypto";
 import { readFileSync } from "node:fs";
+import type { RingPayload } from "./protocol.ts";
 
 export type ApnsEnvironment = "sandbox" | "production";
 
@@ -23,8 +25,17 @@ export interface PushResult {
   dryRun: boolean;
 }
 
-export interface VoipPusher {
-  sendVoip(token: string, env: ApnsEnvironment, payload: object): Promise<PushResult>;
+export interface AlertPush {
+  // The whole APNs JSON body: `aps` plus custom keys.
+  payload: object;
+  // A later push with the same ID replaces this one on the device.
+  collapseId?: string;
+  // Milliseconds since epoch. APNs keeps retrying an offline device until then; 0 = now or never.
+  expiresAt: number;
+}
+
+export interface Pusher {
+  sendAlert(token: string, env: ApnsEnvironment, push: AlertPush): Promise<PushResult>;
   close(): void;
 }
 
@@ -39,27 +50,49 @@ export function apnsConfigFromEnv(env: NodeJS.ProcessEnv): ApnsConfig | null {
   return { keyPath: APNS_KEY_PATH, keyId: APNS_KEY_ID, teamId: APNS_TEAM_ID, bundleId: APNS_BUNDLE_ID };
 }
 
-export class DryRunPusher implements VoipPusher {
-  sent: Array<{ token: string; env: ApnsEnvironment; payload: object }> = [];
+// The ring notification. Time-sensitive so it breaks through Focus modes that allow it;
+// the ring fields ride along as custom keys so the tap can join the right conversation.
+// It expires when the relay abandons the ring, since after that there's nothing to hear.
+export function ringAlert(ring: RingPayload, expiresAt: number): AlertPush {
+  return {
+    payload: {
+      aps: {
+        alert: { title: ring.fromName, body: "Tap to listen" },
+        sound: "default",
+        "interruption-level": "time-sensitive",
+        "thread-id": ring.conversationId,
+      },
+      ...ring,
+    },
+    collapseId: ring.conversationId,
+    expiresAt,
+  };
+}
 
-  async sendVoip(token: string, env: ApnsEnvironment, payload: object): Promise<PushResult> {
-    this.sent.push({ token, env, payload });
-    console.log(`[apns:dry-run] voip -> ${token.slice(0, 8)}… (${env}) ${JSON.stringify(payload)}`);
+export class DryRunPusher implements Pusher {
+  sent: Array<{ token: string; env: ApnsEnvironment } & AlertPush> = [];
+
+  async sendAlert(token: string, env: ApnsEnvironment, push: AlertPush): Promise<PushResult> {
+    this.sent.push({ token, env, ...push });
+    console.log(`[apns:dry-run] alert -> ${token.slice(0, 8)}… (${env}) ${JSON.stringify(push.payload)}`);
     return { ok: true, status: 200, latencyMs: 0, dryRun: true };
   }
 
   close(): void {}
 }
 
-export class ApnsPusher implements VoipPusher {
+export class ApnsPusher implements Pusher {
   private config: ApnsConfig;
   private key: KeyObject;
+  private hosts: Record<ApnsEnvironment, string>;
   private jwt: { token: string; issuedAt: number } | null = null;
   private sessions = new Map<ApnsEnvironment, ClientHttp2Session>();
 
-  constructor(config: ApnsConfig) {
+  // `hosts` is for tests, which point it at a local HTTP/2 server.
+  constructor(config: ApnsConfig, hosts: Record<ApnsEnvironment, string> = HOSTS) {
     this.config = config;
     this.key = createPrivateKey(readFileSync(config.keyPath));
+    this.hosts = hosts;
   }
 
   // APNs rejects tokens older than an hour and throttles refreshes more often than every 20 minutes.
@@ -76,26 +109,27 @@ export class ApnsPusher implements VoipPusher {
   private session(env: ApnsEnvironment): ClientHttp2Session {
     const existing = this.sessions.get(env);
     if (existing && !existing.closed && !existing.destroyed) return existing;
-    const session = connect(HOSTS[env]);
+    const session = connect(this.hosts[env]);
     session.on("error", (err) => console.error(`[apns] ${env} session error:`, err.message));
     session.on("close", () => this.sessions.delete(env));
     this.sessions.set(env, session);
     return session;
   }
 
-  sendVoip(token: string, env: ApnsEnvironment, payload: object): Promise<PushResult> {
+  sendAlert(token: string, env: ApnsEnvironment, push: AlertPush): Promise<PushResult> {
     const started = performance.now();
-    const body = JSON.stringify(payload);
+    const body = JSON.stringify(push.payload);
     return new Promise((resolve) => {
       const req = this.session(env).request({
         ":method": "POST",
         ":path": `/3/device/${token}`,
         authorization: `bearer ${this.providerToken()}`,
-        "apns-push-type": "voip",
-        "apns-topic": `${this.config.bundleId}.voip`,
-        // Deliver now or never: a stale ring is worse than a missed one.
+        "apns-push-type": "alert",
+        "apns-topic": this.config.bundleId,
+        // Time-sensitive: deliver immediately rather than batched for power.
         "apns-priority": "10",
-        "apns-expiration": "0",
+        "apns-expiration": String(Math.floor(push.expiresAt / 1000)),
+        ...(push.collapseId ? { "apns-collapse-id": push.collapseId } : {}),
         "content-type": "application/json",
         "content-length": Buffer.byteLength(body),
       });

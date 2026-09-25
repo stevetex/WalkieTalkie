@@ -34,7 +34,7 @@ export type ServerMessage =
   | { type: "peer-left"; conversationId: string; peer: string }
   // The ring went unanswered; the sender's unheard audio was dropped.
   | { type: "ring-timeout"; conversationId: string; peer: string; droppedBursts: number }
-  // Stand-in for the VoIP push, used for test bots registered with a "local:" token.
+  // Stand-in for the ring push, used for test bots registered with a "local:" token.
   | ({ type: "ring" } & RingPayload)
   // HTTP transport keepalive; clients ignore it.
   | { type: "ping" }
@@ -58,7 +58,8 @@ export interface MetricsUpload {
   events: MetricEvent[];
 }
 
-// Payload sent in the VoIP push. The watch reports a CallKit call from it.
+// Ring details, sent as custom keys in the alert push (see ringAlert in apns.ts), or as a
+// "ring" message to test bots.
 export interface RingPayload {
   conversationId: string;
   from: string;

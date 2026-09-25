@@ -54,8 +54,8 @@ export class SpikeClient {
     return json;
   }
 
-  register(name: string, voipToken = `local:${this.userId}`): Promise<unknown> {
-    return this.api("POST", "/v1/devices", { userId: this.userId, name, voipToken, apnsEnvironment: "sandbox" });
+  register(name: string, pushToken = `local:${this.userId}`): Promise<unknown> {
+    return this.api("POST", "/v1/devices", { userId: this.userId, name, pushToken, apnsEnvironment: "sandbox" });
   }
 
   // `join` (HTTP transport only) joins a conversation in the request that opens the stream.

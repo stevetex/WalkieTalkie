@@ -10,7 +10,7 @@
 import { createServer, type IncomingMessage, type ServerResponse, type Server } from "node:http";
 import { resolve } from "node:path";
 import { acceptUpgrade, rejectUpgrade } from "./ws.ts";
-import { ApnsPusher, DryRunPusher, apnsConfigFromEnv, type VoipPusher } from "./apns.ts";
+import { ApnsPusher, DryRunPusher, apnsConfigFromEnv, type Pusher } from "./apns.ts";
 import { DeviceStore, MetricsStore, ensureDir } from "./store.ts";
 import { Relay, type Peer } from "./relay.ts";
 import { summarizeAttempts } from "./report.ts";
@@ -22,7 +22,7 @@ export interface ServerOptions {
   host?: string;
   dataDir: string | null;
   token: string | null;
-  pusher: VoipPusher;
+  pusher: Pusher;
   ringTimeoutMs?: number;
   answerJoinTimeoutMs?: number;
 }
@@ -120,14 +120,16 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
 
       if (req.method === "POST" && url.pathname === "/v1/devices") {
         const body = await readJSON(req);
-        const { userId, name, voipToken, apnsEnvironment } = body as Record<string, unknown>;
-        if (typeof userId !== "string" || !userId || typeof voipToken !== "string" || !voipToken) {
-          return send(res, 400, { error: "userId and voipToken are required" });
+        const { userId, name, apnsEnvironment, ...rest } = body as Record<string, unknown>;
+        // The spike watch app still sends its token as voipToken.
+        const pushToken = rest.pushToken ?? rest.voipToken;
+        if (typeof userId !== "string" || !userId || typeof pushToken !== "string" || !pushToken) {
+          return send(res, 400, { error: "userId and pushToken are required" });
         }
         devices.upsert({
           userId,
           name: typeof name === "string" && name ? name : userId,
-          voipToken,
+          pushToken,
           apnsEnvironment: apnsEnvironment === "production" ? "production" : "sandbox",
           updatedAt: Date.now(),
         });
@@ -262,6 +264,6 @@ if (import.meta.main) {
   const host = process.env.HOST || undefined;
   const running = await startServer({ port: Number(process.env.PORT ?? 8080), host, dataDir, token, pusher });
   console.log(`[server] listening on ${host ?? ""}:${running.port}, data in ${dataDir}`);
-  console.log(apnsConfig ? `[server] APNs topic ${apnsConfig.bundleId}.voip` : "[server] APNs not configured: dry-run pushes");
+  console.log(apnsConfig ? `[server] APNs alert pushes, topic ${apnsConfig.bundleId}` : "[server] APNs not configured: dry-run pushes");
   if (!token) console.warn("[server] SPIKE_TOKEN not set: API and relay are unauthenticated");
 }

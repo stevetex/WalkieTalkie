@@ -9,7 +9,8 @@ import type { MetricEvent, MetricsUpload } from "./protocol.ts";
 export interface Device {
   userId: string;
   name: string;
-  voipToken: string;
+  // An APNs device token, or a "local:" / "poll:" pseudo-token (see relay.ts).
+  pushToken: string;
   apnsEnvironment: ApnsEnvironment;
   updatedAt: number;
 }
@@ -21,7 +22,10 @@ export class DeviceStore {
   constructor(dataDir: string | null) {
     this.file = dataDir ? join(dataDir, "devices.json") : null;
     if (this.file && existsSync(this.file)) {
-      for (const d of JSON.parse(readFileSync(this.file, "utf8")) as Device[]) this.devices.set(d.userId, d);
+      // Files written before the switch to alert pushes call the token voipToken.
+      for (const { voipToken, ...d } of JSON.parse(readFileSync(this.file, "utf8")) as Array<Device & { voipToken?: string }>) {
+        this.devices.set(d.userId, { ...d, pushToken: d.pushToken ?? voipToken ?? "" });
+      }
     }
   }
 

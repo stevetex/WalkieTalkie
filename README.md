@@ -3,14 +3,14 @@
 A prototype for the first item on the feasibility study's spike checklist: can a watch app use VoIP push and CallKit to ring once per conversation, replay the sender's first words after the user answers, and then play later messages instantly until the conversation goes quiet? It also measures how long each step takes.
 
 ```
-server/      Relay + VoIP push server (Node 24+, no dependencies)
+server/      Relay + APNs push server (Node 24+, no dependencies)
 watch/       Watch-only app (watchOS 26+, SwiftUI, CallKit, PushKit)
 deploy/gcp/  Scripts to host the server on a Google Cloud e2-micro VM
 ```
 
 ## How it works
 
-1. The sender presses Talk. The relay buffers the audio and rings the recipient's watch, by VoIP push or, without push, by the app checking the server while it's open.
+1. The sender presses Talk. The relay buffers the audio and rings the recipient's watch, by push or, without push, by the app checking the server while it's open.
 2. The watch shows a CallKit incoming call. CallKit is used **only to ring**: watchOS locks the screen into the system call UI for as long as a call is active, which would hide the Talk button ([Apple DTS](https://developer.apple.com/forums/thread/818140)). So when the user answers, the app ends the call right away and is back on screen.
 3. The app turns on its own audio session, tells the relay it answered, opens the relay stream and sends `join`. The relay replays the buffered audio, then forwards the rest live.
 4. Later messages play instantly. After `conversationWindowSeconds` of silence (45 s by default), the conversation ends.
@@ -106,7 +106,7 @@ A free Apple account (Xcode's "Personal Team") can install the app on your own w
 
 What this can measure on real hardware: the ringing screen and answering, including whether double-tap answers; whether the app comes back on screen when the call ends after answering; how long the app's own audio session and the HTTPS relay take to start; real microphone and Opus audio quality; Wi-Fi, LTE and paired-iPhone networking; whether the paired iPhone shows anything; and battery use per conversation. What it can't measure: VoIP push delivery and waking from closed. Free provisioning also expires after 7 days, so re-run from Xcode to renew it.
 
-When your membership is active, switch back to `SPIKE_PUSH_MODE = voip` (the default) and follow One-time setup above.
+The server now sends option C rings: a time-sensitive **alert** push to the bundle ID topic, not a VoIP push. So `SPIKE_PUSH_MODE = voip` no longer works end to end. When your membership is active, the watch needs to register for remote notifications instead (step 5 of "First steps with the membership" in [HANDOFF.md](HANDOFF.md)).
 
 ## Running in the simulator
 

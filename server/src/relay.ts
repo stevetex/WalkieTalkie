@@ -2,7 +2,7 @@
 // Transport-agnostic so tests can drive it with fake peers.
 
 import { randomUUID } from "node:crypto";
-import type { VoipPusher } from "./apns.ts";
+import { ringAlert, type Pusher } from "./apns.ts";
 import type { DeviceStore, MetricsStore } from "./store.ts";
 import type { ClientMessage, RingPayload, ServerMessage } from "./protocol.ts";
 
@@ -10,7 +10,7 @@ import type { ClientMessage, RingPayload, ServerMessage } from "./protocol.ts";
 // relay socket instead of through APNs.
 export const LOCAL_TOKEN_PREFIX = "local:";
 
-// Devices that can't receive VoIP pushes (the simulator, or a watch signed without the
+// Devices that can't receive pushes (the simulator, or a watch signed without the
 // push entitlement) register with this prefix. Their rings are queued, and the app
 // collects them with GET /v1/rings/poll while it's open.
 export const POLL_TOKEN_PREFIX = "poll:";
@@ -47,7 +47,7 @@ interface Conversation {
 
 export interface RelayOptions {
   devices: DeviceStore;
-  pusher: VoipPusher;
+  pusher: Pusher;
   metrics: MetricsStore;
   now?: () => number;
   // Backstop for audio that was never rung (for example, no registered device).
@@ -294,18 +294,19 @@ export class Relay {
       pushSentAt: conversation.lastRingAt,
     };
     this.opts.metrics.server(conversation.id, "pushSent", conversation.lastRingAt);
-    if (device.voipToken.startsWith(LOCAL_TOKEN_PREFIX)) {
+    if (device.pushToken.startsWith(LOCAL_TOKEN_PREFIX)) {
       const peer = this.peers.get(to);
       peer?.sendJSON({ type: "ring", ...payload });
       this.opts.metrics.server(conversation.id, peer ? "pushAccepted" : "pushFailed", this.opts.now(), "local ring");
       return peer !== undefined;
     }
-    if (device.voipToken.startsWith(POLL_TOKEN_PREFIX)) {
+    if (device.pushToken.startsWith(POLL_TOKEN_PREFIX)) {
       this.polledRings.set(to, [...(this.polledRings.get(to) ?? []), payload]);
       this.opts.metrics.server(conversation.id, "pushAccepted", this.opts.now(), "queued for polling");
       return true;
     }
-    void this.opts.pusher.sendVoip(device.voipToken, device.apnsEnvironment, payload).then((result) => {
+    const push = ringAlert(payload, conversation.lastRingAt + this.opts.ringTimeoutMs);
+    void this.opts.pusher.sendAlert(device.pushToken, device.apnsEnvironment, push).then((result) => {
       const detail = `status ${result.status}${result.reason ? ` ${result.reason}` : ""} in ${result.latencyMs.toFixed(0)} ms${result.dryRun ? " (dry run)" : ""}`;
       this.opts.metrics.server(conversation.id, result.ok ? "pushAccepted" : "pushFailed", this.opts.now(), detail);
       if (!result.ok) console.error(`[relay] push to ${to} failed: ${detail}`);

@@ -46,9 +46,13 @@ test("ring-to-start: rings an absent recipient, buffers, and replays on join", a
     const { conversationId, pushed } = await alice.talk("bob", pcm(25), { realtime: false });
     assert.equal(pushed, true);
     assert.equal(pusher.sent.length, 1);
-    const payload = pusher.sent[0].payload as Record<string, unknown>;
+    const push = pusher.sent[0];
+    const payload = push.payload as Record<string, unknown> & { aps: Record<string, unknown> };
     assert.equal(payload.conversationId, conversationId);
     assert.equal(payload.fromName, "Alice");
+    assert.equal(payload.aps["interruption-level"], "time-sensitive");
+    // The notification expires when the relay abandons the ring (35 s by default).
+    assert.equal(push.expiresAt - (payload.pushSentAt as number), 35_000);
 
     // Bob's watch wakes, the user answers, the app connects and joins.
     await bob.connect();
@@ -338,5 +342,17 @@ test("metrics uploads merge into one timeline with intervals", async () => {
     assert.ok(labels.includes("Watch: answer → first audio"));
     alice.close();
     bob.close();
+  });
+});
+
+test("registration still accepts the spike watch's voipToken field", async () => {
+  await withServer(async (s) => {
+    const res = await fetch(`http://localhost:${s.port}/v1/devices`, {
+      method: "POST",
+      headers: { authorization: "Bearer secret", "content-type": "application/json" },
+      body: JSON.stringify({ userId: "watch", name: "Watch", voipToken: "poll:watch" }),
+    });
+    assert.equal(res.status, 200);
+    assert.equal(s.devices.get("watch")?.pushToken, "poll:watch");
   });
 });
