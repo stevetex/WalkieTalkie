@@ -3,7 +3,7 @@
 
 import { randomUUID } from "node:crypto";
 import { ringAlert, type Pusher } from "./apns.ts";
-import type { DeviceStore, MetricsStore } from "./store.ts";
+import type { Device, DeviceStore, MetricsStore } from "./store.ts";
 import type { ClientMessage, RingPayload, ServerMessage } from "./protocol.ts";
 
 // Devices registered with this token prefix are test bots: they are rung over their
@@ -201,15 +201,22 @@ export class Relay {
     this.activeBursts.set(from, { conversation, burst });
     this.opts.metrics.server(conversation.id, "talkStart", now, `${from} -> ${to}`);
 
-    let pushed = false;
     if (conversation.joined.has(to) && this.peers.has(to)) {
       this.startDelivery(conversation, burst, to, false);
+      this.grantFloor(peer, conversation, burstId, false);
     } else if (!conversation.ringTimer) {
       // One ring per conversation start; further bursts queue behind the pending ring.
-      pushed = this.ring(conversation, from, to, burstId);
+      // The ring looks the devices up in the store, so only a Talk that rings waits for
+      // the store. Frames that arrive meanwhile are buffered in the burst as usual.
+      void this.ring(conversation, from, to, burstId).then((pushed) => this.grantFloor(peer, conversation, burstId, pushed));
+    } else {
+      this.grantFloor(peer, conversation, burstId, false);
     }
+  }
+
+  private grantFloor(peer: Peer, conversation: Conversation, burstId: string, pushed: boolean): void {
     peer.sendJSON({ type: "floor-granted", burstId, conversationId: conversation.id, pushed });
-    this.opts.metrics.server(conversation.id, "floorGrantSent", this.opts.now(), from);
+    this.opts.metrics.server(conversation.id, "floorGrantSent", this.opts.now(), peer.userId);
   }
 
   private talkEnd(userId: string, burstId: string): void {
@@ -277,19 +284,33 @@ export class Relay {
     if (burst.ended) peer.sendJSON({ type: "burst-end", conversationId: conversation.id, burstId: burst.id });
   }
 
-  private ring(conversation: Conversation, from: string, to: string, burstId: string): boolean {
-    const device = this.opts.devices.get(to);
+  private async ring(conversation: Conversation, from: string, to: string, burstId: string): Promise<boolean> {
+    // Armed before the lookup, so a second Talk meanwhile doesn't ring again.
+    conversation.ringFrom = from;
+    this.armRingTimer(conversation, to, this.opts.ringTimeoutMs);
+    let device: Device | undefined;
+    let sender: Device | undefined;
+    try {
+      [device, sender] = await Promise.all([this.opts.devices.get(to), this.opts.devices.get(from)]);
+    } catch (err) {
+      this.clearRing(conversation);
+      this.opts.metrics.server(conversation.id, "pushFailed", this.opts.now(), `device lookup: ${(err as Error).message}`);
+      console.error(`[relay] device lookup for ${to} failed: ${(err as Error).message}`);
+      return false;
+    }
+    // Answered, or the relay is shutting down, during the lookup.
+    if (!conversation.ringTimer) return false;
     if (!device) {
+      this.clearRing(conversation);
       this.opts.metrics.server(conversation.id, "pushSkipped", this.opts.now(), `no device for ${to}`);
       return false;
     }
     conversation.lastRingAt = this.opts.now();
-    conversation.ringFrom = from;
     this.armRingTimer(conversation, to, this.opts.ringTimeoutMs);
     const payload: RingPayload = {
       conversationId: conversation.id,
       from,
-      fromName: this.opts.devices.get(from)?.name ?? from,
+      fromName: sender?.name ?? from,
       burstId,
       pushSentAt: conversation.lastRingAt,
     };

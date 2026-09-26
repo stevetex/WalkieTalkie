@@ -1,12 +1,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { startServer, type RunningServer } from "../src/main.ts";
+import { startServer, type RunningServer, type ServerOptions } from "../src/main.ts";
+import { JsonDeviceStore, type Device, type DeviceStore } from "../src/store.ts";
 import { DryRunPusher } from "../src/apns.ts";
 import { SpikeClient } from "../tools/client.ts";
 
 async function withServer(
   fn: (s: RunningServer, pusher: DryRunPusher) => Promise<void>,
-  options: { ringTimeoutMs?: number; answerJoinTimeoutMs?: number } = {},
+  options: Partial<Pick<ServerOptions, "ringTimeoutMs" | "answerJoinTimeoutMs" | "devices">> = {},
 ): Promise<void> {
   const pusher = new DryRunPusher();
   const running = await startServer({ port: 0, dataDir: null, token: "secret", pusher, ...options });
@@ -353,6 +354,85 @@ test("registration still accepts the spike watch's voipToken field", async () =>
       body: JSON.stringify({ userId: "watch", name: "Watch", voipToken: "poll:watch" }),
     });
     assert.equal(res.status, 200);
-    assert.equal(s.devices.get("watch")?.pushToken, "poll:watch");
+    assert.equal((await s.devices.get("watch"))?.pushToken, "poll:watch");
   });
+});
+
+// A device store whose lookups take a while, or fail, like a remote database having a bad day.
+class SlowDeviceStore implements DeviceStore {
+  inner = new JsonDeviceStore(null);
+  delayMs: number;
+  failLookups = false;
+  lookups = 0;
+  constructor(delayMs: number) {
+    this.delayMs = delayMs;
+  }
+  async get(userId: string): Promise<Device | undefined> {
+    this.lookups++;
+    await new Promise((r) => setTimeout(r, this.delayMs));
+    if (this.failLookups) throw new Error("store unavailable");
+    return this.inner.get(userId);
+  }
+  list(): Promise<Device[]> {
+    return this.inner.list();
+  }
+  upsert(device: Device): Promise<void> {
+    return this.inner.upsert(device);
+  }
+}
+
+test("a slow device lookup buffers early audio and rings only once", async () => {
+  const devices = new SlowDeviceStore(150);
+  await withServer(
+    async (s, pusher) => {
+      const alice = client(s, "alice");
+      const bob = client(s, "bob");
+      await alice.register("Alice");
+      await bob.register("Bob", "abcdef0123456789");
+      await alice.connect();
+
+      // Frames sent before the floor is granted, and a second burst, while the lookup runs.
+      alice.send({ type: "talk-start", to: "bob", burstId: "a1" });
+      for (let seq = 0; seq < 3; seq++) alice.sendFrame(2, seq, Buffer.alloc(640));
+      alice.send({ type: "talk-end", burstId: "a1" });
+      alice.send({ type: "talk-start", to: "bob", burstId: "a2" });
+      const first = await alice.waitFor("floor-granted", (m) => m.burstId === "a1");
+      const second = await alice.waitFor("floor-granted", (m) => m.burstId === "a2");
+      assert.equal(first.pushed, true);
+      assert.equal(second.pushed, false);
+      assert.equal(pusher.sent.length, 1);
+      assert.equal(devices.lookups, 2); // recipient and sender, once
+      alice.send({ type: "talk-end", burstId: "a2" });
+
+      await bob.connect();
+      bob.send({ type: "join", conversationId: first.conversationId });
+      const joined = await bob.waitFor("joined");
+      assert.equal(joined.replayBursts, 2);
+      await bob.waitFor("burst-end", (m) => m.burstId === "a1");
+      assert.equal(bob.frames.length, 3);
+      alice.close();
+      bob.close();
+    },
+    { devices },
+  );
+});
+
+test("a failed device lookup grants the floor without ringing", async () => {
+  const devices = new SlowDeviceStore(0);
+  await withServer(
+    async (s, pusher) => {
+      const alice = client(s, "alice");
+      await alice.register("Alice");
+      await client(s, "bob").register("Bob", "abcdef0123456789");
+      await alice.connect();
+      devices.failLookups = true;
+      const { conversationId, pushed } = await alice.talk("bob", pcm(2), { realtime: false });
+      assert.equal(pushed, false);
+      assert.equal(pusher.sent.length, 0);
+      const timeline = await s.metrics.timeline(conversationId);
+      assert.ok(timeline.some((e) => e.name === "pushFailed" && e.detail?.includes("store unavailable")));
+      alice.close();
+    },
+    { devices },
+  );
 });

@@ -10,7 +10,9 @@ import type { RingPayload } from "./protocol.ts";
 export type ApnsEnvironment = "sandbox" | "production";
 
 export interface ApnsConfig {
-  keyPath: string;
+  // The .p8 key: a file, or its PEM text (relay nodes read it from Secret Manager).
+  keyPath?: string;
+  key?: string;
   keyId: string;
   teamId: string;
   bundleId: string;
@@ -45,9 +47,9 @@ const HOSTS: Record<ApnsEnvironment, string> = {
 };
 
 export function apnsConfigFromEnv(env: NodeJS.ProcessEnv): ApnsConfig | null {
-  const { APNS_KEY_PATH, APNS_KEY_ID, APNS_TEAM_ID, APNS_BUNDLE_ID } = env;
-  if (!APNS_KEY_PATH || !APNS_KEY_ID || !APNS_TEAM_ID || !APNS_BUNDLE_ID) return null;
-  return { keyPath: APNS_KEY_PATH, keyId: APNS_KEY_ID, teamId: APNS_TEAM_ID, bundleId: APNS_BUNDLE_ID };
+  const { APNS_KEY, APNS_KEY_PATH, APNS_KEY_ID, APNS_TEAM_ID, APNS_BUNDLE_ID } = env;
+  if (!(APNS_KEY || APNS_KEY_PATH) || !APNS_KEY_ID || !APNS_TEAM_ID || !APNS_BUNDLE_ID) return null;
+  return { key: APNS_KEY, keyPath: APNS_KEY_PATH, keyId: APNS_KEY_ID, teamId: APNS_TEAM_ID, bundleId: APNS_BUNDLE_ID };
 }
 
 // The ring notification. Time-sensitive so it breaks through Focus modes that allow it;
@@ -91,7 +93,7 @@ export class ApnsPusher implements Pusher {
   // `hosts` is for tests, which point it at a local HTTP/2 server.
   constructor(config: ApnsConfig, hosts: Record<ApnsEnvironment, string> = HOSTS) {
     this.config = config;
-    this.key = createPrivateKey(readFileSync(config.keyPath));
+    this.key = createPrivateKey(config.key ?? readFileSync(config.keyPath!));
     this.hosts = hosts;
   }
 

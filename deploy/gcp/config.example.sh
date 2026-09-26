@@ -23,3 +23,6 @@ APNS_KEY_FILE=""   # local path to AuthKey_XXXXXXXXXX.p8
 APNS_KEY_ID=""
 APNS_TEAM_ID=""
 APNS_BUNDLE_ID=""  # must match the watch app's bundle ID
+
+# Option E relay nodes: setup-uptime.sh emails alerts here.
+ALERT_EMAIL="you@example.com"

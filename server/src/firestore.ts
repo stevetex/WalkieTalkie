@@ -1,0 +1,249 @@
+// A small Firestore client over the REST API, so the server stays free of dependencies.
+// It covers what the relay needs: get, set and create documents, list a collection, and
+// run a query. On a Google Cloud VM it authenticates with the VM service account's token
+// from the metadata server; against the emulator it sends no real credentials.
+//
+// Firestore's REST API wraps every value in a typed object ({ stringValue: "x" }, and so
+// on). encodeFields and decodeFields convert plain objects both ways: numbers become
+// integerValue or doubleValue, and Dates become timestampValue (TTL fields must be
+// timestamps).
+
+import { execFileSync } from "node:child_process";
+
+export type FirestoreData = Record<string, unknown>;
+
+export interface FirestoreDocument {
+  // The last path segment, for example the userId of devices/{userId}.
+  id: string;
+  data: FirestoreData;
+}
+
+export interface FirestoreOptions {
+  projectId: string;
+  databaseId?: string;
+  // host:port of the Firestore emulator. Requests go there over plain HTTP.
+  emulatorHost?: string;
+  // Returns a bearer token for production requests.
+  accessToken?: () => Promise<string>;
+  fetch?: typeof fetch;
+  // Attempts per request for retryable failures (429, 5xx, network errors).
+  attempts?: number;
+}
+
+export interface QueryFilter {
+  field: string;
+  op: "EQUAL" | "LESS_THAN" | "LESS_THAN_OR_EQUAL" | "GREATER_THAN" | "GREATER_THAN_OR_EQUAL";
+  value: unknown;
+}
+
+export interface Query {
+  where?: QueryFilter;
+  orderBy?: { field: string; direction?: "ASCENDING" | "DESCENDING" };
+  limit?: number;
+}
+
+const RETRYABLE = new Set([429, 500, 502, 503, 504]);
+const REQUEST_TIMEOUT_MS = 10_000;
+
+export class FirestoreError extends Error {
+  status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.status = status;
+  }
+}
+
+export class Firestore {
+  private base: string;
+  private documentsPath: string;
+  private accessToken: () => Promise<string>;
+  private fetch: typeof fetch;
+  private attempts: number;
+
+  constructor(options: FirestoreOptions) {
+    const database = options.databaseId ?? "(default)";
+    this.documentsPath = `projects/${options.projectId}/databases/${database}/documents`;
+    this.base = options.emulatorHost ? `http://${options.emulatorHost}/v1` : "https://firestore.googleapis.com/v1";
+    // The emulator accepts "owner" as an all-access token.
+    this.accessToken = options.emulatorHost ? async () => "owner" : (options.accessToken ?? metadataAccessToken());
+    this.fetch = options.fetch ?? fetch;
+    this.attempts = options.attempts ?? 3;
+  }
+
+  // Undefined when the document doesn't exist.
+  async get(collection: string, id: string): Promise<FirestoreData | undefined> {
+    const res = await this.request("GET", this.documentPath(collection, id), undefined, [404]);
+    if (res.status === 404) return undefined;
+    return decodeFields((await res.json()).fields ?? {});
+  }
+
+  // Creates the document, or replaces all of its fields.
+  async set(collection: string, id: string, data: FirestoreData): Promise<void> {
+    await this.request("PATCH", this.documentPath(collection, id), { fields: encodeFields(data) });
+  }
+
+  // Creates a document with a generated ID.
+  async add(collection: string, data: FirestoreData): Promise<string> {
+    const res = await this.request("POST", `${this.documentsPath}/${collection}`, { fields: encodeFields(data) });
+    return lastSegment((await res.json()).name);
+  }
+
+  // Every document in a collection, following page tokens.
+  async list(collection: string): Promise<FirestoreDocument[]> {
+    const documents: FirestoreDocument[] = [];
+    let pageToken = "";
+    do {
+      const query = `pageSize=300${pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : ""}`;
+      const body = await (await this.request("GET", `${this.documentsPath}/${collection}?${query}`)).json();
+      for (const doc of body.documents ?? []) documents.push({ id: lastSegment(doc.name), data: decodeFields(doc.fields ?? {}) });
+      pageToken = body.nextPageToken ?? "";
+    } while (pageToken);
+    return documents;
+  }
+
+  async query(collection: string, query: Query): Promise<FirestoreDocument[]> {
+    const structuredQuery: Record<string, unknown> = { from: [{ collectionId: collection }] };
+    if (query.where) {
+      structuredQuery.where = {
+        fieldFilter: { field: { fieldPath: query.where.field }, op: query.where.op, value: encodeValue(query.where.value) },
+      };
+    }
+    if (query.orderBy) {
+      structuredQuery.orderBy = [{ field: { fieldPath: query.orderBy.field }, direction: query.orderBy.direction ?? "ASCENDING" }];
+    }
+    if (query.limit) structuredQuery.limit = query.limit;
+    const res = await this.request("POST", `${this.documentsPath}:runQuery`, { structuredQuery });
+    const rows = (await res.json()) as Array<{ document?: { name: string; fields?: Record<string, FirestoreValue> } }>;
+    return rows.flatMap((row) =>
+      row.document ? [{ id: lastSegment(row.document.name), data: decodeFields(row.document.fields ?? {}) }] : [],
+    );
+  }
+
+  // Firestore document IDs can't contain "/", or be "." or "..".
+  private documentPath(collection: string, id: string): string {
+    if (!id || id.includes("/") || id === "." || id === "..") throw new Error(`invalid document ID ${JSON.stringify(id)}`);
+    return `${this.documentsPath}/${collection}/${encodeURIComponent(id)}`;
+  }
+
+  private async request(method: string, path: string, body?: unknown, okStatuses: number[] = []): Promise<Response> {
+    let lastError: Error = new Error("no attempts");
+    for (let attempt = 1; attempt <= this.attempts; attempt++) {
+      if (attempt > 1) await sleep(200 * 2 ** (attempt - 2) + Math.random() * 100);
+      let res: Response;
+      try {
+        res = await this.fetch(`${this.base}/${path}`, {
+          method,
+          headers: {
+            authorization: `Bearer ${await this.accessToken()}`,
+            ...(body === undefined ? {} : { "content-type": "application/json" }),
+          },
+          body: body === undefined ? undefined : JSON.stringify(body),
+          signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+        });
+      } catch (err) {
+        lastError = err as Error;
+        continue;
+      }
+      if (res.ok || okStatuses.includes(res.status)) return res;
+      const text = await res.text();
+      lastError = new FirestoreError(`Firestore ${method} ${path}: ${res.status} ${text.slice(0, 300)}`, res.status);
+      if (!RETRYABLE.has(res.status)) break;
+    }
+    throw lastError;
+  }
+}
+
+// The VM service account's token, cached until a minute before it expires.
+export function metadataAccessToken(fetchFn: typeof fetch = fetch): () => Promise<string> {
+  let cached: { token: string; expiresAt: number } | null = null;
+  return async () => {
+    if (cached && Date.now() < cached.expiresAt) return cached.token;
+    const res = await fetchFn("http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token", {
+      headers: { "metadata-flavor": "Google" },
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+    if (!res.ok) throw new Error(`metadata token: ${res.status}`);
+    const { access_token, expires_in } = (await res.json()) as { access_token: string; expires_in: number };
+    cached = { token: access_token, expiresAt: Date.now() + (expires_in - 60) * 1000 };
+    return access_token;
+  };
+}
+
+// The gcloud CLI's signed-in account, for tools and local runs against the real database.
+// Tokens last an hour; this refreshes after 45 minutes.
+export function gcloudAccessToken(): () => Promise<string> {
+  let cached: { token: string; expiresAt: number } | null = null;
+  return async () => {
+    if (cached && Date.now() < cached.expiresAt) return cached.token;
+    const token = execFileSync("gcloud", ["auth", "print-access-token"], { encoding: "utf8" }).trim();
+    cached = { token, expiresAt: Date.now() + 45 * 60 * 1000 };
+    return token;
+  };
+}
+
+export async function metadataProjectId(fetchFn: typeof fetch = fetch): Promise<string> {
+  const res = await fetchFn("http://metadata.google.internal/computeMetadata/v1/project/project-id", {
+    headers: { "metadata-flavor": "Google" },
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+  });
+  if (!res.ok) throw new Error(`metadata project-id: ${res.status}`);
+  return (await res.text()).trim();
+}
+
+type FirestoreValue =
+  | { nullValue: null }
+  | { booleanValue: boolean }
+  | { integerValue: string }
+  | { doubleValue: number }
+  | { stringValue: string }
+  | { timestampValue: string }
+  | { arrayValue: { values?: FirestoreValue[] } }
+  | { mapValue: { fields?: Record<string, FirestoreValue> } };
+
+export function encodeFields(data: FirestoreData): Record<string, FirestoreValue> {
+  const fields: Record<string, FirestoreValue> = {};
+  for (const [key, value] of Object.entries(data)) {
+    // Like JSON.stringify, leave out undefined fields.
+    if (value !== undefined) fields[key] = encodeValue(value);
+  }
+  return fields;
+}
+
+export function encodeValue(value: unknown): FirestoreValue {
+  if (value === null || value === undefined) return { nullValue: null };
+  if (typeof value === "boolean") return { booleanValue: value };
+  if (typeof value === "number") {
+    return Number.isSafeInteger(value) ? { integerValue: String(value) } : { doubleValue: value };
+  }
+  if (typeof value === "string") return { stringValue: value };
+  if (value instanceof Date) return { timestampValue: value.toISOString() };
+  if (Array.isArray(value)) return { arrayValue: { values: value.map(encodeValue) } };
+  if (typeof value === "object") return { mapValue: { fields: encodeFields(value as FirestoreData) } };
+  throw new TypeError(`can't store a ${typeof value} in Firestore`);
+}
+
+export function decodeFields(fields: Record<string, FirestoreValue>): FirestoreData {
+  const data: FirestoreData = {};
+  for (const [key, value] of Object.entries(fields)) data[key] = decodeValue(value);
+  return data;
+}
+
+export function decodeValue(value: FirestoreValue): unknown {
+  if ("nullValue" in value) return null;
+  if ("booleanValue" in value) return value.booleanValue;
+  if ("integerValue" in value) return Number(value.integerValue);
+  if ("doubleValue" in value) return value.doubleValue;
+  if ("stringValue" in value) return value.stringValue;
+  if ("timestampValue" in value) return new Date(value.timestampValue);
+  if ("arrayValue" in value) return (value.arrayValue.values ?? []).map(decodeValue);
+  if ("mapValue" in value) return decodeFields(value.mapValue.fields ?? {});
+  throw new TypeError(`unsupported Firestore value ${JSON.stringify(value)}`);
+}
+
+function lastSegment(name: string): string {
+  return decodeURIComponent(name.slice(name.lastIndexOf("/") + 1));
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}

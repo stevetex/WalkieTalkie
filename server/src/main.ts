@@ -2,10 +2,21 @@
 //
 //   PORT              listen port (default 8080)
 //   HOST              listen address (default: all interfaces; 127.0.0.1 behind a proxy)
-//   DATA_DIR          where devices.json and metrics.jsonl live (default ./data)
+//   STORE             "json" (default) or "firestore"
+//   DATA_DIR          json store: where devices.json and metrics.jsonl live (default ./data)
+//   FIRESTORE_PROJECT firestore store: the project (default: the VM's, from the metadata server)
+//   FIRESTORE_EMULATOR_HOST
+//                     firestore store: host:port of the Firestore emulator instead of Google Cloud
+//   FIRESTORE_AUTH    firestore store: "gcloud" uses the gcloud CLI's account instead of the VM's
+//                     service account (local runs against the real database)
 //   SPIKE_TOKEN       shared bearer token clients must present (unset = no auth, local only)
 //   APNS_KEY_PATH, APNS_KEY_ID, APNS_TEAM_ID, APNS_BUNDLE_ID
 //                     APNs token auth; if any is missing, pushes are logged (dry run)
+//   SPIKE_TOKEN_SECRET, APNS_KEY_SECRET
+//                     relay nodes: Secret Manager secret IDs to read SPIKE_TOKEN and APNS_KEY
+//                     (the .p8 key's text) from
+//   DRAIN_MS          on SIGTERM, how long to let open conversations finish (default 0)
+//   REVISION          the git commit, reported by /healthz
 //   SIMULATOR_PUSH    1 = deliver rings to simulators on this Mac with simctl (development
 //                     only; see simulator.ts)
 
@@ -14,7 +25,17 @@ import { resolve } from "node:path";
 import { acceptUpgrade, rejectUpgrade } from "./ws.ts";
 import { ApnsPusher, DryRunPusher, apnsConfigFromEnv, type Pusher } from "./apns.ts";
 import { SimulatorPusher } from "./simulator.ts";
-import { DeviceStore, MetricsStore, ensureDir } from "./store.ts";
+import {
+  FirestoreDeviceStore,
+  FirestoreMetricsStore,
+  JsonDeviceStore,
+  JsonMetricsStore,
+  ensureDir,
+  type DeviceStore,
+  type MetricsStore,
+} from "./store.ts";
+import { Firestore, gcloudAccessToken, metadataAccessToken, metadataProjectId } from "./firestore.ts";
+import { loadSecrets } from "./secrets.ts";
 import { Relay, type Peer } from "./relay.ts";
 import { summarizeAttempts } from "./report.ts";
 import { RecordParser, RecordType, encodeJSONRecord, encodeRecord } from "./records.ts";
@@ -23,7 +44,10 @@ import type { ClientMessage, MetricsUpload } from "./protocol.ts";
 export interface ServerOptions {
   port: number;
   host?: string;
+  // The JSON stores' directory; null keeps them in memory. Ignored for stores passed in.
   dataDir: string | null;
+  devices?: DeviceStore;
+  metrics?: MetricsStore;
   token: string | null;
   pusher: Pusher;
   ringTimeoutMs?: number;
@@ -40,8 +64,8 @@ export interface RunningServer {
 }
 
 export function startServer(options: ServerOptions): Promise<RunningServer> {
-  const devices = new DeviceStore(options.dataDir);
-  const metrics = new MetricsStore(options.dataDir);
+  const devices = options.devices ?? new JsonDeviceStore(options.dataDir);
+  const metrics = options.metrics ?? new JsonMetricsStore(options.dataDir);
   const relay = new Relay({
     devices,
     pusher: options.pusher,
@@ -118,7 +142,7 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
   const server = createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", "http://localhost");
     try {
-      if (req.method === "GET" && url.pathname === "/healthz") return send(res, 200, { ok: true });
+      if (req.method === "GET" && url.pathname === "/healthz") return send(res, 200, { ok: true, revision: process.env.REVISION ?? "local" });
       if (!authorized(req, url)) return send(res, 401, { error: "unauthorized" });
 
       if (req.method === "POST" && url.pathname === "/v1/devices") {
@@ -129,7 +153,7 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
         if (typeof userId !== "string" || !userId || typeof pushToken !== "string" || !pushToken) {
           return send(res, 400, { error: "userId and pushToken are required" });
         }
-        devices.upsert({
+        await devices.upsert({
           userId,
           name: typeof name === "string" && name ? name : userId,
           pushToken,
@@ -140,27 +164,20 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
         return send(res, 200, { ok: true });
       }
       if (req.method === "GET" && url.pathname === "/v1/users") {
-        return send(res, 200, devices.list().map((d) => ({ userId: d.userId, name: d.name })));
+        return send(res, 200, (await devices.list()).map((d) => ({ userId: d.userId, name: d.name })));
       }
       if (req.method === "POST" && url.pathname === "/v1/metrics") {
         const upload = (await readJSON(req)) as MetricsUpload;
         if (!upload?.conversationId || !Array.isArray(upload.events)) return send(res, 400, { error: "bad metrics" });
-        metrics.upload(upload);
+        await metrics.upload(upload);
         return send(res, 200, { ok: true });
       }
       if (req.method === "GET" && url.pathname === "/v1/metrics") {
-        return send(
-          res,
-          200,
-          metrics.conversationIds().map((id) => {
-            const timeline = metrics.timeline(id);
-            return { conversationId: id, startedAt: timeline[0]?.t ?? null, events: timeline.length };
-          }),
-        );
+        return send(res, 200, await metrics.conversations());
       }
       const match = url.pathname.match(/^\/v1\/metrics\/([\w-]+)$/);
       if (req.method === "GET" && match) {
-        const timeline = metrics.timeline(match[1]);
+        const timeline = await metrics.timeline(match[1]);
         return send(res, 200, { conversationId: match[1], timeline, attempts: summarizeAttempts(timeline) });
       }
       if (req.method === "GET" && url.pathname === "/v1/status") return send(res, 200, relay.snapshot());
@@ -238,7 +255,7 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
             for (const ws of sockets) ws?.close(1001);
             for (const { res } of streams.values()) res.end();
             server.closeAllConnections();
-            server.close(() => done());
+            server.close(() => void metrics.flush().then(done));
           }),
       });
     });
@@ -260,16 +277,48 @@ async function readJSON(req: IncomingMessage): Promise<unknown> {
 }
 
 if (import.meta.main) {
-  const apnsConfig = apnsConfigFromEnv(process.env);
+  const env = process.env;
+  const emulatorHost = env.FIRESTORE_EMULATOR_HOST || undefined;
+  const onGoogleCloud = env.STORE === "firestore" && !emulatorHost && env.FIRESTORE_AUTH !== "gcloud";
+  const projectId = env.FIRESTORE_PROJECT || (emulatorHost ? "demo-overandout" : onGoogleCloud ? await metadataProjectId() : "");
+  const accessToken = env.FIRESTORE_AUTH === "gcloud" ? gcloudAccessToken() : metadataAccessToken();
+  // Relay nodes: SPIKE_TOKEN_SECRET and APNS_KEY_SECRET name Secret Manager secrets.
+  const secrets = await loadSecrets(env, projectId, accessToken);
+  const apnsConfig = apnsConfigFromEnv(env);
   const apnsPusher = apnsConfig ? new ApnsPusher(apnsConfig) : new DryRunPusher();
-  const simulatorPush = process.env.SIMULATOR_PUSH === "1";
+  const simulatorPush = env.SIMULATOR_PUSH === "1";
   const pusher = simulatorPush ? new SimulatorPusher(apnsPusher) : apnsPusher;
-  const dataDir = ensureDir(resolve(process.env.DATA_DIR ?? "data"));
-  const token = process.env.SPIKE_TOKEN || null;
-  const host = process.env.HOST || undefined;
-  const running = await startServer({ port: Number(process.env.PORT ?? 8080), host, dataDir, token, pusher });
-  console.log(`[server] listening on ${host ?? ""}:${running.port}, data in ${dataDir}`);
+  const token = env.SPIKE_TOKEN || null;
+  const host = env.HOST || undefined;
+  const port = Number(env.PORT ?? 8080);
+  let running: RunningServer;
+  if (env.STORE === "firestore") {
+    const db = new Firestore({ projectId, emulatorHost, accessToken });
+    const devices = new FirestoreDeviceStore(db);
+    const metrics = new FirestoreMetricsStore(db);
+    running = await startServer({ port, host, dataDir: null, devices, metrics, token, pusher });
+    console.log(`[server] listening on ${host ?? ""}:${running.port}, data in Firestore ${emulatorHost ? `emulator ${emulatorHost}, ` : ""}project ${projectId}`);
+  } else {
+    const dataDir = ensureDir(resolve(env.DATA_DIR ?? "data"));
+    running = await startServer({ port, host, dataDir, token, pusher });
+    console.log(`[server] listening on ${host ?? ""}:${running.port}, data in ${dataDir}`);
+  }
+  console.log(`[server] revision ${env.REVISION ?? "local"}${secrets.length ? `, secrets ${secrets.join(", ")} from Secret Manager` : ""}`);
   console.log(apnsConfig ? `[server] APNs alert pushes, topic ${apnsConfig.bundleId}` : "[server] APNs not configured: dry-run pushes");
   if (simulatorPush) console.warn("[server] SIMULATOR_PUSH: rings to simulator tokens run xcrun simctl push");
   if (!token) console.warn("[server] SPIKE_TOKEN not set: API and relay are unauthenticated");
+  // Container stops (deploys, autohealing) send SIGTERM. Let conversations in progress
+  // finish, up to DRAIN_MS, then write buffered metrics and exit.
+  const drainMs = Number(env.DRAIN_MS ?? 0);
+  for (const signal of ["SIGTERM", "SIGINT"] as const) {
+    process.once(signal, async () => {
+      const deadline = Date.now() + drainMs;
+      const active = () => running.relay.snapshot().length;
+      if (active() && drainMs) console.log(`[server] ${signal}: draining ${active()} conversations (up to ${drainMs} ms)`);
+      while (active() && Date.now() < deadline) await new Promise((r) => setTimeout(r, 500));
+      console.log(`[server] ${signal}: shutting down${active() ? ` with ${active()} conversations open` : ""}`);
+      await running.close();
+      process.exit(0);
+    });
+  }
 }

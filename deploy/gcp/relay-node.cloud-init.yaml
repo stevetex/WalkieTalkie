@@ -1,0 +1,72 @@
+#cloud-config
+# A relay node (option E) on Container-Optimized OS. cloud-init runs on every boot (COS
+# keeps /etc in memory): it mounts the node's persistent disk and runs the relay container
+# as a systemd service. The image and settings come from instance metadata, so a deploy is
+# a new instance template with a new relay-image value (see deploy-relay.sh):
+#
+#   relay-image      Artifact Registry image to run
+#   relay-env        KEY=VALUE lines for the container (no secrets: those are read from
+#                    Secret Manager by the relay itself)
+#   relay-hostnames  per-instance (stateful metadata): the names Caddy serves, such as
+#                    "relay-1.overandout.app walkie.cypressoakstudios.com". None serves
+#                    plain HTTP only, for a test node.
+
+write_files:
+  - path: /etc/relay/mount-data.sh
+    permissions: "0644"
+    content: |
+      # The node's persistent disk (device name relay-data) holds Caddy's certificates.
+      # The instance group keeps it across replacements. Formatted only when new.
+      set -euo pipefail
+      dev=/dev/disk/by-id/google-relay-data
+      blkid "$dev" >/dev/null || mkfs.ext4 -q -m 0 -E lazy_itable_init=0,lazy_journal_init=0,discard "$dev"
+      mkdir -p /mnt/disks/relay-data
+      mountpoint -q /mnt/disks/relay-data || mount -o discard,defaults "$dev" /mnt/disks/relay-data
+      # The container runs as the image's node user (uid 1000).
+      chown 1000:1000 /mnt/disks/relay-data
+
+  - path: /etc/relay/prepare.sh
+    permissions: "0644"
+    content: |
+      set -euo pipefail
+      md() { curl -sf -H "Metadata-Flavor: Google" "http://metadata.google.internal/computeMetadata/v1/instance/attributes/$1"; }
+      mkdir -p /run/relay /home/relay
+      md relay-image >/run/relay/image
+      { md relay-env; echo; echo "RELAY_HOSTNAMES=$(md relay-hostnames || true)"; } >/run/relay/env
+      docker-credential-gcr configure-docker --registries us-central1-docker.pkg.dev
+      docker pull "$(cat /run/relay/image)"
+
+  - path: /etc/systemd/system/relay-data.service
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=Mount the relay node's persistent disk
+      [Service]
+      Type=oneshot
+      RemainAfterExit=true
+      ExecStart=/bin/bash /etc/relay/mount-data.sh
+
+  - path: /etc/systemd/system/relay.service
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=Over&Out relay container
+      Requires=relay-data.service docker.service
+      After=relay-data.service docker.service network-online.target
+      Wants=network-online.target
+      [Service]
+      # docker-credential-gcr and docker keep their config under HOME.
+      Environment=HOME=/home/relay
+      ExecStartPre=/bin/bash /etc/relay/prepare.sh
+      ExecStartPre=-/usr/bin/docker rm -f relay
+      # Host networking: Caddy listens on 80 and 443 directly. Only binding low ports is allowed.
+      ExecStart=/bin/bash -c 'exec /usr/bin/docker run --rm --name relay --network host --env-file /run/relay/env -v /mnt/disks/relay-data:/data --cap-drop ALL --cap-add NET_BIND_SERVICE "$(cat /run/relay/image)"'
+      # The relay drains conversations for up to 45 s (DRAIN_MS) on SIGTERM.
+      ExecStop=/usr/bin/docker stop --time 60 relay
+      TimeoutStopSec=75
+      Restart=always
+      RestartSec=5
+
+runcmd:
+  - systemctl daemon-reload
+  - systemctl start relay.service

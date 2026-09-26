@@ -10,6 +10,7 @@
     "start": "node src/main.ts",
     "test": "node --test --test-timeout=20000 \"test/**/*.test.ts\"",
     "bot": "node tools/bot.ts",
-    "report": "node tools/report.ts"
+    "report": "node tools/report.ts",
+    "test:firestore": "scripts/test-firestore.sh"
   }
 }
