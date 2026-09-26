@@ -1,5 +1,7 @@
 # Walkie-Talkie ring-to-start spike
 
+> The spike is finished. The product, Over&Out, is in [`app/`](app/README.md), and the current state and next steps are in [HANDOFF.md](HANDOFF.md). This README describes the spike (`watch/`), kept for reference.
+
 A prototype for the first item on the feasibility study's spike checklist: can a watch app use VoIP push and CallKit to ring once per conversation, replay the sender's first words after the user answers, and then play later messages instantly until the conversation goes quiet? It also measures how long each step takes.
 
 ```

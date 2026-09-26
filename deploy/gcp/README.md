@@ -11,7 +11,7 @@ watch ──HTTPS/WSS──▶ Caddy :443 (Let's Encrypt) ──▶ node server 
 - **The server** runs as a locked-down `walkie` system service. It listens only on localhost.
 - **The firewall** opens only ports 80 and 443, plus SSH through the default network's rule. Port 80 is used only for Let's Encrypt's check.
 
-See the feasibility doc's Hosting section for why Google Cloud was chosen, and for the Cloud Run plan once traffic grows.
+See the feasibility doc's Hosting section for why Google Cloud was chosen. At scale, the relay moves to option E: sharded relay nodes on a managed instance group with Container-Optimized OS (the build plan is in [HANDOFF.md](../../HANDOFF.md)). This single-VM setup is what runs today.
 
 ## What you need
 
