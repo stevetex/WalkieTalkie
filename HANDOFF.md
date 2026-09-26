@@ -60,12 +60,12 @@ Status on 2026-09-26: the membership is active. `app/Config/Local.xcconfig` has 
    - tap → first audio: 3.1–3.4 s, of which the first request after the tap takes 2.1–2.5 s, even with the app on screen;
    - Focus: time-sensitive alone doesn't break through Do Not Disturb when the Focus's Time Sensitive switch is off. Adding Over&Out to the Focus's allowed apps does, so onboarding will guide users to that (a design decision).
 
-   Still to do on the watch:
-   - a true cold start: Settings → Testing → **Quit when I leave**, press the crown, then ring;
-   - the `voip` background-mode test, and a long quiet spell inside the 45 s window;
-   - watchOS 9–11.
+   Also done on 2026-09-26:
+   - **Cold start** (run 20): costs nothing extra (3.24 s). The app exited in the background first, using Settings → Testing → **Quit when I leave**.
+   - **No background modes** (run 21): the `voip` mode is removed. The app kept playing with the wrist down and through 35 s of silence.
+   - **In-app pre-connect** (run 22): answer → first audio 0.95 s, against 3.06 s before.
 
-   Next idea for speed: open the relay stream as soon as the in-app ring appears (run 17), so Answer only sends "join".
+   Still to do on the watch: watchOS 9–11.
 
    The original list:
    - push sent → notification shown, for a suspended app and for a quit app;

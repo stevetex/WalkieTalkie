@@ -44,6 +44,9 @@ final class ConversationController: NSObject, ObservableObject {
     @Published private(set) var incomingRing: Ring?
     /// When the in-app ring's notification was delivered, for the timeline.
     private var incomingRingDelivered: Date?
+    /// A relay stream opened (without joining) while an in-app ring is showing, so the
+    /// watch's network wakes up while the person reaches for Answer (run 17).
+    private var preconnect: (startedAt: Double, readyAt: Double?)?
     #if DEBUG
     /// Testing: exit when the app goes to the background, so the next ring is a cold start
     /// (watchOS 27 has no app switcher, and quitting in the foreground brings the app back).
@@ -101,7 +104,10 @@ final class ConversationController: NSObject, ObservableObject {
             audio.enqueue(frame)
         }
         relay.onClose = { [unowned self] reason in
-            guard let current = conversation else { return }
+            guard let current = conversation else {
+                preconnect = nil
+                return
+            }
             if !current.outgoing, !current.joined {
                 return rejoinOnFreshStream("relay closed before joining: \(reason)")
             }
@@ -235,6 +241,11 @@ final class ConversationController: NSObject, ObservableObject {
 
     /// The relay abandons an unanswered ring by itself; nothing to tell it.
     func declineIncomingRing() {
+        clearIncomingRing()
+        closePreconnect()
+    }
+
+    private func clearIncomingRing() {
         incomingRingTimer?.invalidate()
         incomingRing = nil
         incomingRingDelivered = nil
@@ -250,7 +261,7 @@ final class ConversationController: NSObject, ObservableObject {
     /// opens the relay stream also joins, so the relay starts the replay without waiting
     /// for another round trip on a network that's still waking up.
     private func answer(_ ring: Ring, via: String, delivered: Date? = nil, openedAt: Double = Clock.nowMs()) {
-        declineIncomingRing()
+        clearIncomingRing()
         if let current = conversation {
             if current.conversationId == ring.conversationId { return }
             finish()
@@ -268,6 +279,10 @@ final class ConversationController: NSObject, ObservableObject {
         if let sentAt = ring.pushSentAt {
             timeline.mark("pushSentAtServer", detail: String(Int(sentAt)))
         }
+        if let preconnect {
+            timeline.mark("preconnectStarted", at: preconnect.startedAt)
+            if let readyAt = preconnect.readyAt { timeline.mark("preconnected", at: readyAt) }
+        }
         timeline.mark("answerTapped", at: openedAt, detail: via)
         conversation = Conversation(outgoing: false, conversationId: ring.conversationId,
                                     peerId: ring.from, peerName: ring.fromName, timeline: timeline)
@@ -275,11 +290,42 @@ final class ConversationController: NSObject, ObservableObject {
         peerName = ring.fromName
         statusLine = "Connecting to \(ring.fromName)…"
         rejoinedOnFreshStream = false
-        conversation?.timeline.mark("joinSent", detail: "with the stream")
-        connectRelay(join: ring.conversationId)
+        if preconnect != nil, relay.isReady || relay.isConnecting {
+            joinOverPreconnectedStream(ring.conversationId)
+        } else {
+            conversation?.timeline.mark("joinSent", detail: "with the stream")
+            connectRelay(join: ring.conversationId)
+        }
+        preconnect = nil
         activateOwnAudio()
         resetIdleTimer()
         removeDeliveredNotifications(for: ring.conversationId)
+    }
+
+    /// Opens the relay stream without joining while an in-app ring is showing.
+    private func preconnectRelay() {
+        guard conversation == nil, preconnect == nil, let baseURL = settings.baseURL else { return }
+        preconnect = (Clock.nowMs(), nil)
+        relay.connect(baseURL: baseURL, token: settings.token, userId: settings.userId)
+    }
+
+    private func closePreconnect() {
+        guard conversation == nil, preconnect != nil else { return }
+        preconnect = nil
+        relay.close()
+    }
+
+    /// Answer sends only "join" over the stream the in-app ring opened. It's queued until
+    /// the stream's hello-ack if it's still opening. A stream that went stale without saying
+    /// so is replaced by a fresh one that joins in its request.
+    private func joinOverPreconnectedStream(_ conversationId: String) {
+        conversation?.timeline.mark("joinSent", detail: relay.isReady ? "over the open stream" : "queued on the opening stream")
+        relay.send(["type": "join", "conversationId": conversationId])
+        if relay.isReady { relayReady(clockOffsetMs: relay.clockOffsetMs) }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in
+            guard let self, conversation?.conversationId == conversationId, conversation?.joined == false else { return }
+            rejoinOnFreshStream("not joined after 4 s")
+        }
     }
 
     /// The stream can fail while the watch's network is waking. Try once more, then give up.
@@ -334,7 +380,10 @@ final class ConversationController: NSObject, ObservableObject {
     }
 
     private func relayReady(clockOffsetMs: Double) {
-        guard let current = conversation else { return }
+        guard let current = conversation else {
+            if preconnect != nil, preconnect?.readyAt == nil { preconnect?.readyAt = Clock.nowMs() }
+            return
+        }
         defer { updateTalkReady() }
         conversation?.timeline.mark("socketOpen")
         self.clockOffsetMs = clockOffsetMs
@@ -524,6 +573,7 @@ final class ConversationController: NSObject, ObservableObject {
         ended.timeline.mark("callEnded")
 
         conversation = nil
+        preconnect = nil
         talkReady = false
         talkHeld = false
         isTalking = false
@@ -613,11 +663,12 @@ extension ConversationController: UNUserNotificationCenterDelegate {
             guard self.conversation?.conversationId != ring.conversationId else { return }
             self.incomingRing = ring
             self.incomingRingDelivered = notification.date
+            self.preconnectRelay()
             WKInterfaceDevice.current().play(.notification)
             self.incomingRingTimer?.invalidate()
             self.incomingRingTimer = Timer.scheduledTimer(withTimeInterval: Self.inAppRingTimeout, repeats: false) { _ in
                 guard self.incomingRing == ring else { return }
-                self.incomingRing = nil
+                self.declineIncomingRing()
                 self.statusLine = "Missed \(ring.fromName)"
             }
         }
