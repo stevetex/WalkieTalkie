@@ -42,6 +42,13 @@ final class ConversationController: NSObject, ObservableObject {
     @Published private(set) var talkReady = false
     /// A ring that arrived while the app was on screen, waiting for Answer or Decline.
     @Published private(set) var incomingRing: Ring?
+    /// When the in-app ring's notification was delivered, for the timeline.
+    private var incomingRingDelivered: Date?
+    #if DEBUG
+    /// Testing: exit when the app goes to the background, so the next ring is a cold start
+    /// (watchOS 27 has no app switcher, and quitting in the foreground brings the app back).
+    @Published var quitWhenBackgrounded = false
+    #endif
     @Published private(set) var registrationStatus = "Not registered yet"
     @Published private(set) var logLines: [String] = []
 
@@ -223,13 +230,14 @@ final class ConversationController: NSObject, ObservableObject {
 
     func answerIncomingRing() {
         guard let ring = incomingRing else { return }
-        answer(ring, via: "in app")
+        answer(ring, via: "in app", delivered: incomingRingDelivered)
     }
 
     /// The relay abandons an unanswered ring by itself; nothing to tell it.
     func declineIncomingRing() {
         incomingRingTimer?.invalidate()
         incomingRing = nil
+        incomingRingDelivered = nil
     }
 
     func end() {
@@ -604,6 +612,7 @@ extension ConversationController: UNUserNotificationCenterDelegate {
             defer { completionHandler([]) }
             guard self.conversation?.conversationId != ring.conversationId else { return }
             self.incomingRing = ring
+            self.incomingRingDelivered = notification.date
             WKInterfaceDevice.current().play(.notification)
             self.incomingRingTimer?.invalidate()
             self.incomingRingTimer = Timer.scheduledTimer(withTimeInterval: Self.inAppRingTimeout, repeats: false) { _ in

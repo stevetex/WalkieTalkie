@@ -32,6 +32,11 @@ final class AppDelegate: NSObject, WKApplicationDelegate {
     // Diagnostics for the timeline: wrist down, app in the background.
     func applicationDidBecomeActive() { ConversationController.shared.noteAppState("active") }
     func applicationWillResignActive() { ConversationController.shared.noteAppState("inactive") }
-    func applicationDidEnterBackground() { ConversationController.shared.noteAppState("background") }
+    func applicationDidEnterBackground() {
+        ConversationController.shared.noteAppState("background")
+        #if DEBUG
+        if ConversationController.shared.quitWhenBackgrounded { exit(0) }
+        #endif
+    }
     func applicationWillEnterForeground() { ConversationController.shared.noteAppState("foreground") }
 }

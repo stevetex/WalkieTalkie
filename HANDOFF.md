@@ -55,7 +55,19 @@ Status on 2026-09-26: the membership is active. `app/Config/Local.xcconfig` has 
 3. **APNs key:** create an APNs auth key (.p8) in the portal. Put its path, Key ID and Team ID in `deploy/gcp/config.sh` (`APNS_KEY_FILE`, `APNS_KEY_ID`, `APNS_TEAM_ID`), and set `APNS_BUNDLE_ID` to the **watch app's** ID, `com.cypressoakstudios.overandout.watchkitapp`: the watch registers for pushes itself, so that's the topic. Then run `deploy/gcp/deploy.sh`, which copies the key to the VM. The server reads `APNS_KEY_PATH` etc. (`server/src/main.ts`).
 4. **Server, alert push: done** (`f5aa971`, not deployed yet). `Relay.ring()` sends a time-sensitive alert push (`ringAlert()` in `server/src/apns.ts`) to the `APNS_BUNDLE_ID` topic. It expires when the relay abandons the ring (35 s) and collapses on the conversation ID. Tokens are `pushToken` now; `voipToken` is still accepted.
 5. **Watch, remote notifications: built** in `app/Watch/ConversationController.swift` and tested in the simulator (see Simulator). The app registers with `WKApplication.shared().registerForRemoteNotifications()` and sends the token to `POST /v1/devices` as `pushToken`. A Personal Team build can't get a token and registers `poll:<userId>`, so it can start conversations but can't be rung. Tapping the ring notification joins with its `conversationId` in the stream request (`?join=`), retrying once on a fresh stream. What's left needs the membership: a real APNs token and delivery on the watch.
-6. **Measure on the watch (never under Xcode's debugger):**
+6. **Measure on the watch (never under Xcode's debugger).** Done on 2026-09-26 (runs 16–19 in the doc), on the watch as `watch-0d34`:
+   - push sent → notification on the watch: 0.03–0.3 s;
+   - tap → first audio: 3.1–3.4 s, of which the first request after the tap takes 2.1–2.5 s, even with the app on screen;
+   - Focus: time-sensitive alone doesn't break through Do Not Disturb when the Focus's Time Sensitive switch is off. Adding Over&Out to the Focus's allowed apps does, so onboarding will guide users to that (a design decision).
+
+   Still to do on the watch:
+   - a true cold start: Settings → Testing → **Quit when I leave**, press the crown, then ring;
+   - the `voip` background-mode test, and a long quiet spell inside the 45 s window;
+   - watchOS 9–11.
+
+   Next idea for speed: open the relay stream as soon as the in-app ring appears (run 17), so Answer only sends "join".
+
+   The original list:
    - push sent → notification shown, for a suspended app and for a quit app;
    - tap → first audio;
    - whether the `voip` background mode is needed: remove it from `app/Config/Watch-Info.plist` and check that incoming audio still plays with the wrist down and that the app survives a long quiet spell in the 45 s window. Option C doesn't use PushKit, so App Review may question it;

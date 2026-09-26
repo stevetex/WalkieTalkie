@@ -37,6 +37,18 @@ struct SettingsView: View {
                     .font(.footnote)
                 LabeledRow(label: "Codec", value: controller.codecDescription)
             }
+            #if DEBUG
+            Section("Testing") {
+                // For a cold-start test: the app exits once it's in the background, so the
+                // next ring has to launch it.
+                Toggle("Quit when I leave", isOn: $controller.quitWhenBackgrounded)
+                if controller.quitWhenBackgrounded {
+                    Text("Press the crown now. The app exits in the background.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            #endif
             Section("Log") {
                 ForEach(controller.logLines.suffix(20).reversed(), id: \.self) { line in
                     Text(line)
