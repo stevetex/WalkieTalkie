@@ -1,17 +1,18 @@
 # Handoff: Over&Out — option E relay infrastructure (2026-09-26)
 
-Read this first. Over&Out: Watch Walkie Talkie replaces Apple's Watch Walkie-Talkie app, which Apple removed in watchOS 27. The watch app works end to end on Steve's watch with real APNs pushes. The next job is the at-scale hosting design, option E, starting with its infrastructure (steps 1–3 below). There are no secrets in this file. Tokens and keys live in gitignored files, listed under Local config.
+Read this first. Over&Out: Watch Walkie Talkie replaces Apple's Watch Walkie-Talkie app, which Apple removed in watchOS 27. The watch app works end to end on Steve's watch with real APNs pushes. Option E's infrastructure (steps 1–3 below) is built: the relay now runs as `relay-1` in a managed instance group on Container-Optimized OS, with its data in Firestore. The next job is steps 4–6: the relay protocol, the apps' node choice and failover, and a two-node test. There are no secrets in this file. Tokens and keys live in gitignored files and Secret Manager, listed under Local config.
 
 ## Start here
 
-1. Read this file, then the feasibility doc: its **Hosting** section (option E and the options it beat), **Design decisions** (especially the 2026-09-25 and 2026-09-26 rows), and **Prototype results** runs 16–22.
-2. Do **option E steps 1–3**: Firestore for server data, a relay container image, and a managed instance group. Steps 4–6 (protocol, apps, two-node test) come after.
-3. Ask Steve before anything outward-facing or billed: creating Google Cloud resources, deploying to the live relay, DNS changes (he adds GoDaddy records by hand), and deleting the old VM.
+1. Read this file, then the feasibility doc: its **Hosting** section (option E and the options it beat), **Design decisions** (especially the 2026-09-26 rows), and **Prototype results** runs 16–23. Then [deploy/gcp/README.md](deploy/gcp/README.md) for how relay nodes are set up and deployed.
+2. Check "Left over from steps 1–3" below, starting with a real ring on Steve's watch through `relay-1`.
+3. Do **option E steps 4–6**: relay protocol, apps, two-node test.
+4. Ask Steve before anything outward-facing or billed: creating Google Cloud resources, deploying to the live relay, DNS changes (he adds GoDaddy records by hand), and deleting VMs or data.
 
 ## Links
 
 - **Feasibility doc (Claude Docs):** https://claude.ai/code/artifact/59ab6e47-6e5d-4698-8bd1-173293953df9. Log design decisions in its Design decisions table (date, decision, why, revisit if), and measured results in Prototype results.
-- **Repo:** https://github.com/stevetex/WalkieTalkie. `main` is pushed and clean.
+- **Repo:** https://github.com/stevetex/WalkieTalkie. The option E work is committed locally on `main` (deploys build committed code); push only when Steve asks.
 - **App name and domain:** "Over&Out: Watch Walkie Talkie", overandout.app. Bundle IDs `com.cypressoakstudios.overandout` and `com.cypressoakstudios.overandout.watchkitapp`.
 
 ## Where things stand
@@ -24,10 +25,12 @@ Read this first. Over&Out: Watch Walkie Talkie replaces Apple's Watch Walkie-Tal
     - the app's own audio session; no background modes.
   - Until accounts exist, the watch uses a dev identity: a generated user ID, the relay's shared token from `Local.xcconfig` (`OAO_SERVER_TOKEN`), and a friend picked in Settings.
 - **Relay (`server/`):**
-  - Node 24+, TypeScript run directly, no dependencies; `npm test` runs 27 tests.
+  - Node 24+, TypeScript run directly, no dependencies; `npm test` runs 39 tests (4 of them skip without the Firestore emulator; `npm run test:firestore` runs those against it).
+  - Stores (`src/store.ts`) are async interfaces: JSON files locally and in tests, Firestore (`src/firestore.ts`, REST) on nodes (`STORE=firestore`). Metrics timelines are buffered per conversation and written as one document when it goes quiet.
+  - On nodes it reads the relay token and APNs key from Secret Manager (`src/secrets.ts`), drains open conversations for up to 45 s on SIGTERM, and reports its revision in `/healthz`.
   - It sends time-sensitive **alert** pushes (`ringAlert()` in `src/apns.ts`) to the watch app's topic. There are no VoIP pushes any more.
   - `SIMULATOR_PUSH=1` delivers rings to simulators with `xcrun simctl push` (development only).
-  - Deployed: `fca101f` on the `walkie-relay` VM, with the APNs key.
+  - Deployed: `8e5b291` on `relay-1` (see Deployment today).
 - **Membership:** active. Xcode registered Steve's devices and created the profiles; the watch App ID has Push Notifications and Time Sensitive Notifications.
 
 ### Measured on Steve's watch (no debugger, real APNs; runs 16–22 in the doc)
@@ -53,20 +56,17 @@ Each conversation runs on **one relay node**, and both apps connect to it, so `r
 
 ### Build plan
 
-1. **Firestore for server data.** Move `DeviceStore` (`src/store.ts`), and the metrics timelines, from JSON files to Firestore, so a node holds nothing durable. Choices to settle with Steve first:
-   - **Firestore location:** it can't be changed later. `us-central1` is next to the relay and cheapest; `nam5` is multi-region.
-   - **Client library:** the official `@google-cloud/firestore` package, or the REST API with a token from the VM's metadata server (keeps the server dependency-free).
-   - **Local and test runs:** keep the JSON store behind the same interface, or use the Firestore emulator.
-   The VM needs a service account with `roles/datastore.user`.
-2. **Relay container image.** Node 24 plus TLS: Caddy alongside Node, or Node's own `https`. Keep the Let's Encrypt certificates across VM replacements (a small persistent disk, or Cloud Storage), or Let's Encrypt rate limits will bite. Store the image in Artifact Registry in the same project.
-3. **Managed instance group** (scripts in `deploy/gcp`, next to the current ones):
-   - Container-Optimized OS, with the container started by cloud-init. The older "container declaration" way of running containers on COS VMs may be deprecated; check the current docs before using it.
-   - A **stateful** group, so each node keeps its static Standard-tier IP and disk across replacements. The first node, `relay-1`, should take over the current static IP `walkie-relay-ip` (`35.209.96.216`), so existing DNS keeps working. That means a short cut-over: release the IP from `walkie-relay`, then assign it to the group.
-   - A health check on `/healthz` with autohealing, and rolling replacement for deploys (drain first).
-   - An uptime check with an email alert to Steve.
-   - Serve both `relay-1.overandout.app` and `walkie.cypressoakstudios.com` during the transition; the current app builds use the latter.
-   - DNS: Steve adds `A relay-1 → 35.209.96.216` at GoDaddy (overandout.app's DNS is at GoDaddy, nameservers `ns61/ns62.domaincontrol.com`). As of 2026-09-26 **it isn't added yet**; check with `dig +short relay-1.overandout.app`.
-   - Retire the hand-built `walkie-relay` VM once `relay-1` works.
+1. **Firestore for server data.** Done. Firestore (default) database in `us-central1`, Standard edition, delete protection on; the relay talks to it over REST with the metadata-server token; JSON store for local runs and tests; one metrics document per conversation per writer, with a 30-day TTL. The old VM's devices and 882 metric events were imported (`server/tools/import-data.ts`).
+2. **Relay container image.** Done. `server/Dockerfile`: Node 24 and Caddy in one container, built by Cloud Build (`deploy/gcp/build-image.sh`) into Artifact Registry `relay`. Certificates live on each node's stateful data disk. HTTP/3 is off.
+3. **Managed instance group.** Done. Stateful group `relay` (us-central1-a) on COS via cloud-init (`deploy/gcp/relay-node.cloud-init.yaml`); `relay-1` has the static IP `walkie-relay-ip` (`35.209.96.216`) and serves `relay-1.overandout.app` and `walkie.cypressoakstudios.com`; health check `relay-health` with autohealing; rolling deploys with drain (`deploy-relay.sh`); uptime checks with email alerts to steve@stevetex.com for both names (`setup-uptime.sh`). The cut-over on 2026-09-26 left the relay down for at most 84 s.
+
+#### Left over from steps 1–3
+
+- **A real ring through `relay-1` on Steve's watch** hasn't happened yet; only bot-to-bot smoke tests have. It checks that the APNs key from Secret Manager works. The watch needs no rebuild: it still uses `walkie.cypressoakstudios.com`.
+- The hand-built `walkie-relay` VM and its scripts (`create-vm.sh`, `deploy.sh`, `provision.sh`) were deleted on 2026-09-26, after its data was imported into Firestore. There's no rollback to it; roll back by deploying an earlier commit.
+- **OS updates without deploys:** nodes get the newest COS whenever they're replaced, so a quiet month with no deploys means no OS update. A scheduled monthly replacement (for example, Cloud Scheduler calling the group's rolling replace) isn't set up yet.
+- **Cloud Build runs as the Compute Engine default service account,** which has Editor. A dedicated build service account with only Artifact Registry write would be tighter.
+
 4. **Relay protocol:**
    - the node's hostname in the ring payload;
    - a "delivered" message to the sender once the recipient has heard a burst;
@@ -89,31 +89,34 @@ Sign-in tokens (signed by the API, checked on each node with a public key) come 
 
 ## Deployment today (Google Cloud)
 
-- **Resources:**
-  - project `walkie-talkie-relay` (owned by stevelt@gmail.com);
-  - VM `walkie-relay` (e2-micro, Debian 13, us-central1-a);
-  - static IP `walkie-relay-ip` `35.209.96.216` (Standard tier);
-  - firewall rule `walkie-web` (80/443).
-- **DNS:** `walkie.cypressoakstudios.com` → `35.209.96.216`, an A record at GoDaddy.
-- **Stack:** Caddy (Let's Encrypt, HTTP/2, `flush_interval -1`) in front of Node on 127.0.0.1:8080, as the systemd service `walkie`. Releases are under `/opt/walkie/releases/`.
-- **Deploy:** commit, then run `deploy/gcp/deploy.sh`, which ships **committed** code only and copies the APNs key. `gcloud` is at `~/google-cloud-sdk/bin`, which isn't on the agent shell's PATH, so prefix `export PATH=$HOME/google-cloud-sdk/bin:$PATH`. Running now: `fca101f`.
+- **Resources** (project `walkie-talkie-relay`, owned by stevelt@gmail.com; all in us-central1):
+  - instance group `relay` (zone us-central1-a) with one node, `relay-1` (e2-micro, COS, 10 GB boot disk, 10 GB data disk `relay-1-1`), template `relay-<commit>`;
+  - static IP `walkie-relay-ip` `35.209.96.216` (Standard tier), now on `relay-1`;
+  - Firestore (default) database; service account `relay-node` (Firestore, logs, metrics, image pull, the two secrets);
+  - Artifact Registry repo `relay`; Secret Manager secrets `relay-token` and `apns-key`;
+  - health check `relay-health`, firewall rule `walkie-web` (80/443), two uptime checks and alert policies.
+- **DNS** (A records at GoDaddy): `relay-1.overandout.app` and `walkie.cypressoakstudios.com` → `35.209.96.216`.
+- **Deploy:** commit, then `deploy/gcp/deploy-relay.sh`. It builds the committed code, then replaces `relay-1` (about 2 minutes of downtime with one node). `gcloud` is at `~/google-cloud-sdk/bin`, which isn't on the agent shell's PATH, so prefix `export PATH=$HOME/google-cloud-sdk/bin:$PATH`. Running now: `8e5b291`.
 - **Logs:**
 
   ```bash
-  gcloud compute ssh walkie-relay --zone=us-central1-a --project=walkie-talkie-relay -- sudo journalctl -u walkie -n 100
+  gcloud compute ssh relay-1 --zone=us-central1-a --project=walkie-talkie-relay -- sudo journalctl -u relay -n 100
   ```
-- **Registered users:**
+
+  After a node is replaced, SSH refuses its new host key; see the README's Everyday commands.
+- **Registered users** (in Firestore `devices`):
   - `watch-0d34`: the product app on Steve's watch, with a real APNs sandbox token;
   - `watch-abee`: the spike on Steve's watch;
   - `bot`: "Test Bot";
   - the test users `smoke-listener`, `smoke-sender` and `smoke-http`.
 
-  There's no delete endpoint. The server reads the old `voipToken` field in `devices.json` as `pushToken`.
+  There's no delete endpoint. Firestore document IDs can't contain `/`, so user IDs can't either.
 - **Project list lag:** the project may not show in `gcloud projects list`, but it works by ID.
 
 ## Local config (gitignored; don't commit or print)
 
-- `deploy/gcp/config.sh`: `PROJECT_ID`, `DOMAIN`, the relay's shared `SPIKE_TOKEN`, and the `APNS_*` settings. `APNS_BUNDLE_ID` is the watch app's ID, `com.cypressoakstudios.overandout.watchkitapp`, because the watch registers for pushes itself.
+- `deploy/gcp/config.sh`: `PROJECT_ID`, `DOMAIN`, the relay's shared `SPIKE_TOKEN`, the `APNS_*` settings, and `ALERT_EMAIL`. `APNS_BUNDLE_ID` is the watch app's ID, `com.cypressoakstudios.overandout.watchkitapp`, because the watch registers for pushes itself.
+- **Secret Manager** holds the node copies: `relay-token` (the same `SPIKE_TOKEN`) and `apns-key` (the .p8), created by `setup-relay.sh`. To rotate one, add a new version (`gcloud secrets versions add … --data-file=-`) and redeploy.
 - `app/Config/Local.xcconfig`: the paid `DEVELOPMENT_TEAM`, and `OAO_SERVER_TOKEN` (the same shared token).
 - `watch/Config/Local.xcconfig`: the spike's settings (Personal Team). The spike is kept for reference only.
 - To use the token in commands without printing it:
@@ -165,6 +168,10 @@ Details:
 - **Simulator builds need their ad-hoc signature** (don't pass `CODE_SIGNING_ALLOWED=NO`). For device compile checks, it's fine.
 - **No `timeout` on macOS:** use `perl -e 'alarm N; exec @ARGV'`.
 - **Stage files by name,** never `git add -A`.
+- **COS's host firewall drops incoming TCP except SSH.** The node's cloud-init opens 80 and 443; without that, health checks fail and autohealing recreates the node every 5 minutes.
+- **A newly enabled Google API can refuse calls for a minute or two** (Cloud Build said PERMISSION_DENIED to the project owner right after being enabled).
+- **The Firestore emulator needs Java 21+.** `brew install openjdk` (keg-only) is installed, and `npm run test:firestore` uses it.
+- **`zsh` doesn't split unquoted variables,** so `gcloud … $FLAGS` passes one argument. Spell flags out, or run the command under `bash`.
 
 ## Steve's preferences
 

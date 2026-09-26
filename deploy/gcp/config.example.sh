@@ -1,15 +1,12 @@
 # shellcheck shell=bash disable=SC2034
-# Copy to config.sh (gitignored) and fill in. Sourced by create-vm.sh and deploy.sh.
+# Copy to config.sh (gitignored) and fill in. Sourced by the setup and deploy scripts.
 
 PROJECT_ID="your-gcp-project-id"
 
 # The e2-micro free tier only covers us-west1, us-central1 and us-east1.
 REGION="us-central1"
 ZONE="us-central1-a"
-VM_NAME="walkie-relay"
 
-# Hostname the watch connects to. Point a DNS A record at the VM's static IP.
-DOMAIN="walkie.example.com"
 # Optional: Let's Encrypt sends certificate expiry notices here.
 ACME_EMAIL="you@example.com"
 
