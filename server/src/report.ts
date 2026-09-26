@@ -25,6 +25,7 @@ const INTERVALS: Array<[string, string, string]> = [
   ["Server: talk start → push sent", "server.talkStart", "server.pushSent"],
   ["APNs: push sent → accepted", "server.pushSent", "server.pushAccepted"],
   ["Push sent → watch woke (cross-device)", "server.pushSent", "receiver.pushReceived"],
+  ["Push sent → notification delivered (cross-device)", "server.pushSent", "receiver.notificationDelivered"],
   ["Watch: push → call reported", "receiver.pushReceived", "receiver.callReported"],
   ["Human: ring → answer tap", "receiver.callReported", "receiver.answerTapped"],
   ["Watch: answer → server told (HTTPS)", "receiver.answerTapped", "receiver.answerReported"],
@@ -32,7 +33,7 @@ const INTERVALS: Array<[string, string, string]> = [
   ["Watch: answer → joined", "receiver.answerTapped", "receiver.joined"],
   ["Watch: answer → audio session active", "receiver.answerTapped", "receiver.audioActivated"],
   ["Watch: answer → first audio", "receiver.answerTapped", "receiver.firstAudioScheduled"],
-  // Notification ring test (option C stand-in): opening the notification is the answer.
+  // Option C (and the spike's notification ring test): opening the notification is the answer.
   ["Notification: delivered → opened (human tap)", "receiver.notificationDelivered", "receiver.notificationOpened"],
   ["Cold launch: process start → notification opened", "receiver.appLaunched", "receiver.notificationOpened"],
   ["Cold launch: process start → app started", "receiver.appLaunched", "receiver.appStarted"],
@@ -53,7 +54,10 @@ export function summarize(timeline: TimelineEntry[]): Interval[] {
     const key = `${e.source}.${e.name}`;
     if (!first.has(key)) first.set(key, e.t);
   }
-  const human = (first.get("receiver.answerTapped") ?? NaN) - (first.get("receiver.callReported") ?? NaN);
+  // How long the person took to answer: from the CallKit ring (option B) or from the
+  // notification's delivery (option C) to the tap.
+  const rangAt = first.get("receiver.callReported") ?? first.get("receiver.notificationDelivered") ?? NaN;
+  const human = (first.get("receiver.answerTapped") ?? NaN) - rangAt;
   const out: Interval[] = [];
   for (const [label, from, to] of INTERVALS) {
     const a = first.get(from);

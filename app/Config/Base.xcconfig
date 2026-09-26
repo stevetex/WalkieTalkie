@@ -10,6 +10,9 @@ OAO_BUNDLE_ID = com.cypressoakstudios.overandout
 
 // Relay server host name, without a scheme (xcconfig treats "//" as a comment).
 OAO_SERVER_HOST = walkie.cypressoakstudios.com
+// The relay's shared token (the server's SPIKE_TOKEN). Temporary, until the product has
+// accounts; set it in Local.xcconfig, never here.
+OAO_SERVER_TOKEN =
 
 // Push on the watch:
 //   yes  Push Notifications and Time Sensitive Notifications entitlements. Needs a

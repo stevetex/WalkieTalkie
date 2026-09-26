@@ -17,5 +17,7 @@
 	</dict>
 	<key>OAOServerHost</key>
 	<string>$(OAO_SERVER_HOST)</string>
+	<key>OAOServerToken</key>
+	<string>$(OAO_SERVER_TOKEN)</string>
 </dict>
 </plist>

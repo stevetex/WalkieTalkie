@@ -6,11 +6,14 @@
 //   SPIKE_TOKEN       shared bearer token clients must present (unset = no auth, local only)
 //   APNS_KEY_PATH, APNS_KEY_ID, APNS_TEAM_ID, APNS_BUNDLE_ID
 //                     APNs token auth; if any is missing, pushes are logged (dry run)
+//   SIMULATOR_PUSH    1 = deliver rings to simulators on this Mac with simctl (development
+//                     only; see simulator.ts)
 
 import { createServer, type IncomingMessage, type ServerResponse, type Server } from "node:http";
 import { resolve } from "node:path";
 import { acceptUpgrade, rejectUpgrade } from "./ws.ts";
 import { ApnsPusher, DryRunPusher, apnsConfigFromEnv, type Pusher } from "./apns.ts";
+import { SimulatorPusher } from "./simulator.ts";
 import { DeviceStore, MetricsStore, ensureDir } from "./store.ts";
 import { Relay, type Peer } from "./relay.ts";
 import { summarizeAttempts } from "./report.ts";
@@ -258,12 +261,15 @@ async function readJSON(req: IncomingMessage): Promise<unknown> {
 
 if (import.meta.main) {
   const apnsConfig = apnsConfigFromEnv(process.env);
-  const pusher = apnsConfig ? new ApnsPusher(apnsConfig) : new DryRunPusher();
+  const apnsPusher = apnsConfig ? new ApnsPusher(apnsConfig) : new DryRunPusher();
+  const simulatorPush = process.env.SIMULATOR_PUSH === "1";
+  const pusher = simulatorPush ? new SimulatorPusher(apnsPusher) : apnsPusher;
   const dataDir = ensureDir(resolve(process.env.DATA_DIR ?? "data"));
   const token = process.env.SPIKE_TOKEN || null;
   const host = process.env.HOST || undefined;
   const running = await startServer({ port: Number(process.env.PORT ?? 8080), host, dataDir, token, pusher });
   console.log(`[server] listening on ${host ?? ""}:${running.port}, data in ${dataDir}`);
   console.log(apnsConfig ? `[server] APNs alert pushes, topic ${apnsConfig.bundleId}` : "[server] APNs not configured: dry-run pushes");
+  if (simulatorPush) console.warn("[server] SIMULATOR_PUSH: rings to simulator tokens run xcrun simctl push");
   if (!token) console.warn("[server] SPIKE_TOKEN not set: API and relay are unauthenticated");
 }

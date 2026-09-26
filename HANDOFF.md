@@ -52,7 +52,7 @@ Steve rejected option B (ring through CallKit, then end the call on answer) as t
 2. **Capabilities** on the watch app's App ID (developer portal, or Xcode's Signing & Capabilities): **Push Notifications** and **Time Sensitive Notifications**. `app/Config/Watch.entitlements` already asks for both. The spike's Personal Team couldn't have either, so its test notifications were delivered as ordinary ones.
 3. **APNs key:** create an APNs auth key (.p8) in the portal. Put its path, Key ID and Team ID in `deploy/gcp/config.sh` (`APNS_KEY_FILE`, `APNS_KEY_ID`, `APNS_TEAM_ID`), and set `APNS_BUNDLE_ID` to the **watch app's** ID, `com.cypressoakstudios.overandout.watchkitapp`: the watch registers for pushes itself, so that's the topic. Then run `deploy/gcp/deploy.sh`, which copies the key to the VM. The server reads `APNS_KEY_PATH` etc. (`server/src/main.ts`).
 4. **Server, alert push: done** (`f5aa971`, not deployed yet). `Relay.ring()` sends a time-sensitive alert push (`ringAlert()` in `server/src/apns.ts`) to the `APNS_BUNDLE_ID` topic. It expires when the relay abandons the ring (35 s) and collapses on the conversation ID. Tokens are `pushToken` now; `voipToken` is still accepted.
-5. **Watch, remote notifications (in the new app):** register with `WKApplication.shared().registerForRemoteNotifications()`, and send the device token to `POST /v1/devices` as `pushToken`. On the notification tap, read `conversationId` from `userInfo` and join with it. Port the flow from the spike's `answerFromNotification()` and `rejoinOnFreshStream()` in `SpikeController.swift`, which already join on the stream request; only the ID source changes.
+5. **Watch, remote notifications: built** in `app/Watch/ConversationController.swift` and tested in the simulator (see Simulator). The app registers with `WKApplication.shared().registerForRemoteNotifications()` and sends the token to `POST /v1/devices` as `pushToken`. A Personal Team build can't get a token and registers `poll:<userId>`, so it can start conversations but can't be rung. Tapping the ring notification joins with its `conversationId` in the stream request (`?join=`), retrying once on a fresh stream. What's left needs the membership: a real APNs token and delivery on the watch.
 6. **Measure on the watch (never under Xcode's debugger):**
    - push sent → notification shown, for a suspended app and for a quit app;
    - tap → first audio;
@@ -66,7 +66,7 @@ Steve rejected option B (ring through CallKit, then end the call on answer) as t
 
 Logged in the doc's Design decisions table.
 
-- **Project:** a new Xcode project in `app/` (iPhone app + watch app), with shared code in the local package `app/Packages/OverAndOutKit`. `RelayConnection`, `VoiceCodec` and `AudioPipeline` are already ported there, with tests (`swift test`). The answer / join / conversation-window logic and the audio session setup aren't ported yet.
+- **Project:** a new Xcode project in `app/` (iPhone app + watch app), with shared code in the local package `app/Packages/OverAndOutKit`. `RelayConnection`, `VoiceCodec`, `AudioPipeline`, `Timeline` and `Ring` are there, with tests (`swift test`). The watch's conversation flow (answer from the notification or in the app, join, talk, 45 s window, audio session, interruptions) is in `app/Watch/ConversationController.swift`. Until accounts exist, the watch uses a dev identity: a generated user ID, the relay token from `Local.xcconfig` (`OAO_SERVER_TOKEN`), and a friend picked in Settings.
 - **iPhone app:** a companion in the MVP (sign-in, invites, friends, settings). PushToTalk comes after the MVP.
 - **MVP core:** Sign in with Apple, invite links over Messages, one-to-one channels, a fixed 45 s window, report/block, account deletion. No async clips; unheard audio is still dropped.
 - **Bundle ID:** `com.cypressoakstudios.overandout` (the watch app is `….watchkitapp`).
@@ -146,7 +146,21 @@ Logged in the doc's Design decisions table.
 
 ## Simulator
 
-- **Devices:** Apple Watch Series 12 (46mm) sim `5DE92663-5226-41E6-9799-2C68705F50F7`, user `watch-b25f`, with Test Bot selected. It has no microphone (it sends a 440 Hz test tone), no push, and no incoming CallKit calls.
+**The product app (option C, end to end):** a local relay started with `SIMULATOR_PUSH=1` delivers rings to the watch simulator with `xcrun simctl push` (`server/src/simulator.ts`). The simulator app registers a `simulator:<udid>:<bundle ID>` token, so the relay → notification → tap → join → replay path runs without a membership.
+
+```bash
+cd server && PORT=8080 DATA_DIR=<dir> SPIKE_TOKEN=simtoken SIMULATOR_PUSH=1 node src/main.ts
+```
+
+```bash
+cd app && xcodebuild -project OverAndOut.xcodeproj -scheme OverAndOutWatch -destination 'id=5DE92663-5226-41E6-9799-2C68705F50F7' -derivedDataPath <dir> OAO_SERVER_HOST=localhost:8080 OAO_SERVER_TOKEN=simtoken build
+```
+
+Then install `OverAndOutWatch.app` with `xcrun simctl install`, launch `com.cypressoakstudios.overandout.dev.watchkitapp`, allow notifications and the microphone, and ring it with the bot (`SPIKE_SERVER=http://localhost:8080 SPIKE_TOKEN=simtoken node tools/bot.ts send --to <its user ID> …`). The Claude Code iOS Simulator tool can tap and hold on the watch simulator (`touch_path` for Talk). The server host and token are read from the build on every launch, not saved.
+
+**The spike:**
+
+- **Devices:** Apple Watch Series 12 (46mm) sim `5DE92663-5226-41E6-9799-2C68705F50F7`, user `watch-b25f`, with Test Bot selected. It has no microphone (it sends a 440 Hz test tone), no push, and no incoming CallKit calls. The product app on the same sim is `watch-7743`.
 - **Local relay:**
 
   ```bash

@@ -9,6 +9,10 @@ DEVELOPMENT_TEAM = ABCDE12345
 // OAO_BUNDLE_ID = com.cypressoakstudios.overandout.dev
 // OAO_PUSH = no
 
+// The relay's shared token: the server's SPIKE_TOKEN (deploy/gcp/config.sh). Temporary,
+// until the product has accounts.
+OAO_SERVER_TOKEN = choose-a-long-random-string
+
 // Another relay, for example a local server for the simulator (plain HTTP to localhost
 // is allowed).
 // OAO_SERVER_HOST = localhost:8080

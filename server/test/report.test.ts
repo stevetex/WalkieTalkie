@@ -29,3 +29,21 @@ test("an unanswered ring and a later answered ring are summarized separately", (
   assert.equal(get(second, "Watch: answer → first audio"), 1100);
   assert.equal(get(second, "Total: press → first audio (cross-device)"), 7600);
 });
+
+test("an option C ring measures delivery and leaves out the time before the tap", () => {
+  const timeline = [
+    e("sender", "talkPressed", 0),
+    e("server", "pushSent", 2),
+    e("receiver", "notificationDelivered", 600),
+    e("receiver", "notificationOpened", 5_600),
+    e("receiver", "answerTapped", 5_600),
+    e("receiver", "firstAudioScheduled", 8_100),
+  ];
+  const [ring] = summarizeAttempts(timeline);
+  const get = (label: string) => ring.intervals.find((i) => i.label === label)?.ms;
+
+  assert.equal(get("Push sent → notification delivered (cross-device)"), 598);
+  assert.equal(get("Notification: opened → first audio"), 2500);
+  // 8.1 s from the push, minus the 5 s the notification waited for a tap.
+  assert.equal(get("Total: push sent → first audio, minus human answer time"), 3098);
+});

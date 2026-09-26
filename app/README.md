@@ -27,6 +27,8 @@ xcodebuild -project OverAndOut.xcodeproj -scheme OverAndOut -destination 'generi
 
 Building the `OverAndOut` scheme also builds the watch app and embeds it. To run on the watch simulator, install `OverAndOutWatch.app` from `Debug-watchsimulator` with `xcrun simctl install`.
 
+To test the whole ring → tap → join path in the watch simulator without an APNs key, run a local relay with `SIMULATOR_PUSH=1` (see "Simulator" in [HANDOFF.md](../HANDOFF.md)). Build with `OAO_SERVER_HOST=localhost:8080 OAO_SERVER_TOKEN=<the local relay's token>`.
+
 The shared package's tests run on the Mac:
 
 ```bash
