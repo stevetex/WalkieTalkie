@@ -34,6 +34,8 @@ trap 'rm -rf "$stage"' EXIT
     echo "APNS_BUNDLE_ID=$APNS_BUNDLE_ID"
   fi
 } >"$stage/relay.env"
+# The node setup from the same commit as the image.
+git -C "$repo" show "$rev:deploy/gcp/relay-node.cloud-init.yaml" >"$stage/cloud-init.yaml"
 
 if ! gc compute instance-templates describe "$template" >/dev/null 2>&1; then
   echo "Creating instance template $template…"
@@ -48,7 +50,7 @@ if ! gc compute instance-templates describe "$template" >/dev/null 2>&1; then
     --service-account="relay-node@$PROJECT_ID.iam.gserviceaccount.com" --scopes=cloud-platform \
     --shielded-secure-boot --shielded-vtpm --shielded-integrity-monitoring \
     --metadata=relay-image="$image",google-logging-enabled=true,google-monitoring-enabled=true \
-    --metadata-from-file=user-data="$here/relay-node.cloud-init.yaml",relay-env="$stage/relay.env"
+    --metadata-from-file=user-data="$stage/cloud-init.yaml",relay-env="$stage/relay.env"
 fi
 
 if ! gc compute instance-groups managed describe "$group" --zone="$ZONE" >/dev/null 2>&1; then

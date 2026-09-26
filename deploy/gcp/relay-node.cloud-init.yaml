@@ -29,6 +29,10 @@ write_files:
     permissions: "0644"
     content: |
       set -euo pipefail
+      # COS's host firewall drops incoming TCP except SSH. Open HTTP (health checks, ACME)
+      # and HTTPS; the VPC firewall rule walkie-web decides who can reach them.
+      iptables -w -C INPUT -p tcp -m multiport --dports 80,443 -j ACCEPT 2>/dev/null ||
+        iptables -w -A INPUT -p tcp -m multiport --dports 80,443 -j ACCEPT
       md() { curl -sf -H "Metadata-Flavor: Google" "http://metadata.google.internal/computeMetadata/v1/instance/attributes/$1"; }
       mkdir -p /run/relay /home/relay
       md relay-image >/run/relay/image

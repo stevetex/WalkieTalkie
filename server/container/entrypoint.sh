@@ -14,7 +14,8 @@ set -euo pipefail
 
 caddyfile=/tmp/Caddyfile
 {
-  printf '{\n\tadmin off\n'
+  # HTTP/3 is off: it needs UDP 443, which the firewall doesn't open.
+  printf '{\n\tadmin off\n\tservers {\n\t\tprotocols h1 h2\n\t}\n'
   if [ -n "${ACME_EMAIL:-}" ]; then printf '\temail %s\n' "$ACME_EMAIL"; fi
   printf '}\n\n'
   # Health checks come over plain HTTP on port 80 and go through to the relay, so they
