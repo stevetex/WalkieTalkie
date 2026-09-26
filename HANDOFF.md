@@ -48,6 +48,8 @@ Steve rejected option B (ring through CallKit, then end the call on answer) as t
 
 ## First steps with the membership
 
+Status on 2026-09-26: the membership is active. `app/Config/Local.xcconfig` has the paid team with no Personal Team overrides, and `deploy/gcp/config.sh` has the APNs key settings with `APNS_BUNDLE_ID` set to the watch app's ID. Not yet done: confirm the two capabilities on the App ID, deploy (step 3), and the measurements (step 6).
+
 1. **Signing:** in `app/Config/Local.xcconfig`, set `DEVELOPMENT_TEAM` to the paid Team ID, and remove the Personal Team overrides (`OAO_BUNDLE_ID = ….dev` and `OAO_PUSH = no`). The bundle IDs are `com.cypressoakstudios.overandout` and `com.cypressoakstudios.overandout.watchkitapp`.
 2. **Capabilities** on the watch app's App ID (developer portal, or Xcode's Signing & Capabilities): **Push Notifications** and **Time Sensitive Notifications**. `app/Config/Watch.entitlements` already asks for both. The spike's Personal Team couldn't have either, so its test notifications were delivered as ordinary ones.
 3. **APNs key:** create an APNs auth key (.p8) in the portal. Put its path, Key ID and Team ID in `deploy/gcp/config.sh` (`APNS_KEY_FILE`, `APNS_KEY_ID`, `APNS_TEAM_ID`), and set `APNS_BUNDLE_ID` to the **watch app's** ID, `com.cypressoakstudios.overandout.watchkitapp`: the watch registers for pushes itself, so that's the topic. Then run `deploy/gcp/deploy.sh`, which copies the key to the VM. The server reads `APNS_KEY_PATH` etc. (`server/src/main.ts`).
@@ -71,7 +73,31 @@ Logged in the doc's Design decisions table.
 - **MVP core:** Sign in with Apple, invite links over Messages, one-to-one channels, a fixed 45 s window, report/block, account deletion. No async clips; unheard audio is still dropped.
 - **Bundle ID:** `com.cypressoakstudios.overandout` (the watch app is `….watchkitapp`).
 - **Minimum OS: iOS 16 / watchOS 9**, the lowest the APIs need, so people on older OSes can talk to people on watchOS 27. It's also the lowest Xcode 27 can target for watchOS, and a watch on watchOS 9 pairs with iOS 16 or later. Everything the MVP uses is older (time-sensitive notifications watchOS 8, `WKApplication` remote notifications watchOS 7, Sign in with Apple watchOS 6). The spike's watch code needed watchOS 10 in only two places: `AVAudioApplication.requestRecordPermission` (use `AVAudioSession.requestRecordPermission` below watchOS 10) and the `topBarTrailing` toolbar placement. Gate newer features with `#available`: double-tap (`handGestureShortcut`) needs watchOS 11, and Control widgets need watchOS 26.
-- **Still open:** hosting at scale (the doc's Hosting section has Cloud Run, Memorystore and Firestore; the spike runs on one e2-micro VM).
+- **Hosting at scale (2026-09-26): option E, sharded relay nodes with client-owned state, on a managed instance group with Container-Optimized OS.** See the doc's Hosting section and "Build plan for hosting (option E)" below. No Valkey, and no Cloud Run for the relay.
+
+## Build plan for hosting (option E)
+
+Each conversation runs on one relay node, and both apps connect to it, so `relay.ts` keeps its state in memory. The apps pick the node by rendezvous hashing over a fixed node list, and the ring names the node. The sender's app is the source of truth for unheard messages. Accounts, friends and blocks go in Firestore, off the audio path. In order:
+
+1. **Firestore for server data:** move `DeviceStore` (and the metrics timelines) from JSON files to Firestore, so a node holds nothing durable.
+2. **Relay container image:** Node plus TLS (Caddy or Node itself), with certificates kept across VM replacements (a small disk or Cloud Storage).
+3. **Managed instance group** in `deploy/gcp`:
+   - Container-Optimized OS, per-instance static Standard-tier IPs, a health check with autohealing, and rolling replacement for deploys.
+   - Start with one free-tier e2-micro node as `relay-1` under overandout.app (DNS host to confirm with Steve).
+   - An uptime check and alert.
+   - Retire the hand-built `walkie-relay` VM once `relay-1` works.
+4. **Relay protocol:**
+   - the node's hostname in the ring payload;
+   - a "delivered" message to the sender once the recipient has heard a burst;
+   - accept a re-sent burst with the same `burstId` without playing it twice.
+5. **Apps:**
+   - the rendezvous-hash node choice, with shared test vectors for TypeScript and Swift;
+   - the sender keeps unheard bursts and re-sends them after a failover, and runs its own 35 s ring timeout;
+   - fail over to the next node when a node is unreachable;
+   - follow a new ring for the same person without ringing again.
+6. **Two-node test:** stop a node mid-ring and mid-conversation, and check that the message still arrives and both apps meet on the next node.
+
+Sign-in tokens (signed by the API, checked on each node with a public key) come with the accounts work.
 
 ## What to reuse from the spike
 
