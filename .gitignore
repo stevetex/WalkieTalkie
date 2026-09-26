@@ -8,6 +8,11 @@ deploy/gcp/config.sh
 
 # Watch app
 watch/Config/Local.xcconfig
+
+# Product app
+app/Config/Local.xcconfig
+.build/
+.swiftpm/
 xcuserdata/
 DerivedData/
 build/

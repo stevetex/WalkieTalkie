@@ -5,9 +5,9 @@ Read this first. The spike is finished: it proved on a real Apple Watch that the
 ## Start here
 
 1. Read this file, then the feasibility doc (link below), especially Design decisions, Prototype results and Recommended plan.
-2. Confirm with Steve that the membership is active, and get his paid **Team ID**.
+2. Confirm with Steve that the membership is active, and get his paid **Team ID**. (On 2026-09-25 it was still pending.)
 3. Work through "First steps with the membership", in order. Push is the one thing the spike couldn't test.
-4. Before writing product code, agree the open product decisions with Steve (see "Decisions to make before building"). Don't assume them.
+4. The product decisions were agreed on 2026-09-25 (see "Decisions made"). The product project is in `app/` (see [app/README.md](app/README.md)).
 
 ## Goal
 
@@ -48,31 +48,30 @@ Steve rejected option B (ring through CallKit, then end the call on answer) as t
 
 ## First steps with the membership
 
-1. **Signing:** in `watch/Config/Local.xcconfig`, set `DEVELOPMENT_TEAM` to the paid Team ID. Pick the product's real bundle ID with Steve. The spike uses `com.cypressoakstudios.walkiespike.dev`.
-2. **Capabilities** on that App ID (developer portal, or Xcode's Signing & Capabilities): **Push Notifications** and **Time Sensitive Notifications**. The spike's Personal Team couldn't have either, so its test notifications were delivered as ordinary ones.
-3. **APNs key:** create an APNs auth key (.p8) in the portal. Put its path, Key ID, Team ID and bundle ID in `deploy/gcp/config.sh` (`APNS_KEY_FILE`, `APNS_KEY_ID`, `APNS_TEAM_ID`, `APNS_BUNDLE_ID`). Then commit and run `deploy/gcp/deploy.sh`, which copies the key to the VM. The server reads `APNS_KEY_PATH` etc. (`server/src/main.ts`).
-4. **Server, alert push:** `server/src/apns.ts` only sends **VoIP** pushes today (`apns-push-type: voip`, topic `<bundle>.voip`). Add an alert push for option C:
-   - headers `apns-push-type: alert`, topic = the bundle ID, priority 10;
-   - `aps.alert` with the caller's name, `aps.sound`, `aps["interruption-level"] = "time-sensitive"`;
-   - the ring payload (`conversationId`, `from`, `fromName`, `burstId`, `pushSentAt`) as custom keys.
-
-   Then use it in `Relay.ring()` in place of the VoIP or poll branch.
-5. **Watch, remote notifications:** register with `WKApplication.shared().registerForRemoteNotifications()`, and send the device token to `POST /v1/devices` in place of the `poll:` token. On the notification tap, read `conversationId` from `userInfo` and join with it instead of `"pending"`. `answerFromNotification()` and `rejoinOnFreshStream()` in `SpikeController.swift` already implement the join-on-stream flow; only the ID source changes.
+1. **Signing:** in `app/Config/Local.xcconfig`, set `DEVELOPMENT_TEAM` to the paid Team ID, and remove the Personal Team overrides (`OAO_BUNDLE_ID = ….dev` and `OAO_PUSH = no`). The bundle IDs are `com.cypressoakstudios.overandout` and `com.cypressoakstudios.overandout.watchkitapp`.
+2. **Capabilities** on the watch app's App ID (developer portal, or Xcode's Signing & Capabilities): **Push Notifications** and **Time Sensitive Notifications**. `app/Config/Watch.entitlements` already asks for both. The spike's Personal Team couldn't have either, so its test notifications were delivered as ordinary ones.
+3. **APNs key:** create an APNs auth key (.p8) in the portal. Put its path, Key ID and Team ID in `deploy/gcp/config.sh` (`APNS_KEY_FILE`, `APNS_KEY_ID`, `APNS_TEAM_ID`), and set `APNS_BUNDLE_ID` to the **watch app's** ID, `com.cypressoakstudios.overandout.watchkitapp`: the watch registers for pushes itself, so that's the topic. Then run `deploy/gcp/deploy.sh`, which copies the key to the VM. The server reads `APNS_KEY_PATH` etc. (`server/src/main.ts`).
+4. **Server, alert push: done** (`f5aa971`, not deployed yet). `Relay.ring()` sends a time-sensitive alert push (`ringAlert()` in `server/src/apns.ts`) to the `APNS_BUNDLE_ID` topic. It expires when the relay abandons the ring (35 s) and collapses on the conversation ID. Tokens are `pushToken` now; `voipToken` is still accepted.
+5. **Watch, remote notifications (in the new app):** register with `WKApplication.shared().registerForRemoteNotifications()`, and send the device token to `POST /v1/devices` as `pushToken`. On the notification tap, read `conversationId` from `userInfo` and join with it. Port the flow from the spike's `answerFromNotification()` and `rejoinOnFreshStream()` in `SpikeController.swift`, which already join on the stream request; only the ID source changes.
 6. **Measure on the watch (never under Xcode's debugger):**
    - push sent → notification shown, for a suspended app and for a quit app;
    - tap → first audio;
+   - whether the `voip` background mode is needed: remove it from `app/Config/Watch-Info.plist` and check that incoming audio still plays with the wrist down and that the app survives a long quiet spell in the 45 s window. Option C doesn't use PushKit, so App Review may question it;
+   - the same flow on watchOS 9–11 (older simulator runtimes, or a spare watch): whether the Opus encoder exists there (`VoiceEncoder` silently falls back to 256 kbps PCM) and whether the notification still launches the app in the background;
    - whether time-sensitive notifications get through Focus modes.
 
    Record the results in the doc.
 
-## Decisions to make before building
+## Decisions made (2026-09-25)
 
-Raise these with Steve; don't assume them.
+Logged in the doc's Design decisions table.
 
-- **New project or evolve the spike?** The spike is one watch-only target with a hand-written `project.pbxproj`, and one large `SpikeController.swift` full of diagnostics and test switches. My suggestion is a fresh product project, iOS app plus watch app, that ports the pieces listed under "What to reuse".
-- **iPhone app:** the doc's plan has an iPhone app using Apple's PushToTalk framework (`PTChannelManager`) on the same relay. The spike hasn't touched the iPhone side.
-- **MVP scope and product decisions:** the doc's Delivery phases and Open questions cover these: Sign in with Apple, invites, one-to-one channels, async clips, report/block, account deletion; the window length; whether to keep async clips. The doc also has a design decision that unheard messages are dropped when a ring goes unanswered.
-- **Hosting at scale:** the doc's Hosting section has Cloud Run, Memorystore and Firestore on Google Cloud. The spike runs on one e2-micro VM.
+- **Project:** a new Xcode project in `app/` (iPhone app + watch app), with shared code in the local package `app/Packages/OverAndOutKit`. `RelayConnection`, `VoiceCodec` and `AudioPipeline` are already ported there, with tests (`swift test`). The answer / join / conversation-window logic and the audio session setup aren't ported yet.
+- **iPhone app:** a companion in the MVP (sign-in, invites, friends, settings). PushToTalk comes after the MVP.
+- **MVP core:** Sign in with Apple, invite links over Messages, one-to-one channels, a fixed 45 s window, report/block, account deletion. No async clips; unheard audio is still dropped.
+- **Bundle ID:** `com.cypressoakstudios.overandout` (the watch app is `….watchkitapp`).
+- **Minimum OS: iOS 16 / watchOS 9**, the lowest the APIs need, so people on older OSes can talk to people on watchOS 27. It's also the lowest Xcode 27 can target for watchOS, and a watch on watchOS 9 pairs with iOS 16 or later. Everything the MVP uses is older (time-sensitive notifications watchOS 8, `WKApplication` remote notifications watchOS 7, Sign in with Apple watchOS 6). The spike's watch code needed watchOS 10 in only two places: `AVAudioApplication.requestRecordPermission` (use `AVAudioSession.requestRecordPermission` below watchOS 10) and the `topBarTrailing` toolbar placement. Gate newer features with `#available`: double-tap (`handGestureShortcut`) needs watchOS 11, and Control widgets need watchOS 26.
+- **Still open:** hosting at scale (the doc's Hosting section has Cloud Run, Memorystore and Firestore; the spike runs on one e2-micro VM).
 
 ## What to reuse from the spike
 
@@ -121,6 +120,7 @@ Raise these with Steve; don't assume them.
 ## Local config (gitignored; don't commit or print)
 
 - `deploy/gcp/config.sh`: `PROJECT_ID`, `DOMAIN`, the generated `SPIKE_TOKEN`, and empty `APNS_*` values.
+- `app/Config/Local.xcconfig`: the Personal Team, `OAO_BUNDLE_ID = com.cypressoakstudios.overandout.dev` and `OAO_PUSH = no`, until the paid membership is active.
 - `watch/Config/Local.xcconfig`: `DEVELOPMENT_TEAM = V5A3D25UYP` (the **free Personal Team**; replace it), `PRODUCT_BUNDLE_IDENTIFIER = com.cypressoakstudios.walkiespike.dev`, `SPIKE_SERVER_HOST = walkie.cypressoakstudios.com`, `SPIKE_TOKEN`, and `SPIKE_PUSH_MODE = none`. `voip` selects the push entitlement file; option C will need an alert-push equivalent.
 - To use the token in commands without printing it:
 

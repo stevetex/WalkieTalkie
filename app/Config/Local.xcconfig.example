@@ -1,0 +1,14 @@
+// Copy to Local.xcconfig and fill in. Local.xcconfig is gitignored.
+
+// Your Apple Developer team ID.
+DEVELOPMENT_TEAM = ABCDE12345
+
+// Until the paid membership is active, sign with your free Personal Team, turn off push,
+// and use a throwaway bundle ID. Automatic signing registers the bundle ID with whichever
+// team signs, so don't let a Personal Team claim the real one.
+// OAO_BUNDLE_ID = com.cypressoakstudios.overandout.dev
+// OAO_PUSH = no
+
+// Another relay, for example a local server for the simulator (plain HTTP to localhost
+// is allowed).
+// OAO_SERVER_HOST = localhost:8080

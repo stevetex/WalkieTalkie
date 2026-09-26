@@ -1,0 +1,22 @@
+// Shared build settings for Over&Out. Put your own values in Local.xcconfig (copy
+// Local.xcconfig.example); it is gitignored and overrides anything here.
+
+DEVELOPMENT_TEAM =
+
+// The product's bundle ID (decided 2026-09-25; it can't change once the app ships).
+// The watch app's is this plus ".watchkitapp". The watch registers for pushes itself,
+// so the watch app's ID is the APNs topic for rings (the server's APNS_BUNDLE_ID).
+OAO_BUNDLE_ID = com.cypressoakstudios.overandout
+
+// Relay server host name, without a scheme (xcconfig treats "//" as a comment).
+OAO_SERVER_HOST = walkie.cypressoakstudios.com
+
+// Push on the watch:
+//   yes  Push Notifications and Time Sensitive Notifications entitlements. Needs a
+//        paid Apple Developer Program membership.
+//   no   No push entitlements, so a free Personal Team can sign the app.
+OAO_PUSH = yes
+OAO_WATCH_ENTITLEMENTS_yes = Config/Watch.entitlements
+OAO_WATCH_ENTITLEMENTS_no = Config/Watch-NoPush.entitlements
+
+#include? "Local.xcconfig"

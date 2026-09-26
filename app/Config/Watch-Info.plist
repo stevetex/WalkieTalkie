@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Carried over from the spike, whose measurements (incoming audio playing with the
+	     wrist down, runs 9-14) were made with it. Option C doesn't use PushKit, so check
+	     on the watch whether it's still needed before submitting. -->
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>voip</string>
+	</array>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<!-- Lets the simulator reach a server on this Mac over plain HTTP. -->
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
+	<key>OAOServerHost</key>
+	<string>$(OAO_SERVER_HOST)</string>
+</dict>
+</plist>
