@@ -40,7 +40,9 @@ git -C "$repo" show "$rev:deploy/gcp/relay-node.cloud-init.yaml" >"$stage/cloud-
 if ! gc compute instance-templates describe "$template" >/dev/null 2>&1; then
   echo "Creating instance template $template…"
   # e2-micro on a standard disk stays in the free tier (one per billing account). The
-  # data disk holds Caddy's certificates; the group keeps it across replacements.
+  # data disk holds Caddy's certificates; the group keeps it across replacements. Guest
+  # attributes publish each new node's SSH host keys, so gcloud compute ssh trusts a
+  # replaced node instead of refusing its changed key.
   gc compute instance-templates create "$template" \
     --machine-type=e2-micro \
     --image-family=cos-stable --image-project=cos-cloud \
@@ -49,7 +51,7 @@ if ! gc compute instance-templates describe "$template" >/dev/null 2>&1; then
     --network-tier=STANDARD --tags=walkie-web \
     --service-account="relay-node@$PROJECT_ID.iam.gserviceaccount.com" --scopes=cloud-platform \
     --shielded-secure-boot --shielded-vtpm --shielded-integrity-monitoring \
-    --metadata=relay-image="$image",google-logging-enabled=true,google-monitoring-enabled=true \
+    --metadata=relay-image="$image",google-logging-enabled=true,google-monitoring-enabled=true,enable-guest-attributes=TRUE \
     --metadata-from-file=user-data="$stage/cloud-init.yaml",relay-env="$stage/relay.env"
 fi
 
