@@ -1,0 +1,2169 @@
+[
+  {
+    "path": "01-porcelain/app/CharacterArt.xcassets/OAOPorcelain.imageset/OAOPorcelain@1x.png",
+    "width": 256,
+    "height": 256,
+    "mode": "RGBA",
+    "dpi": null,
+    "sha256": "1116c33eddc6c2d32082e2ccf52008fcd5c531fd044911e822e5c3da3fed2ccb",
+    "alphaExtrema": [
+      0,
+      255
+    ]
+  },
+  {
+    "path": "01-porcelain/app/CharacterArt.xcassets/OAOPorcelain.imageset/OAOPorcelain@2x.png",
+    "width": 512,
+    "height": 512,
+    "mode": "RGBA",
+    "dpi": null,
+    "sha256": "063bfb0f615f9e444ed9cfc80ff8194e87d4fc2f5a38cc0c0989ea215df4b41d",
+    "alphaExtrema": [
+      0,
+      255
+    ]
+  },
+  {
+    "path": "01-porcelain/app/CharacterArt.xcassets/OAOPorcelain.imageset/OAOPorcelain@3x.png",
+    "width": 768,
+    "height": 768,
+    "mode": "RGBA",
+    "dpi": null,
+    "sha256": "84b3de5bf2813952260eb015fac59733b355aa8e99be4054a0b74d5a21f1ba8a",
+    "alphaExtrema": [
+      0,
+      255
+    ]
+  },
+  {
+    "path": "01-porcelain/icons/Watch.xcassets/OAOPorcelainIcon.appiconset/icon-1024.png",
+    "width": 1024,
+    "height": 1024,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "6286e5c3d13a16f0d6d29e82fecc93668efe834edb18e8b7296f1b57a174377c"
+  },
+  {
+    "path": "01-porcelain/icons/exports/icon-180.png",
+    "width": 180,
+    "height": 180,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "202f578d51aaf0e3eb9be0883a3997f95fb080af9384ad1eb83ef21793d5a82b"
+  },
+  {
+    "path": "01-porcelain/icons/exports/icon-256.png",
+    "width": 256,
+    "height": 256,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "4cde2f2e1095bf0f2de7101fa373be80903e1f6b6578d9f51661e75ec5cd9936"
+  },
+  {
+    "path": "01-porcelain/icons/exports/icon-48.png",
+    "width": 48,
+    "height": 48,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "88d7cd0e777ad6f9c8ed4d38d8fa3b7705fd234375e4cf263ae2292739367d14"
+  },
+  {
+    "path": "01-porcelain/icons/exports/icon-512.png",
+    "width": 512,
+    "height": 512,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "00975404e39143a7a30355d766b923daa55883a4679c18dbbfa1be67491c4610"
+  },
+  {
+    "path": "01-porcelain/icons/exports/icon-96.png",
+    "width": 96,
+    "height": 96,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "f63088870400d395232f2d3bc4a087585a21c4b73d85a2dd32d53cce7aa9bdfd"
+  },
+  {
+    "path": "01-porcelain/icons/iPhone.xcassets/OAOPorcelainIcon.appiconset/icon-1024.png",
+    "width": 1024,
+    "height": 1024,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "6286e5c3d13a16f0d6d29e82fecc93668efe834edb18e8b7296f1b57a174377c"
+  },
+  {
+    "path": "01-porcelain/icons/icon-1024.png",
+    "width": 1024,
+    "height": 1024,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "6286e5c3d13a16f0d6d29e82fecc93668efe834edb18e8b7296f1b57a174377c"
+  },
+  {
+    "path": "01-porcelain/master.png",
+    "width": 1254,
+    "height": 1254,
+    "mode": "RGBA",
+    "dpi": null,
+    "sha256": "bc7a241363eb71051be432400dddae31e0353bfc9a9d4a7489672ecccc128171",
+    "alphaExtrema": [
+      0,
+      255
+    ]
+  },
+  {
+    "path": "01-porcelain/merch/color-300dpi.png",
+    "width": 1254,
+    "height": 1254,
+    "mode": "RGBA",
+    "dpi": [
+      299.9994,
+      299.9994
+    ],
+    "sha256": "4145be96b26ead2b3265b0650e0a54656d5688c7577863e492ed28db024ccadc",
+    "alphaExtrema": [
+      0,
+      255
+    ]
+  },
+  {
+    "path": "02-honey/app/CharacterArt.xcassets/OAOHoney.imageset/OAOHoney@1x.png",
+    "width": 256,
+    "height": 256,
+    "mode": "RGBA",
+    "dpi": null,
+    "sha256": "a4fca86c7f554e77ed29f91e793e1906b5a906ccebcc033937981bbe8274ae84",
+    "alphaExtrema": [
+      0,
+      255
+    ]
+  },
+  {
+    "path": "02-honey/app/CharacterArt.xcassets/OAOHoney.imageset/OAOHoney@2x.png",
+    "width": 512,
+    "height": 512,
+    "mode": "RGBA",
+    "dpi": null,
+    "sha256": "a6c6884904aa49a499197f66782802f2fb345117e99c19d88608d2cc217c41a1",
+    "alphaExtrema": [
+      0,
+      255
+    ]
+  },
+  {
+    "path": "02-honey/app/CharacterArt.xcassets/OAOHoney.imageset/OAOHoney@3x.png",
+    "width": 768,
+    "height": 768,
+    "mode": "RGBA",
+    "dpi": null,
+    "sha256": "26eb4c6f85b601afca012ba309efe0688ffdf95516ca19ffe7ec01b03e204104",
+    "alphaExtrema": [
+      0,
+      255
+    ]
+  },
+  {
+    "path": "02-honey/icons/Watch.xcassets/OAOHoneyIcon.appiconset/icon-1024.png",
+    "width": 1024,
+    "height": 1024,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "bba36aad4508d48ac35286f538828f455eee7302c90b7b6d34e1da4686246ea3"
+  },
+  {
+    "path": "02-honey/icons/exports/icon-180.png",
+    "width": 180,
+    "height": 180,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "97fd3673bee390e3600bb8c3a32bd505cbcc6ebf68b78f8a4364ad6e53e9bddf"
+  },
+  {
+    "path": "02-honey/icons/exports/icon-256.png",
+    "width": 256,
+    "height": 256,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "b2da47f8e3c129a29e526b88ed0464e4eeb7675825eadbba42f13695533d7f22"
+  },
+  {
+    "path": "02-honey/icons/exports/icon-48.png",
+    "width": 48,
+    "height": 48,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "c502104c00e815dd2f5d0da7db3b6f2ba2a60e2dfbc35009e089e38632748399"
+  },
+  {
+    "path": "02-honey/icons/exports/icon-512.png",
+    "width": 512,
+    "height": 512,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "dd9ccebb08daa5eccffebb33766a3766065004cc385af2d2da2ce794b90e4cf4"
+  },
+  {
+    "path": "02-honey/icons/exports/icon-96.png",
+    "width": 96,
+    "height": 96,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "03ce623926d46e4bd45a31e0c738cfdcae1a38d47b8540061a41a48336a7b4a2"
+  },
+  {
+    "path": "02-honey/icons/iPhone.xcassets/OAOHoneyIcon.appiconset/icon-1024.png",
+    "width": 1024,
+    "height": 1024,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "bba36aad4508d48ac35286f538828f455eee7302c90b7b6d34e1da4686246ea3"
+  },
+  {
+    "path": "02-honey/icons/icon-1024.png",
+    "width": 1024,
+    "height": 1024,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "bba36aad4508d48ac35286f538828f455eee7302c90b7b6d34e1da4686246ea3"
+  },
+  {
+    "path": "02-honey/master.png",
+    "width": 1254,
+    "height": 1254,
+    "mode": "RGBA",
+    "dpi": null,
+    "sha256": "7f1cef8647a5eb1d26bc17fb476fcef64cc45ef367664a0aa4b799f74854bf88",
+    "alphaExtrema": [
+      0,
+      255
+    ]
+  },
+  {
+    "path": "02-honey/merch/color-300dpi.png",
+    "width": 1254,
+    "height": 1254,
+    "mode": "RGBA",
+    "dpi": [
+      299.9994,
+      299.9994
+    ],
+    "sha256": "eb5de6879a75e4512ad95dfa0626c9a3bf654484d72a056057c0155fc30c46e9",
+    "alphaExtrema": [
+      0,
+      255
+    ]
+  },
+  {
+    "path": "03-cocoa/app/CharacterArt.xcassets/OAOCocoa.imageset/OAOCocoa@1x.png",
+    "width": 256,
+    "height": 256,
+    "mode": "RGBA",
+    "dpi": null,
+    "sha256": "e28d4cb8dbddeced35f325d657585ce7ed3e1e5e49f7c8c831fccc5f764eff21",
+    "alphaExtrema": [
+      0,
+      255
+    ]
+  },
+  {
+    "path": "03-cocoa/app/CharacterArt.xcassets/OAOCocoa.imageset/OAOCocoa@2x.png",
+    "width": 512,
+    "height": 512,
+    "mode": "RGBA",
+    "dpi": null,
+    "sha256": "d361e28771d9d8c518d85a3d64ecd9a4cbd8c1948e4dae88b80b1d995f7f1b43",
+    "alphaExtrema": [
+      0,
+      255
+    ]
+  },
+  {
+    "path": "03-cocoa/app/CharacterArt.xcassets/OAOCocoa.imageset/OAOCocoa@3x.png",
+    "width": 768,
+    "height": 768,
+    "mode": "RGBA",
+    "dpi": null,
+    "sha256": "b1d56903036889e7c152f0ff4a72c3c46221b5a1e73f691e3855ed11341f79d4",
+    "alphaExtrema": [
+      0,
+      255
+    ]
+  },
+  {
+    "path": "03-cocoa/icons/Watch.xcassets/OAOCocoaIcon.appiconset/icon-1024.png",
+    "width": 1024,
+    "height": 1024,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "84c9b5f412dbf8b9acf1fcc27a57c54c03eec19e7e3d04c540ddb3e3a1b58d1b"
+  },
+  {
+    "path": "03-cocoa/icons/exports/icon-180.png",
+    "width": 180,
+    "height": 180,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "69a19c3d3f9a052cd29c45c7a1c37914519bb84ef91951c3be7ad6c66daf9aae"
+  },
+  {
+    "path": "03-cocoa/icons/exports/icon-256.png",
+    "width": 256,
+    "height": 256,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "fb0a01985e27d983de590c03b11220cca8fd5fbe2d87bffecc76435d3a2b1022"
+  },
+  {
+    "path": "03-cocoa/icons/exports/icon-48.png",
+    "width": 48,
+    "height": 48,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "7046147110346682c30b6d03901e36133a061142fc223f2dfc5059018ca5c3a9"
+  },
+  {
+    "path": "03-cocoa/icons/exports/icon-512.png",
+    "width": 512,
+    "height": 512,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "1bfcf2e9d62771da8506036771237d75f77d414e227c1067c0bf4152a5c78f55"
+  },
+  {
+    "path": "03-cocoa/icons/exports/icon-96.png",
+    "width": 96,
+    "height": 96,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "7825672f81f896f10af3f1b95034c168b3fdfd7bad9b3ac6d5f078de43b35dbc"
+  },
+  {
+    "path": "03-cocoa/icons/iPhone.xcassets/OAOCocoaIcon.appiconset/icon-1024.png",
+    "width": 1024,
+    "height": 1024,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "84c9b5f412dbf8b9acf1fcc27a57c54c03eec19e7e3d04c540ddb3e3a1b58d1b"
+  },
+  {
+    "path": "03-cocoa/icons/icon-1024.png",
+    "width": 1024,
+    "height": 1024,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "84c9b5f412dbf8b9acf1fcc27a57c54c03eec19e7e3d04c540ddb3e3a1b58d1b"
+  },
+  {
+    "path": "03-cocoa/master.png",
+    "width": 1254,
+    "height": 1254,
+    "mode": "RGBA",
+    "dpi": null,
+    "sha256": "104ce7e63745f62a4d77f6e2883d97004852ad723ab4a3facff5b22ab33d4125",
+    "alphaExtrema": [
+      0,
+      255
+    ]
+  },
+  {
+    "path": "03-cocoa/merch/color-300dpi.png",
+    "width": 1254,
+    "height": 1254,
+    "mode": "RGBA",
+    "dpi": [
+      299.9994,
+      299.9994
+    ],
+    "sha256": "c67d9aff10d6b79994cebda156d335c8b02586c57e5c785a132018a32d41e808",
+    "alphaExtrema": [
+      0,
+      255
+    ]
+  },
+  {
+    "path": "04-bow-lashes/app/CharacterArt.xcassets/OAOBowLashes.imageset/OAOBowLashes@1x.png",
+    "width": 256,
+    "height": 256,
+    "mode": "RGBA",
+    "dpi": null,
+    "sha256": "7cbd7e6ff9d7f34f4daf93dd54bc32a4975fcfe6b63a55b788c3aed0988e1243",
+    "alphaExtrema": [
+      0,
+      255
+    ]
+  },
+  {
+    "path": "04-bow-lashes/app/CharacterArt.xcassets/OAOBowLashes.imageset/OAOBowLashes@2x.png",
+    "width": 512,
+    "height": 512,
+    "mode": "RGBA",
+    "dpi": null,
+    "sha256": "e5444f65ce69e95806642cebc93d1fac43975967fc87d52da725b63efaf9cbf7",
+    "alphaExtrema": [
+      0,
+      255
+    ]
+  },
+  {
+    "path": "04-bow-lashes/app/CharacterArt.xcassets/OAOBowLashes.imageset/OAOBowLashes@3x.png",
+    "width": 768,
+    "height": 768,
+    "mode": "RGBA",
+    "dpi": null,
+    "sha256": "3bdc2ebdeee481471a0eb84dda9332192fd0d124d1b20e3a40f6ec33f51799d0",
+    "alphaExtrema": [
+      0,
+      255
+    ]
+  },
+  {
+    "path": "04-bow-lashes/icons/Watch.xcassets/OAOBowLashesIcon.appiconset/icon-1024.png",
+    "width": 1024,
+    "height": 1024,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "319c9eec62910b5b41678644ca937dc2c4da6a0efa5d107ff8842b1a6dde5b65"
+  },
+  {
+    "path": "04-bow-lashes/icons/exports/icon-180.png",
+    "width": 180,
+    "height": 180,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "d7da6de645603a7da7c132ce0fb21cf9bd59c5a0a561e6199c83adf3bf5ee71f"
+  },
+  {
+    "path": "04-bow-lashes/icons/exports/icon-256.png",
+    "width": 256,
+    "height": 256,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "085df159176de883b2b58d4aad451cb22e1316b1a28baaf40e36179f0f72a4be"
+  },
+  {
+    "path": "04-bow-lashes/icons/exports/icon-48.png",
+    "width": 48,
+    "height": 48,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "ecf5a39f5c6ec83f6bd8288e496751d796b2c42d5a6b85e205bcf31d0b0bcbae"
+  },
+  {
+    "path": "04-bow-lashes/icons/exports/icon-512.png",
+    "width": 512,
+    "height": 512,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "be9c46d4ac90ea1b69553df35b812d5884e471e3fe3b028bfebaef9b1419e9fe"
+  },
+  {
+    "path": "04-bow-lashes/icons/exports/icon-96.png",
+    "width": 96,
+    "height": 96,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "a24205ef7442f9e04a1fc7f98b7f92d00703fcd6cd3eae421ec9ce5e1b1ec2e0"
+  },
+  {
+    "path": "04-bow-lashes/icons/iPhone.xcassets/OAOBowLashesIcon.appiconset/icon-1024.png",
+    "width": 1024,
+    "height": 1024,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "319c9eec62910b5b41678644ca937dc2c4da6a0efa5d107ff8842b1a6dde5b65"
+  },
+  {
+    "path": "04-bow-lashes/icons/icon-1024.png",
+    "width": 1024,
+    "height": 1024,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "319c9eec62910b5b41678644ca937dc2c4da6a0efa5d107ff8842b1a6dde5b65"
+  },
+  {
+    "path": "04-bow-lashes/master.png",
+    "width": 1254,
+    "height": 1254,
+    "mode": "RGBA",
+    "dpi": null,
+    "sha256": "6b8a2831fa26dc539b56de2d72bd830882c918de9a4253e0873bb9f3f4c1c3a2",
+    "alphaExtrema": [
+      0,
+      255
+    ]
+  },
+  {
+    "path": "04-bow-lashes/merch/color-300dpi.png",
+    "width": 1254,
+    "height": 1254,
+    "mode": "RGBA",
+    "dpi": [
+      299.9994,
+      299.9994
+    ],
+    "sha256": "9014c2bf15ee6a1d3df294c787dcc364425cdf695aaeac241db1dc64c838ba68",
+    "alphaExtrema": [
+      0,
+      255
+    ]
+  },
+  {
+    "path": "05-bunny/app/CharacterArt.xcassets/OAOBunny.imageset/OAOBunny@1x.png",
+    "width": 256,
+    "height": 256,
+    "mode": "RGBA",
+    "dpi": null,
+    "sha256": "127efb57c51fa243f6952a353b59338d1c0040c2493e9caa1429c29ad3dfb450",
+    "alphaExtrema": [
+      0,
+      255
+    ]
+  },
+  {
+    "path": "05-bunny/app/CharacterArt.xcassets/OAOBunny.imageset/OAOBunny@2x.png",
+    "width": 512,
+    "height": 512,
+    "mode": "RGBA",
+    "dpi": null,
+    "sha256": "54b2a64b0364a789c0d7375f58e40cab9003c1900f25df1be29da8699c865ec4",
+    "alphaExtrema": [
+      0,
+      255
+    ]
+  },
+  {
+    "path": "05-bunny/app/CharacterArt.xcassets/OAOBunny.imageset/OAOBunny@3x.png",
+    "width": 768,
+    "height": 768,
+    "mode": "RGBA",
+    "dpi": null,
+    "sha256": "214d3ae12ac527d26dc701963f432f321af859216d79fd74ace83cd862bef925",
+    "alphaExtrema": [
+      0,
+      255
+    ]
+  },
+  {
+    "path": "05-bunny/icons/Watch.xcassets/OAOBunnyIcon.appiconset/icon-1024.png",
+    "width": 1024,
+    "height": 1024,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "674c75429daf5ab7f44c42f14043361f3bed59b61bff478f221744ceb26efba5"
+  },
+  {
+    "path": "05-bunny/icons/exports/icon-180.png",
+    "width": 180,
+    "height": 180,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "f95922806f8eb8bace583118c9ae0f32ba4ff26c755cc82faf6c2e2a20bf469e"
+  },
+  {
+    "path": "05-bunny/icons/exports/icon-256.png",
+    "width": 256,
+    "height": 256,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "b3cb2ec239ae4ca8d7904cfd86c3110e110532a5a00a28bd81619f62641bbebb"
+  },
+  {
+    "path": "05-bunny/icons/exports/icon-48.png",
+    "width": 48,
+    "height": 48,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "5f9feab8a473a5ba3c29fd2c3e906513550f6618d3d1d51b9e9690877be18030"
+  },
+  {
+    "path": "05-bunny/icons/exports/icon-512.png",
+    "width": 512,
+    "height": 512,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "ea2ad31251e8577b6d0a48819d6326d472c25bd61b2e6e1dade81c2741a9634b"
+  },
+  {
+    "path": "05-bunny/icons/exports/icon-96.png",
+    "width": 96,
+    "height": 96,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "50eb3f0c1feb2a66ea63d64cd70c23854e2fa539b1c05281025ba3259b09d72a"
+  },
+  {
+    "path": "05-bunny/icons/iPhone.xcassets/OAOBunnyIcon.appiconset/icon-1024.png",
+    "width": 1024,
+    "height": 1024,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "674c75429daf5ab7f44c42f14043361f3bed59b61bff478f221744ceb26efba5"
+  },
+  {
+    "path": "05-bunny/icons/icon-1024.png",
+    "width": 1024,
+    "height": 1024,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "674c75429daf5ab7f44c42f14043361f3bed59b61bff478f221744ceb26efba5"
+  },
+  {
+    "path": "05-bunny/master.png",
+    "width": 1254,
+    "height": 1254,
+    "mode": "RGBA",
+    "dpi": null,
+    "sha256": "2ee16d6b6977bf283a9603071ff15a5e01136dd3e55d9a64a923acd56c293e85",
+    "alphaExtrema": [
+      0,
+      255
+    ]
+  },
+  {
+    "path": "05-bunny/merch/color-300dpi.png",
+    "width": 1254,
+    "height": 1254,
+    "mode": "RGBA",
+    "dpi": [
+      299.9994,
+      299.9994
+    ],
+    "sha256": "c49b2f8de1dafc7fb735d63f1b9fa7afa89cc43acae2e29e7733e5c1c752730d",
+    "alphaExtrema": [
+      0,
+      255
+    ]
+  },
+  {
+    "path": "06-bookworm/app/CharacterArt.xcassets/OAOBookworm.imageset/OAOBookworm@1x.png",
+    "width": 256,
+    "height": 256,
+    "mode": "RGBA",
+    "dpi": null,
+    "sha256": "7146f76051167f2e1aa3f0cc0a26c660040c228449f591dc8d503591d20a854a",
+    "alphaExtrema": [
+      0,
+      255
+    ]
+  },
+  {
+    "path": "06-bookworm/app/CharacterArt.xcassets/OAOBookworm.imageset/OAOBookworm@2x.png",
+    "width": 512,
+    "height": 512,
+    "mode": "RGBA",
+    "dpi": null,
+    "sha256": "c425357ffd8e0d3ee8ab2b33ae2c5d750da2b0f24f1d0b1a68d41fe7cc560210",
+    "alphaExtrema": [
+      0,
+      255
+    ]
+  },
+  {
+    "path": "06-bookworm/app/CharacterArt.xcassets/OAOBookworm.imageset/OAOBookworm@3x.png",
+    "width": 768,
+    "height": 768,
+    "mode": "RGBA",
+    "dpi": null,
+    "sha256": "acbb54409504c5bbaa87d499d9cb90b1f66f124828057975006b985ed4bce02e",
+    "alphaExtrema": [
+      0,
+      255
+    ]
+  },
+  {
+    "path": "06-bookworm/icons/Watch.xcassets/OAOBookwormIcon.appiconset/icon-1024.png",
+    "width": 1024,
+    "height": 1024,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "f983218d3f0c104604d9a7a0ce64dbddbff0febb436e622efb48796d82f8318c"
+  },
+  {
+    "path": "06-bookworm/icons/exports/icon-180.png",
+    "width": 180,
+    "height": 180,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "3066092eb00d35065e4b8a7ff04ca96b020e83f542378248db15348997181d8b"
+  },
+  {
+    "path": "06-bookworm/icons/exports/icon-256.png",
+    "width": 256,
+    "height": 256,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "80cbb188bb54584f9b3bf72fde5618562ccd0463772fa456ef6c68d3cfb96739"
+  },
+  {
+    "path": "06-bookworm/icons/exports/icon-48.png",
+    "width": 48,
+    "height": 48,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "d628a1f9530170a661425abb756ac27f51ee287d1e8e86e7fa999c79de61ee10"
+  },
+  {
+    "path": "06-bookworm/icons/exports/icon-512.png",
+    "width": 512,
+    "height": 512,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "6577252e010442e7c22fadb8ebed0f874b7ce1b1dcd5ca1ccaac633d44923443"
+  },
+  {
+    "path": "06-bookworm/icons/exports/icon-96.png",
+    "width": 96,
+    "height": 96,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "57321b2561e5dcf1086ca85c6f0b948053a343aaa4593c2f68addce53020b00d"
+  },
+  {
+    "path": "06-bookworm/icons/iPhone.xcassets/OAOBookwormIcon.appiconset/icon-1024.png",
+    "width": 1024,
+    "height": 1024,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "f983218d3f0c104604d9a7a0ce64dbddbff0febb436e622efb48796d82f8318c"
+  },
+  {
+    "path": "06-bookworm/icons/icon-1024.png",
+    "width": 1024,
+    "height": 1024,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "f983218d3f0c104604d9a7a0ce64dbddbff0febb436e622efb48796d82f8318c"
+  },
+  {
+    "path": "06-bookworm/master.png",
+    "width": 1254,
+    "height": 1254,
+    "mode": "RGBA",
+    "dpi": null,
+    "sha256": "ae8e60bae6d6054b0e79010ea64652f8e9dbaf064bc1de43fafe0f8953ca6801",
+    "alphaExtrema": [
+      0,
+      255
+    ]
+  },
+  {
+    "path": "06-bookworm/merch/color-300dpi.png",
+    "width": 1254,
+    "height": 1254,
+    "mode": "RGBA",
+    "dpi": [
+      299.9994,
+      299.9994
+    ],
+    "sha256": "0a397ffbb05fb1f603ddd422268bbcf8c0a0b42c0a3d2582b00bb21bcdf54362",
+    "alphaExtrema": [
+      0,
+      255
+    ]
+  },
+  {
+    "path": "07-mustachio/app/CharacterArt.xcassets/OAOMustachio.imageset/OAOMustachio@1x.png",
+    "width": 256,
+    "height": 256,
+    "mode": "RGBA",
+    "dpi": null,
+    "sha256": "4e55aa48254afde25afdba269a53f902bd58f3f008878816edc3b86bc0eaf8c9",
+    "alphaExtrema": [
+      0,
+      255
+    ]
+  },
+  {
+    "path": "07-mustachio/app/CharacterArt.xcassets/OAOMustachio.imageset/OAOMustachio@2x.png",
+    "width": 512,
+    "height": 512,
+    "mode": "RGBA",
+    "dpi": null,
+    "sha256": "fdcef505e885b0e3a81721d61380935063b7d6e08c8db40e4d24d460a1884ca1",
+    "alphaExtrema": [
+      0,
+      255
+    ]
+  },
+  {
+    "path": "07-mustachio/app/CharacterArt.xcassets/OAOMustachio.imageset/OAOMustachio@3x.png",
+    "width": 768,
+    "height": 768,
+    "mode": "RGBA",
+    "dpi": null,
+    "sha256": "08182d34afda0eca9fb1a1593cf4f005e01137412925763bd65b30dcc2c897b0",
+    "alphaExtrema": [
+      0,
+      255
+    ]
+  },
+  {
+    "path": "07-mustachio/icons/Watch.xcassets/OAOMustachioIcon.appiconset/icon-1024.png",
+    "width": 1024,
+    "height": 1024,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "f2adf4f045b99dbc60415df88243541ad672905014b07cb7628bca9c191c523d"
+  },
+  {
+    "path": "07-mustachio/icons/exports/icon-180.png",
+    "width": 180,
+    "height": 180,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "59fd2c1b834f090f1e59e1c69b639e92b9b854e6c4cb18660f45aea07c5492de"
+  },
+  {
+    "path": "07-mustachio/icons/exports/icon-256.png",
+    "width": 256,
+    "height": 256,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "c7e11185a3ae2205ef32042cbb776a1971309be82a6fd6862e888bd3c76c5e94"
+  },
+  {
+    "path": "07-mustachio/icons/exports/icon-48.png",
+    "width": 48,
+    "height": 48,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "d65e7cc0dfc108098d2d0702211460556693cef9d2bd76ca970c25383b90c837"
+  },
+  {
+    "path": "07-mustachio/icons/exports/icon-512.png",
+    "width": 512,
+    "height": 512,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "d59cedc0328792ec5b09e894c7e73b85f6bf4ad2a0be36c4017b9279047f261e"
+  },
+  {
+    "path": "07-mustachio/icons/exports/icon-96.png",
+    "width": 96,
+    "height": 96,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "480fbae90405719f900ed46c2123ca694831e4ea85dede0e4f45060a8f56122b"
+  },
+  {
+    "path": "07-mustachio/icons/iPhone.xcassets/OAOMustachioIcon.appiconset/icon-1024.png",
+    "width": 1024,
+    "height": 1024,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "f2adf4f045b99dbc60415df88243541ad672905014b07cb7628bca9c191c523d"
+  },
+  {
+    "path": "07-mustachio/icons/icon-1024.png",
+    "width": 1024,
+    "height": 1024,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "f2adf4f045b99dbc60415df88243541ad672905014b07cb7628bca9c191c523d"
+  },
+  {
+    "path": "07-mustachio/master.png",
+    "width": 1254,
+    "height": 1254,
+    "mode": "RGBA",
+    "dpi": null,
+    "sha256": "9f7d8b3b1cbc2f7e8a1ea7502e14f2466070ad123961f652233a25469e006da1",
+    "alphaExtrema": [
+      0,
+      255
+    ]
+  },
+  {
+    "path": "07-mustachio/merch/color-300dpi.png",
+    "width": 1254,
+    "height": 1254,
+    "mode": "RGBA",
+    "dpi": [
+      299.9994,
+      299.9994
+    ],
+    "sha256": "9293a4cf48758c566d2a1c2d19a6eb43bf338ab90fce0d819351d5ae715049a7",
+    "alphaExtrema": [
+      0,
+      255
+    ]
+  },
+  {
+    "path": "08-tough-guy/app/CharacterArt.xcassets/OAOToughGuy.imageset/OAOToughGuy@1x.png",
+    "width": 256,
+    "height": 256,
+    "mode": "RGBA",
+    "dpi": null,
+    "sha256": "bd103a9cd9463cf63099e1146f929ae9d162478d2f0da37d11505053737b1876",
+    "alphaExtrema": [
+      0,
+      255
+    ]
+  },
+  {
+    "path": "08-tough-guy/app/CharacterArt.xcassets/OAOToughGuy.imageset/OAOToughGuy@2x.png",
+    "width": 512,
+    "height": 512,
+    "mode": "RGBA",
+    "dpi": null,
+    "sha256": "270cb74dfd9c8832efd63ef44ce67c87501ff550fc27b573a00cfba752db4704",
+    "alphaExtrema": [
+      0,
+      255
+    ]
+  },
+  {
+    "path": "08-tough-guy/app/CharacterArt.xcassets/OAOToughGuy.imageset/OAOToughGuy@3x.png",
+    "width": 768,
+    "height": 768,
+    "mode": "RGBA",
+    "dpi": null,
+    "sha256": "328a255c89facd06496adf0327d24b06249ea6d4a7409ac0f5850ecb28fb2696",
+    "alphaExtrema": [
+      0,
+      255
+    ]
+  },
+  {
+    "path": "08-tough-guy/icons/Watch.xcassets/OAOToughGuyIcon.appiconset/icon-1024.png",
+    "width": 1024,
+    "height": 1024,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "d1c2ec1f7560df8e0e7b7e4573981af83750ecdc034c0f3a81356d24a9570cd9"
+  },
+  {
+    "path": "08-tough-guy/icons/exports/icon-180.png",
+    "width": 180,
+    "height": 180,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "7510d341c27822cc57947cc9094f194ca74b4dcdf9207b13ad15eb3bba38bf7e"
+  },
+  {
+    "path": "08-tough-guy/icons/exports/icon-256.png",
+    "width": 256,
+    "height": 256,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "8068bfd62a2e98f6bda03a7798ff78b86eff5fbf2267a6bac536be7e4649bb6e"
+  },
+  {
+    "path": "08-tough-guy/icons/exports/icon-48.png",
+    "width": 48,
+    "height": 48,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "f8acdbb9fa8fd8577ff7b9a90a46ad636ae0e8513d4aae9e311fc12f90c1b19d"
+  },
+  {
+    "path": "08-tough-guy/icons/exports/icon-512.png",
+    "width": 512,
+    "height": 512,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "6546221e01790b5dfca9146fdb2ad360d75f3bb942f384d4acf81c804b0b90dc"
+  },
+  {
+    "path": "08-tough-guy/icons/exports/icon-96.png",
+    "width": 96,
+    "height": 96,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "792342baba935d128cf1285fa1827be7cc476c94c1772fe410eaed3f74334b81"
+  },
+  {
+    "path": "08-tough-guy/icons/iPhone.xcassets/OAOToughGuyIcon.appiconset/icon-1024.png",
+    "width": 1024,
+    "height": 1024,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "d1c2ec1f7560df8e0e7b7e4573981af83750ecdc034c0f3a81356d24a9570cd9"
+  },
+  {
+    "path": "08-tough-guy/icons/icon-1024.png",
+    "width": 1024,
+    "height": 1024,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "d1c2ec1f7560df8e0e7b7e4573981af83750ecdc034c0f3a81356d24a9570cd9"
+  },
+  {
+    "path": "08-tough-guy/master.png",
+    "width": 1254,
+    "height": 1254,
+    "mode": "RGBA",
+    "dpi": null,
+    "sha256": "dde50f58836461518e58292fcebed325d288b58eb126bf82f7c2b2163365dd25",
+    "alphaExtrema": [
+      0,
+      255
+    ]
+  },
+  {
+    "path": "08-tough-guy/merch/color-300dpi.png",
+    "width": 1254,
+    "height": 1254,
+    "mode": "RGBA",
+    "dpi": [
+      299.9994,
+      299.9994
+    ],
+    "sha256": "7ccabbe5725a9fe58e2ab6e0ae3a511bba2e7596b93a23513b9ddc049dfd198f",
+    "alphaExtrema": [
+      0,
+      255
+    ]
+  },
+  {
+    "path": "09-manga/app/CharacterArt.xcassets/OAOManga.imageset/OAOManga@1x.png",
+    "width": 256,
+    "height": 256,
+    "mode": "RGBA",
+    "dpi": null,
+    "sha256": "7a30c59e5ee847ad4933d4350bc156f8b25dcf63bbeae2359df4bab327ebfe21",
+    "alphaExtrema": [
+      0,
+      255
+    ]
+  },
+  {
+    "path": "09-manga/app/CharacterArt.xcassets/OAOManga.imageset/OAOManga@2x.png",
+    "width": 512,
+    "height": 512,
+    "mode": "RGBA",
+    "dpi": null,
+    "sha256": "7b2c32d2039044d7a66e76e80dafddae24d7833939b806ce65dbecc02227db2e",
+    "alphaExtrema": [
+      0,
+      255
+    ]
+  },
+  {
+    "path": "09-manga/app/CharacterArt.xcassets/OAOManga.imageset/OAOManga@3x.png",
+    "width": 768,
+    "height": 768,
+    "mode": "RGBA",
+    "dpi": null,
+    "sha256": "242e17d2f6e344b152ffb78bbdedb075a185ecdfde7a9179c758c168658d9cf6",
+    "alphaExtrema": [
+      0,
+      255
+    ]
+  },
+  {
+    "path": "09-manga/icons/Watch.xcassets/OAOMangaIcon.appiconset/icon-1024.png",
+    "width": 1024,
+    "height": 1024,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "589e284cd7505c4e9e68a255028265a65ceb6f31fbd9f43a485174b9e19852f5"
+  },
+  {
+    "path": "09-manga/icons/exports/icon-180.png",
+    "width": 180,
+    "height": 180,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "ed5937fd8886d63473ef646b4b0df2df8cbf4cc760fe230850b1073aa635b8c4"
+  },
+  {
+    "path": "09-manga/icons/exports/icon-256.png",
+    "width": 256,
+    "height": 256,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "805d14e2ddc2f0911c9ff760301c3ee3461e8c6f8199616e6cc2cd05eb37065b"
+  },
+  {
+    "path": "09-manga/icons/exports/icon-48.png",
+    "width": 48,
+    "height": 48,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "bf6630a23c5cc8b880813a10b1158f69973bf47086ff446b9aa392fc79068bb9"
+  },
+  {
+    "path": "09-manga/icons/exports/icon-512.png",
+    "width": 512,
+    "height": 512,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "dd496f76b421e8e3fe2888ddc2d37f8f0b44d8533ed2b02dd2fce72a8ccc362e"
+  },
+  {
+    "path": "09-manga/icons/exports/icon-96.png",
+    "width": 96,
+    "height": 96,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "09fb425bc7bc3f12f3a6f0d082c7e27d54ddbabb682d74772b9c7dfb34981dd6"
+  },
+  {
+    "path": "09-manga/icons/iPhone.xcassets/OAOMangaIcon.appiconset/icon-1024.png",
+    "width": 1024,
+    "height": 1024,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "589e284cd7505c4e9e68a255028265a65ceb6f31fbd9f43a485174b9e19852f5"
+  },
+  {
+    "path": "09-manga/icons/icon-1024.png",
+    "width": 1024,
+    "height": 1024,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "589e284cd7505c4e9e68a255028265a65ceb6f31fbd9f43a485174b9e19852f5"
+  },
+  {
+    "path": "09-manga/master.png",
+    "width": 1254,
+    "height": 1254,
+    "mode": "RGBA",
+    "dpi": null,
+    "sha256": "2ec9a783a69f73df547c2694a5fdeb724f40986f4f17997bf50b36edec316d48",
+    "alphaExtrema": [
+      0,
+      255
+    ]
+  },
+  {
+    "path": "09-manga/merch/color-300dpi.png",
+    "width": 1254,
+    "height": 1254,
+    "mode": "RGBA",
+    "dpi": [
+      299.9994,
+      299.9994
+    ],
+    "sha256": "a5859eac2d6432e9332ff00bda0b577b3390875f4b10ff04203d30ab06c28b97",
+    "alphaExtrema": [
+      0,
+      255
+    ]
+  },
+  {
+    "path": "10-cool-cat/app/CharacterArt.xcassets/OAOCoolCat.imageset/OAOCoolCat@1x.png",
+    "width": 256,
+    "height": 256,
+    "mode": "RGBA",
+    "dpi": null,
+    "sha256": "1ede28230b956880528f2b2f7a1761bcb5e285c9f741c1151e30c9b8f91552b5",
+    "alphaExtrema": [
+      0,
+      255
+    ]
+  },
+  {
+    "path": "10-cool-cat/app/CharacterArt.xcassets/OAOCoolCat.imageset/OAOCoolCat@2x.png",
+    "width": 512,
+    "height": 512,
+    "mode": "RGBA",
+    "dpi": null,
+    "sha256": "2e28ac74dcfe94bb412b7a067a82abc0863d0c2fb05f2abfefcb83d3f73a18ce",
+    "alphaExtrema": [
+      0,
+      255
+    ]
+  },
+  {
+    "path": "10-cool-cat/app/CharacterArt.xcassets/OAOCoolCat.imageset/OAOCoolCat@3x.png",
+    "width": 768,
+    "height": 768,
+    "mode": "RGBA",
+    "dpi": null,
+    "sha256": "02dc6470c817cc9fd7b335cefeac116ce415d1110e057164784410e8dbfb753b",
+    "alphaExtrema": [
+      0,
+      255
+    ]
+  },
+  {
+    "path": "10-cool-cat/icons/Watch.xcassets/OAOCoolCatIcon.appiconset/icon-1024.png",
+    "width": 1024,
+    "height": 1024,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "0654d91c6195e398d7801c4c520d659d0b0f5487f60a191aac9ca4080a8b0316"
+  },
+  {
+    "path": "10-cool-cat/icons/exports/icon-180.png",
+    "width": 180,
+    "height": 180,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "70367811102aa606d4b843b9917be1b095176a252ee64981c75b26f3f1a2c9ef"
+  },
+  {
+    "path": "10-cool-cat/icons/exports/icon-256.png",
+    "width": 256,
+    "height": 256,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "e01d08b5768006ec48e489a67ef09af30a483d016bc29822a47516f502d2044d"
+  },
+  {
+    "path": "10-cool-cat/icons/exports/icon-48.png",
+    "width": 48,
+    "height": 48,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "62fb3847c215a290ad37424831303c16d772b2ebaf58c110fdacfd5d4a34ec59"
+  },
+  {
+    "path": "10-cool-cat/icons/exports/icon-512.png",
+    "width": 512,
+    "height": 512,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "5a29e67c6b85f5c59a5a8af69d1e7f2ac125dc56c3ff79d5600238d05a754e8d"
+  },
+  {
+    "path": "10-cool-cat/icons/exports/icon-96.png",
+    "width": 96,
+    "height": 96,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "6c7b04b17fd683873aa42187486ce71dfe842b373a7477951a78e5960f8d925b"
+  },
+  {
+    "path": "10-cool-cat/icons/iPhone.xcassets/OAOCoolCatIcon.appiconset/icon-1024.png",
+    "width": 1024,
+    "height": 1024,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "0654d91c6195e398d7801c4c520d659d0b0f5487f60a191aac9ca4080a8b0316"
+  },
+  {
+    "path": "10-cool-cat/icons/icon-1024.png",
+    "width": 1024,
+    "height": 1024,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "0654d91c6195e398d7801c4c520d659d0b0f5487f60a191aac9ca4080a8b0316"
+  },
+  {
+    "path": "10-cool-cat/master.png",
+    "width": 1254,
+    "height": 1254,
+    "mode": "RGBA",
+    "dpi": null,
+    "sha256": "7898baa12ab3c139563d45fc5d3348a4ba6c074a7c826e8189307255a34dd24d",
+    "alphaExtrema": [
+      0,
+      255
+    ]
+  },
+  {
+    "path": "10-cool-cat/merch/color-300dpi.png",
+    "width": 1254,
+    "height": 1254,
+    "mode": "RGBA",
+    "dpi": [
+      299.9994,
+      299.9994
+    ],
+    "sha256": "e75468bffac902595f518aab6f32ce0096a1c57b2758b543478ff7ddb9079696",
+    "alphaExtrema": [
+      0,
+      255
+    ]
+  },
+  {
+    "path": "11-fox/app/CharacterArt.xcassets/OAOFox.imageset/OAOFox@1x.png",
+    "width": 256,
+    "height": 256,
+    "mode": "RGBA",
+    "dpi": null,
+    "sha256": "2d049649de89848c533e21a865295c8dcc1d952f88adcc6d217f98af3f295927",
+    "alphaExtrema": [
+      0,
+      255
+    ]
+  },
+  {
+    "path": "11-fox/app/CharacterArt.xcassets/OAOFox.imageset/OAOFox@2x.png",
+    "width": 512,
+    "height": 512,
+    "mode": "RGBA",
+    "dpi": null,
+    "sha256": "d892ff5a43195cc7239cffa1af15b48f61c1152a4fab72ed0e8f17bcee9252a0",
+    "alphaExtrema": [
+      0,
+      255
+    ]
+  },
+  {
+    "path": "11-fox/app/CharacterArt.xcassets/OAOFox.imageset/OAOFox@3x.png",
+    "width": 768,
+    "height": 768,
+    "mode": "RGBA",
+    "dpi": null,
+    "sha256": "20a4ac8003adbd1196bbe6b075f41387d3146c97158efb0bc9d3f7dda385cbf8",
+    "alphaExtrema": [
+      0,
+      255
+    ]
+  },
+  {
+    "path": "11-fox/icons/Watch.xcassets/OAOFoxIcon.appiconset/icon-1024.png",
+    "width": 1024,
+    "height": 1024,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "ee1a4dde749bc3e7302e9daebd5500e4df85994f67e7a6286b5b80aa6f45b19e"
+  },
+  {
+    "path": "11-fox/icons/exports/icon-180.png",
+    "width": 180,
+    "height": 180,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "41071605b6959e96e87aa59afe40a142df3a6856b336e4f545e1e9a6a95a12bb"
+  },
+  {
+    "path": "11-fox/icons/exports/icon-256.png",
+    "width": 256,
+    "height": 256,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "c5f1c5ae4886851e61d486c88ccd69a61ea94567d35335eb358fc9b94d103b08"
+  },
+  {
+    "path": "11-fox/icons/exports/icon-48.png",
+    "width": 48,
+    "height": 48,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "c4032910b3c78f36ede840b03763e6bc8ff4714d3175860e65b81a562c20b8ca"
+  },
+  {
+    "path": "11-fox/icons/exports/icon-512.png",
+    "width": 512,
+    "height": 512,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "d08dd8dffc7f3819e6d86442198be1291c040efe8b3a0592cf4946a2c7426cf9"
+  },
+  {
+    "path": "11-fox/icons/exports/icon-96.png",
+    "width": 96,
+    "height": 96,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "10314c8c9dcab235faaa45a5e95eb53571180aa99087ed1965352ba63d69dccc"
+  },
+  {
+    "path": "11-fox/icons/iPhone.xcassets/OAOFoxIcon.appiconset/icon-1024.png",
+    "width": 1024,
+    "height": 1024,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "ee1a4dde749bc3e7302e9daebd5500e4df85994f67e7a6286b5b80aa6f45b19e"
+  },
+  {
+    "path": "11-fox/icons/icon-1024.png",
+    "width": 1024,
+    "height": 1024,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "ee1a4dde749bc3e7302e9daebd5500e4df85994f67e7a6286b5b80aa6f45b19e"
+  },
+  {
+    "path": "11-fox/master.png",
+    "width": 1254,
+    "height": 1254,
+    "mode": "RGBA",
+    "dpi": null,
+    "sha256": "98802a4d59751a0a5b049450e29a241173d3a9376432030d820feb9f34aa8732",
+    "alphaExtrema": [
+      0,
+      255
+    ]
+  },
+  {
+    "path": "11-fox/merch/color-300dpi.png",
+    "width": 1254,
+    "height": 1254,
+    "mode": "RGBA",
+    "dpi": [
+      299.9994,
+      299.9994
+    ],
+    "sha256": "88479bde982e98f37bea1122e09f449fa788bfbd81743a2aabe3891143bef619",
+    "alphaExtrema": [
+      0,
+      255
+    ]
+  },
+  {
+    "path": "12-hi-fi/app/CharacterArt.xcassets/OAOHiFi.imageset/OAOHiFi@1x.png",
+    "width": 256,
+    "height": 256,
+    "mode": "RGBA",
+    "dpi": null,
+    "sha256": "94f6979bf00c9c44efe3b81471478d3548788c357a788ad96fa7c2bc35827550",
+    "alphaExtrema": [
+      0,
+      255
+    ]
+  },
+  {
+    "path": "12-hi-fi/app/CharacterArt.xcassets/OAOHiFi.imageset/OAOHiFi@2x.png",
+    "width": 512,
+    "height": 512,
+    "mode": "RGBA",
+    "dpi": null,
+    "sha256": "b8057fd5278574b37e85e45e698063ad130e22ccb9d08de263c05952fbc6a0de",
+    "alphaExtrema": [
+      0,
+      255
+    ]
+  },
+  {
+    "path": "12-hi-fi/app/CharacterArt.xcassets/OAOHiFi.imageset/OAOHiFi@3x.png",
+    "width": 768,
+    "height": 768,
+    "mode": "RGBA",
+    "dpi": null,
+    "sha256": "2d3d23e369691b3bb29333fcda871b03b1c80165b517079b1916a7a622ce9d5d",
+    "alphaExtrema": [
+      0,
+      255
+    ]
+  },
+  {
+    "path": "12-hi-fi/icons/Watch.xcassets/OAOHiFiIcon.appiconset/icon-1024.png",
+    "width": 1024,
+    "height": 1024,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "dffab1b77f4ad806b8e17c96015fcb4c81f7450ebc41dcc67c38f5675968ffc8"
+  },
+  {
+    "path": "12-hi-fi/icons/exports/icon-180.png",
+    "width": 180,
+    "height": 180,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "25c4def80db886af9c6a1f51dbeb9fc038c590f0ac33317536200483f53f87f8"
+  },
+  {
+    "path": "12-hi-fi/icons/exports/icon-256.png",
+    "width": 256,
+    "height": 256,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "6b9b1b34d82a7c04d3cb1e19def8bded3e3650a09df7f901ab042efe4429b82a"
+  },
+  {
+    "path": "12-hi-fi/icons/exports/icon-48.png",
+    "width": 48,
+    "height": 48,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "a065055b775c81af1e4523b743ca5cec91eb398b74fcd1569320473f0fa6aab4"
+  },
+  {
+    "path": "12-hi-fi/icons/exports/icon-512.png",
+    "width": 512,
+    "height": 512,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "d498792ad2791499bd0beec5ca261af929496e06882b2198c6fd7c4da5acd21b"
+  },
+  {
+    "path": "12-hi-fi/icons/exports/icon-96.png",
+    "width": 96,
+    "height": 96,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "5cf30f5b22a6190ac8072cec2ff5f2a7dd83acc59ad50e849aa976829119ce9f"
+  },
+  {
+    "path": "12-hi-fi/icons/iPhone.xcassets/OAOHiFiIcon.appiconset/icon-1024.png",
+    "width": 1024,
+    "height": 1024,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "dffab1b77f4ad806b8e17c96015fcb4c81f7450ebc41dcc67c38f5675968ffc8"
+  },
+  {
+    "path": "12-hi-fi/icons/icon-1024.png",
+    "width": 1024,
+    "height": 1024,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "dffab1b77f4ad806b8e17c96015fcb4c81f7450ebc41dcc67c38f5675968ffc8"
+  },
+  {
+    "path": "12-hi-fi/master.png",
+    "width": 1254,
+    "height": 1254,
+    "mode": "RGBA",
+    "dpi": null,
+    "sha256": "aaad6c2277087e0b0b5d46f11c72f9cbefd1810aaafd4448093af6a095ef2f53",
+    "alphaExtrema": [
+      0,
+      255
+    ]
+  },
+  {
+    "path": "12-hi-fi/merch/color-300dpi.png",
+    "width": 1254,
+    "height": 1254,
+    "mode": "RGBA",
+    "dpi": [
+      299.9994,
+      299.9994
+    ],
+    "sha256": "bd95db10775eb94d2e488d8add51d2f7d12d8d80db941a548f7ba1be592487b2",
+    "alphaExtrema": [
+      0,
+      255
+    ]
+  },
+  {
+    "path": "13-frankenstein/app/CharacterArt.xcassets/OAOFrankenstein.imageset/OAOFrankenstein@1x.png",
+    "width": 256,
+    "height": 256,
+    "mode": "RGBA",
+    "dpi": null,
+    "sha256": "721a9f2c5b39114eeb0d0c2916ac8cc192502be20f85fcce263bea0eaa4907f3",
+    "alphaExtrema": [
+      0,
+      255
+    ]
+  },
+  {
+    "path": "13-frankenstein/app/CharacterArt.xcassets/OAOFrankenstein.imageset/OAOFrankenstein@2x.png",
+    "width": 512,
+    "height": 512,
+    "mode": "RGBA",
+    "dpi": null,
+    "sha256": "879ae7a4ae2556526243e0167d5f82c30899313bb44bef01e861dfd899717a8f",
+    "alphaExtrema": [
+      0,
+      255
+    ]
+  },
+  {
+    "path": "13-frankenstein/app/CharacterArt.xcassets/OAOFrankenstein.imageset/OAOFrankenstein@3x.png",
+    "width": 768,
+    "height": 768,
+    "mode": "RGBA",
+    "dpi": null,
+    "sha256": "df5e52214092b1dfbf844b419b8f78806ff612408b6ed25e8e74fa6c199a9bd4",
+    "alphaExtrema": [
+      0,
+      255
+    ]
+  },
+  {
+    "path": "13-frankenstein/icons/Watch.xcassets/OAOFrankensteinIcon.appiconset/icon-1024.png",
+    "width": 1024,
+    "height": 1024,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "21a140f2c6c54919161943ba0e312895b2ea2e2a674b6f843513da0e7a861290"
+  },
+  {
+    "path": "13-frankenstein/icons/exports/icon-180.png",
+    "width": 180,
+    "height": 180,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "5359b467873bb3de716eea1e60e1f76f8a0f5cc149903a506ee3995aa14a68f6"
+  },
+  {
+    "path": "13-frankenstein/icons/exports/icon-256.png",
+    "width": 256,
+    "height": 256,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "4472c029edb26346a3a2ae4190bfc4ab61f4aa173ed09cba021a70e111b75721"
+  },
+  {
+    "path": "13-frankenstein/icons/exports/icon-48.png",
+    "width": 48,
+    "height": 48,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "c023d11aa5ccc721e9044d119448a30ee6b2893be8bf14b6b8b2809e45a93cf7"
+  },
+  {
+    "path": "13-frankenstein/icons/exports/icon-512.png",
+    "width": 512,
+    "height": 512,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "54ac886aa4489b571f68751b321d94ff2b63741a3ac85e55d8ec2fa1368f33f2"
+  },
+  {
+    "path": "13-frankenstein/icons/exports/icon-96.png",
+    "width": 96,
+    "height": 96,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "fe564a0320881052fcb054156b2cbbd5b4321ac4224536395a83dd443889aef9"
+  },
+  {
+    "path": "13-frankenstein/icons/iPhone.xcassets/OAOFrankensteinIcon.appiconset/icon-1024.png",
+    "width": 1024,
+    "height": 1024,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "21a140f2c6c54919161943ba0e312895b2ea2e2a674b6f843513da0e7a861290"
+  },
+  {
+    "path": "13-frankenstein/icons/icon-1024.png",
+    "width": 1024,
+    "height": 1024,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "21a140f2c6c54919161943ba0e312895b2ea2e2a674b6f843513da0e7a861290"
+  },
+  {
+    "path": "13-frankenstein/master.png",
+    "width": 1254,
+    "height": 1254,
+    "mode": "RGBA",
+    "dpi": null,
+    "sha256": "5cec49463b94ffda457da7df9fa3ffff51ba88ae7fa1cf0410a3f1bc6aaae4da",
+    "alphaExtrema": [
+      0,
+      255
+    ]
+  },
+  {
+    "path": "13-frankenstein/merch/color-300dpi.png",
+    "width": 1254,
+    "height": 1254,
+    "mode": "RGBA",
+    "dpi": [
+      299.9994,
+      299.9994
+    ],
+    "sha256": "be5a87fe21b5dae32705081569df67b44e33300afdca5c414cd6271021829a8e",
+    "alphaExtrema": [
+      0,
+      255
+    ]
+  },
+  {
+    "path": "14-dracula/app/CharacterArt.xcassets/OAODracula.imageset/OAODracula@1x.png",
+    "width": 256,
+    "height": 256,
+    "mode": "RGBA",
+    "dpi": null,
+    "sha256": "4bb03bb9552430f0bb3f3b0d610357e8d0f6d54bcb3186ce4ba95e26bd3c1df1",
+    "alphaExtrema": [
+      0,
+      255
+    ]
+  },
+  {
+    "path": "14-dracula/app/CharacterArt.xcassets/OAODracula.imageset/OAODracula@2x.png",
+    "width": 512,
+    "height": 512,
+    "mode": "RGBA",
+    "dpi": null,
+    "sha256": "a7de58a9b0888a65c4426fb7e85968743b994ea4d5998dec7afd252e9078973c",
+    "alphaExtrema": [
+      0,
+      255
+    ]
+  },
+  {
+    "path": "14-dracula/app/CharacterArt.xcassets/OAODracula.imageset/OAODracula@3x.png",
+    "width": 768,
+    "height": 768,
+    "mode": "RGBA",
+    "dpi": null,
+    "sha256": "ed2ad8b6d8002789e3e15c637646ec7a5ec66d752cb724388c6251a8a5e990c1",
+    "alphaExtrema": [
+      0,
+      255
+    ]
+  },
+  {
+    "path": "14-dracula/icons/Watch.xcassets/OAODraculaIcon.appiconset/icon-1024.png",
+    "width": 1024,
+    "height": 1024,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "98994dda3e4b2908b187e248a4040d23d28c3e851c391aa1dd2fac4b1fdcec0e"
+  },
+  {
+    "path": "14-dracula/icons/exports/icon-180.png",
+    "width": 180,
+    "height": 180,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "8dfb2a489dad4a208f291d783125b7c4e5aa1a7d29fd29172cad423ab0260ad7"
+  },
+  {
+    "path": "14-dracula/icons/exports/icon-256.png",
+    "width": 256,
+    "height": 256,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "421cb2df6e4ab76e59d75a81e98483058d32207dbc71e10f487d3d6a3057ff4e"
+  },
+  {
+    "path": "14-dracula/icons/exports/icon-48.png",
+    "width": 48,
+    "height": 48,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "08b982f939d32f389a3c6d7c00a656f1c5c58fc763da9809b7e447e9af4c3993"
+  },
+  {
+    "path": "14-dracula/icons/exports/icon-512.png",
+    "width": 512,
+    "height": 512,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "1beab6b8c05f0fb22003fe4ce62e594a6b3f4854e6e32c382362ec3aa54c4cf3"
+  },
+  {
+    "path": "14-dracula/icons/exports/icon-96.png",
+    "width": 96,
+    "height": 96,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "356e90ddce0f9e1f4dc040a8a3ca20d73fc41c9911d27c7f59b1d9135746f85f"
+  },
+  {
+    "path": "14-dracula/icons/iPhone.xcassets/OAODraculaIcon.appiconset/icon-1024.png",
+    "width": 1024,
+    "height": 1024,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "98994dda3e4b2908b187e248a4040d23d28c3e851c391aa1dd2fac4b1fdcec0e"
+  },
+  {
+    "path": "14-dracula/icons/icon-1024.png",
+    "width": 1024,
+    "height": 1024,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "98994dda3e4b2908b187e248a4040d23d28c3e851c391aa1dd2fac4b1fdcec0e"
+  },
+  {
+    "path": "14-dracula/master.png",
+    "width": 1254,
+    "height": 1254,
+    "mode": "RGBA",
+    "dpi": null,
+    "sha256": "c0dce6a4dd244b52fbb1dce6fbfd9af4eb8e46fc40672a77e2cf7d4d08efa346",
+    "alphaExtrema": [
+      0,
+      255
+    ]
+  },
+  {
+    "path": "14-dracula/merch/color-300dpi.png",
+    "width": 1254,
+    "height": 1254,
+    "mode": "RGBA",
+    "dpi": [
+      299.9994,
+      299.9994
+    ],
+    "sha256": "05a56522e3b58fcf131ce375bd4df59d7189c6163c50587207d7b35838c76ddc",
+    "alphaExtrema": [
+      0,
+      255
+    ]
+  },
+  {
+    "path": "15-morticia/app/CharacterArt.xcassets/OAOMorticia.imageset/OAOMorticia@1x.png",
+    "width": 256,
+    "height": 256,
+    "mode": "RGBA",
+    "dpi": null,
+    "sha256": "010301879b71b8a07d4017a19c3b66f48c6fa212328f4f15fc92f07d625c3e21",
+    "alphaExtrema": [
+      0,
+      255
+    ]
+  },
+  {
+    "path": "15-morticia/app/CharacterArt.xcassets/OAOMorticia.imageset/OAOMorticia@2x.png",
+    "width": 512,
+    "height": 512,
+    "mode": "RGBA",
+    "dpi": null,
+    "sha256": "7c405a35c902389842aff410ef6268c547f3b8fd617280262502254286302df9",
+    "alphaExtrema": [
+      0,
+      255
+    ]
+  },
+  {
+    "path": "15-morticia/app/CharacterArt.xcassets/OAOMorticia.imageset/OAOMorticia@3x.png",
+    "width": 768,
+    "height": 768,
+    "mode": "RGBA",
+    "dpi": null,
+    "sha256": "55ab15e462150311981be58abac77e33abbb1c25377486a88c7b2a222f550e11",
+    "alphaExtrema": [
+      0,
+      255
+    ]
+  },
+  {
+    "path": "15-morticia/icons/Watch.xcassets/OAOMorticiaIcon.appiconset/icon-1024.png",
+    "width": 1024,
+    "height": 1024,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "7bc49518ac97f96e2bfca24cd8f4c94df97992a4fb6586d2aaecb41c92e82b29"
+  },
+  {
+    "path": "15-morticia/icons/exports/icon-180.png",
+    "width": 180,
+    "height": 180,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "14a205a03d43ef19242838826b12609ee7525db14121ac337b00683f4daa64c4"
+  },
+  {
+    "path": "15-morticia/icons/exports/icon-256.png",
+    "width": 256,
+    "height": 256,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "f992cd74829ffbaec480036a731d1c19489eab4a3c556efdc56301c0856cb64d"
+  },
+  {
+    "path": "15-morticia/icons/exports/icon-48.png",
+    "width": 48,
+    "height": 48,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "bde0a59b91ae36f3ea04d7cb6ea8059a1f1fc91ea66ce8d88b26b32c1a07f4c8"
+  },
+  {
+    "path": "15-morticia/icons/exports/icon-512.png",
+    "width": 512,
+    "height": 512,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "bebbf448203600362c7fc12c23517be39ebb6b3e1e4cd69efa7f897a6b17efff"
+  },
+  {
+    "path": "15-morticia/icons/exports/icon-96.png",
+    "width": 96,
+    "height": 96,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "f481e892100c94aab47d696e1a0034441fcdecbf0322df96999c10e0a1b1ae6e"
+  },
+  {
+    "path": "15-morticia/icons/iPhone.xcassets/OAOMorticiaIcon.appiconset/icon-1024.png",
+    "width": 1024,
+    "height": 1024,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "7bc49518ac97f96e2bfca24cd8f4c94df97992a4fb6586d2aaecb41c92e82b29"
+  },
+  {
+    "path": "15-morticia/icons/icon-1024.png",
+    "width": 1024,
+    "height": 1024,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "7bc49518ac97f96e2bfca24cd8f4c94df97992a4fb6586d2aaecb41c92e82b29"
+  },
+  {
+    "path": "15-morticia/master.png",
+    "width": 1254,
+    "height": 1254,
+    "mode": "RGBA",
+    "dpi": null,
+    "sha256": "26a93ca2b6cc611152146d1c8a5a20badbf65b4899241955e19a53245b12afd1",
+    "alphaExtrema": [
+      0,
+      255
+    ]
+  },
+  {
+    "path": "15-morticia/merch/color-300dpi.png",
+    "width": 1254,
+    "height": 1254,
+    "mode": "RGBA",
+    "dpi": [
+      299.9994,
+      299.9994
+    ],
+    "sha256": "76a9542726f42b3fbfcf01427a55d9f0828debd843505350d31110d14f95da7e",
+    "alphaExtrema": [
+      0,
+      255
+    ]
+  },
+  {
+    "path": "16-bow-lashes-honey/app/CharacterArt.xcassets/OAOBowLashesHoney.imageset/OAOBowLashesHoney@1x.png",
+    "width": 256,
+    "height": 256,
+    "mode": "RGBA",
+    "dpi": null,
+    "sha256": "dcd18408cc2ab5204d7e5d2411e382216de38194a635c583f630341105d7a80c",
+    "alphaExtrema": [
+      0,
+      255
+    ]
+  },
+  {
+    "path": "16-bow-lashes-honey/app/CharacterArt.xcassets/OAOBowLashesHoney.imageset/OAOBowLashesHoney@2x.png",
+    "width": 512,
+    "height": 512,
+    "mode": "RGBA",
+    "dpi": null,
+    "sha256": "e405fa7070fe3287e009ac9e340093dc9bc5cb2d7795f3429e8b173ebb4bd57d",
+    "alphaExtrema": [
+      0,
+      255
+    ]
+  },
+  {
+    "path": "16-bow-lashes-honey/app/CharacterArt.xcassets/OAOBowLashesHoney.imageset/OAOBowLashesHoney@3x.png",
+    "width": 768,
+    "height": 768,
+    "mode": "RGBA",
+    "dpi": null,
+    "sha256": "ff5129bad1bb003aa51051509b3bb27a8ba092d254f232e6d449c991bfcb48cb",
+    "alphaExtrema": [
+      0,
+      255
+    ]
+  },
+  {
+    "path": "16-bow-lashes-honey/icons/Watch.xcassets/OAOBowLashesHoneyIcon.appiconset/icon-1024.png",
+    "width": 1024,
+    "height": 1024,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "5da023e22fc2079706d03adb0feeae40c1bac4606e9ce9d39ed8d90c52814492"
+  },
+  {
+    "path": "16-bow-lashes-honey/icons/exports/icon-180.png",
+    "width": 180,
+    "height": 180,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "4e0e7d27d5f21b8fd4716ef149c948cfe5aa7b44f4ace9d6c53d3a97ee74412d"
+  },
+  {
+    "path": "16-bow-lashes-honey/icons/exports/icon-256.png",
+    "width": 256,
+    "height": 256,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "09ff1ec2f3618690678d2f1701b714c1bd1728db9fb7ce6eb01846135372f0ba"
+  },
+  {
+    "path": "16-bow-lashes-honey/icons/exports/icon-48.png",
+    "width": 48,
+    "height": 48,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "32672a8f306dd2bd2dcd8e95746cf94857f41e6e095fa1cb042723afc3a67047"
+  },
+  {
+    "path": "16-bow-lashes-honey/icons/exports/icon-512.png",
+    "width": 512,
+    "height": 512,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "a30d1d419db0a5c38078dcbe741e9380f5e565df4c74796b357911b7bd14afca"
+  },
+  {
+    "path": "16-bow-lashes-honey/icons/exports/icon-96.png",
+    "width": 96,
+    "height": 96,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "176829a4db8e8931482cfdd36fe0918678f5217cf2f7941dd662a0fd11199e09"
+  },
+  {
+    "path": "16-bow-lashes-honey/icons/iPhone.xcassets/OAOBowLashesHoneyIcon.appiconset/icon-1024.png",
+    "width": 1024,
+    "height": 1024,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "5da023e22fc2079706d03adb0feeae40c1bac4606e9ce9d39ed8d90c52814492"
+  },
+  {
+    "path": "16-bow-lashes-honey/icons/icon-1024.png",
+    "width": 1024,
+    "height": 1024,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "5da023e22fc2079706d03adb0feeae40c1bac4606e9ce9d39ed8d90c52814492"
+  },
+  {
+    "path": "16-bow-lashes-honey/master.png",
+    "width": 1254,
+    "height": 1254,
+    "mode": "RGBA",
+    "dpi": null,
+    "sha256": "98c2dd094f0ccb78ad0a60c84eeb38628d6e5a6a613ebce83bf58e6a7aa5302f",
+    "alphaExtrema": [
+      0,
+      255
+    ]
+  },
+  {
+    "path": "16-bow-lashes-honey/merch/color-300dpi.png",
+    "width": 1254,
+    "height": 1254,
+    "mode": "RGBA",
+    "dpi": [
+      299.9994,
+      299.9994
+    ],
+    "sha256": "60ff27b70fbfb6b2b9ac8ee26a70260222adfeac629750525103cd6ee1affa6a",
+    "alphaExtrema": [
+      0,
+      255
+    ]
+  },
+  {
+    "path": "17-bow-lashes-cocoa/app/CharacterArt.xcassets/OAOBowLashesCocoa.imageset/OAOBowLashesCocoa@1x.png",
+    "width": 256,
+    "height": 256,
+    "mode": "RGBA",
+    "dpi": null,
+    "sha256": "1b825510fed86eb40feb9490aba366d972ba5e96dc2ffcac2c8a0e14608d98f9",
+    "alphaExtrema": [
+      0,
+      255
+    ]
+  },
+  {
+    "path": "17-bow-lashes-cocoa/app/CharacterArt.xcassets/OAOBowLashesCocoa.imageset/OAOBowLashesCocoa@2x.png",
+    "width": 512,
+    "height": 512,
+    "mode": "RGBA",
+    "dpi": null,
+    "sha256": "799486ddb1170ce2519e02df96ba8a51dd9a9daf5a89b3ca77b77a4247fa5148",
+    "alphaExtrema": [
+      0,
+      255
+    ]
+  },
+  {
+    "path": "17-bow-lashes-cocoa/app/CharacterArt.xcassets/OAOBowLashesCocoa.imageset/OAOBowLashesCocoa@3x.png",
+    "width": 768,
+    "height": 768,
+    "mode": "RGBA",
+    "dpi": null,
+    "sha256": "a23d6e46bb7d37f9f0b14965a13901a1df16af2c9ac312c543d3310f9356a919",
+    "alphaExtrema": [
+      0,
+      255
+    ]
+  },
+  {
+    "path": "17-bow-lashes-cocoa/icons/Watch.xcassets/OAOBowLashesCocoaIcon.appiconset/icon-1024.png",
+    "width": 1024,
+    "height": 1024,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "9fe5d488efc7b6b245a14b3219436dfe0b515067d2d77a0a5729130d8f4c48e8"
+  },
+  {
+    "path": "17-bow-lashes-cocoa/icons/exports/icon-180.png",
+    "width": 180,
+    "height": 180,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "5cd66e552a9e51d6a01a9b77e53959be7f9b9ab0c9b185ad5079eb5c039fb9cc"
+  },
+  {
+    "path": "17-bow-lashes-cocoa/icons/exports/icon-256.png",
+    "width": 256,
+    "height": 256,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "e631d1ce19b7ae4842bd750b25d4d8c4b728963b38689c441c236e7c278d08d4"
+  },
+  {
+    "path": "17-bow-lashes-cocoa/icons/exports/icon-48.png",
+    "width": 48,
+    "height": 48,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "ec61a2e16a88b18c3062464438a4d430b27fdcef333c777e172173f6e4fbf01c"
+  },
+  {
+    "path": "17-bow-lashes-cocoa/icons/exports/icon-512.png",
+    "width": 512,
+    "height": 512,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "65e8e489b6a64d3edde4eb5b5c26ea1244a89795442cf7ca0c5e87362d91e428"
+  },
+  {
+    "path": "17-bow-lashes-cocoa/icons/exports/icon-96.png",
+    "width": 96,
+    "height": 96,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "e56bf8f32955dc85d071b458a291b216a7bd6350687c07b9564a7f2b9df98406"
+  },
+  {
+    "path": "17-bow-lashes-cocoa/icons/iPhone.xcassets/OAOBowLashesCocoaIcon.appiconset/icon-1024.png",
+    "width": 1024,
+    "height": 1024,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "9fe5d488efc7b6b245a14b3219436dfe0b515067d2d77a0a5729130d8f4c48e8"
+  },
+  {
+    "path": "17-bow-lashes-cocoa/icons/icon-1024.png",
+    "width": 1024,
+    "height": 1024,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "9fe5d488efc7b6b245a14b3219436dfe0b515067d2d77a0a5729130d8f4c48e8"
+  },
+  {
+    "path": "17-bow-lashes-cocoa/master.png",
+    "width": 1254,
+    "height": 1254,
+    "mode": "RGBA",
+    "dpi": null,
+    "sha256": "be5bde95c81183e6b66c11e00babd5f76581d14acad2cf10c4989dde5c36adc3",
+    "alphaExtrema": [
+      0,
+      255
+    ]
+  },
+  {
+    "path": "17-bow-lashes-cocoa/merch/color-300dpi.png",
+    "width": 1254,
+    "height": 1254,
+    "mode": "RGBA",
+    "dpi": [
+      299.9994,
+      299.9994
+    ],
+    "sha256": "19decd2f574d9aeb6f9ccdf9bbee093a7c3e4356058bf812841063a2b62f4a47",
+    "alphaExtrema": [
+      0,
+      255
+    ]
+  },
+  {
+    "path": "reference/approved-lineup.png",
+    "width": 1536,
+    "height": 1024,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "30ccdfaff2c0634a277ded319bd5b340cbffb655ee92422c06ae8aa05efefb82"
+  }
+]

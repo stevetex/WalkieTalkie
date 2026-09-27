@@ -1,0 +1,189 @@
+[
+  {
+    "id": "01-porcelain",
+    "alphaBounds": [
+      198,
+      63,
+      1042,
+      1165
+    ],
+    "iconForegroundOutsideCircle": 0,
+    "iconForegroundRadiusPx": 445.37
+  },
+  {
+    "id": "02-honey",
+    "alphaBounds": [
+      200,
+      81,
+      1062,
+      1172
+    ],
+    "iconForegroundOutsideCircle": 0,
+    "iconForegroundRadiusPx": 442.09
+  },
+  {
+    "id": "03-cocoa",
+    "alphaBounds": [
+      217,
+      97,
+      1067,
+      1164
+    ],
+    "iconForegroundOutsideCircle": 0,
+    "iconForegroundRadiusPx": 444.55
+  },
+  {
+    "id": "04-bow-lashes",
+    "alphaBounds": [
+      205,
+      57,
+      1065,
+      1168
+    ],
+    "iconForegroundOutsideCircle": 0,
+    "iconForegroundRadiusPx": 485.98
+  },
+  {
+    "id": "05-bunny",
+    "alphaBounds": [
+      207,
+      75,
+      1029,
+      1190
+    ],
+    "iconForegroundOutsideCircle": 0,
+    "iconForegroundRadiusPx": 480.69
+  },
+  {
+    "id": "06-bookworm",
+    "alphaBounds": [
+      223,
+      67,
+      1053,
+      1153
+    ],
+    "iconForegroundOutsideCircle": 0,
+    "iconForegroundRadiusPx": 424.19
+  },
+  {
+    "id": "07-mustachio",
+    "alphaBounds": [
+      198,
+      48,
+      1058,
+      1175
+    ],
+    "iconForegroundOutsideCircle": 0,
+    "iconForegroundRadiusPx": 431.74
+  },
+  {
+    "id": "08-tough-guy",
+    "alphaBounds": [
+      204,
+      92,
+      1066,
+      1168
+    ],
+    "iconForegroundOutsideCircle": 0,
+    "iconForegroundRadiusPx": 476.72
+  },
+  {
+    "id": "09-manga",
+    "alphaBounds": [
+      204,
+      67,
+      1069,
+      1164
+    ],
+    "iconForegroundOutsideCircle": 0,
+    "iconForegroundRadiusPx": 451.27
+  },
+  {
+    "id": "10-cool-cat",
+    "alphaBounds": [
+      230,
+      90,
+      1064,
+      1151
+    ],
+    "iconForegroundOutsideCircle": 0,
+    "iconForegroundRadiusPx": 434.21
+  },
+  {
+    "id": "11-fox",
+    "alphaBounds": [
+      198,
+      47,
+      1124,
+      1186
+    ],
+    "iconForegroundOutsideCircle": 0,
+    "iconForegroundRadiusPx": 380.56
+  },
+  {
+    "id": "12-hi-fi",
+    "alphaBounds": [
+      203,
+      93,
+      1083,
+      1129
+    ],
+    "iconForegroundOutsideCircle": 0,
+    "iconForegroundRadiusPx": 431.18
+  },
+  {
+    "id": "13-frankenstein",
+    "alphaBounds": [
+      150,
+      84,
+      1106,
+      1169
+    ],
+    "iconForegroundOutsideCircle": 0,
+    "iconForegroundRadiusPx": 459.28
+  },
+  {
+    "id": "14-dracula",
+    "alphaBounds": [
+      207,
+      60,
+      1073,
+      1163
+    ],
+    "iconForegroundOutsideCircle": 0,
+    "iconForegroundRadiusPx": 470.33
+  },
+  {
+    "id": "15-morticia",
+    "alphaBounds": [
+      94,
+      99,
+      1159,
+      1156
+    ],
+    "iconForegroundOutsideCircle": 0,
+    "iconForegroundRadiusPx": 351.17
+  },
+  {
+    "id": "16-bow-lashes-honey",
+    "alphaBounds": [
+      206,
+      59,
+      1066,
+      1167
+    ],
+    "iconForegroundOutsideCircle": 0,
+    "iconForegroundRadiusPx": 467.6
+  },
+  {
+    "id": "17-bow-lashes-cocoa",
+    "alphaBounds": [
+      205,
+      58,
+      1066,
+      1168
+    ],
+    "iconForegroundOutsideCircle": 0,
+    "iconForegroundRadiusPx": 441.2
+  }
+]

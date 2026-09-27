@@ -1,0 +1,23 @@
+{
+  "info": {
+    "author": "xcode",
+    "version": 1
+  },
+  "images": [
+    {
+      "filename": "OAOMustachio@1x.png",
+      "idiom": "universal",
+      "scale": "1x"
+    },
+    {
+      "filename": "OAOMustachio@2x.png",
+      "idiom": "universal",
+      "scale": "2x"
+    },
+    {
+      "filename": "OAOMustachio@3x.png",
+      "idiom": "universal",
+      "scale": "3x"
+    }
+  ]
+}
