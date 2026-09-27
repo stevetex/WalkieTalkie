@@ -50,6 +50,8 @@ struct FriendsView: View {
         }
         .brandScreen()
         .navigationTitle("Friends")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbarColorScheme(.dark, for: .navigationBar)
         .navigationDestination(for: Friend.self) { friend in
             FriendDetailView(friend: friend)
         }
