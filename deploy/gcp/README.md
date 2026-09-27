@@ -8,10 +8,10 @@ watch ──HTTPS──▶ relay-1.overandout.app ──▶ [ Caddy :443 ──�
                                                /data: certificates (stateful disk)      Secret Manager: token, APNs key
 ```
 
-- **The image** (`server/Dockerfile`): Node 24 and Caddy. Caddy gets and renews Let's Encrypt certificates and proxies to the relay with streaming (`flush_interval -1`). Both run as an unprivileged user. It's built by Cloud Build from committed code, tagged with the commit, and stored in Artifact Registry.
+- **The image** (`server/Dockerfile`): Node 24 and Caddy. Caddy gets and renews certificates from Google Trust Services (Google Cloud's free Public CA, whose roots Apple trusts; the watch took ~1 s longer per connection to evaluate Let's Encrypt's newer chain) and proxies to the relay with streaming (`flush_interval -1`). Both run as an unprivileged user. It's built by Cloud Build from committed code, tagged with the commit, and stored in Artifact Registry.
 - **The node** (`relay-node.cloud-init.yaml`): cloud-init mounts the data disk, opens ports 80 and 443 in COS's host firewall, and runs the container as the systemd service `relay`. The image and settings come from instance metadata.
 - **The group** (`relay`, us-central1-a) is stateful. Each node keeps its name, its data disk and, per node, its static IP and hostnames, across replacements. Autohealing recreates a node that fails `relay-health` (HTTP port 80 `/healthz`, through Caddy to the relay) three times in a row.
-- **Secrets**: the relay token (`relay-token`) and the APNs key (`apns-key`) are in Secret Manager. Only the nodes' service account (`relay-node`) can read them. The image, template and metadata hold none.
+- **Secrets**: the relay token (`relay-token`), the APNs key (`apns-key`) and the Public CA account key (`acme-eab`) are in Secret Manager. Only the nodes' service account (`relay-node`) can read them. The image, template and metadata hold none.
 
 ## Setting up (once)
 
@@ -30,10 +30,16 @@ deploy/gcp/deploy-relay.sh
 ```
 
 1. `setup-firestore.sh` creates the Firestore database in us-central1 (the location is permanent), a 30-day TTL on metrics timelines, and the `relay-node` service account.
-2. `setup-relay.sh` creates the image repository, copies the relay token and APNs key into Secret Manager, and creates the health check.
+2. `setup-relay.sh` creates the image repository, copies the relay token and APNs key into Secret Manager, creates a Public CA account key there, and creates the health check.
 3. `deploy-relay.sh`, the first time, builds the image and creates the instance group with no nodes.
 
-Then add a node. Its hostnames need DNS A records pointing at its static IP first, or Caddy can't get certificates:
+Then add a node. Its hostnames need DNS A records pointing at its static IP first, or Caddy can't get certificates. A Public CA account key registers one ACME account, so for every node after the first, add a fresh key version first:
+
+```bash
+gcloud publicca external-account-keys create --format=json | gcloud secrets versions add acme-eab --data-file=- --project=walkie-talkie-relay
+```
+
+Then:
 
 ```bash
 deploy/gcp/add-node.sh relay-1 --ip walkie-relay-ip --hostnames "relay-1.overandout.app walkie.cypressoakstudios.com"

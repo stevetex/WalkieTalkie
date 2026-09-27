@@ -4,8 +4,8 @@ Read this first. Over&Out: Watch Walkie Talkie replaces Apple's Watch Walkie-Tal
 
 ## Start here
 
-1. Read this file, then the feasibility doc: its **Hosting** section (option E and the options it beat), **Design decisions** (especially the 2026-09-26 rows), and **Prototype results** runs 16–23. Then [deploy/gcp/README.md](deploy/gcp/README.md) for how relay nodes are set up and deployed.
-2. Check "Left over from steps 1–3" below, starting with a real ring on Steve's watch through `relay-1`.
+1. Read this file, then the feasibility doc: its **Hosting** section (option E and the options it beat), **Design decisions** (especially the 2026-09-26 rows), and **Prototype results** runs 16–28. Then [deploy/gcp/README.md](deploy/gcp/README.md) for how relay nodes are set up and deployed.
+2. Check "Left over from steps 1–3" below, starting with tap → first audio through `relay-1` (runs 24–28).
 3. Do **option E steps 4–6**: relay protocol, apps, two-node test.
 4. Ask Steve before anything outward-facing or billed: creating Google Cloud resources, deploying to the live relay, DNS changes (he adds GoDaddy records by hand), and deleting VMs or data.
 
@@ -30,7 +30,7 @@ Read this first. Over&Out: Watch Walkie Talkie replaces Apple's Watch Walkie-Tal
   - On nodes it reads the relay token and APNs key from Secret Manager (`src/secrets.ts`), drains open conversations for up to 45 s on SIGTERM, and reports its revision in `/healthz`.
   - It sends time-sensitive **alert** pushes (`ringAlert()` in `src/apns.ts`) to the watch app's topic. There are no VoIP pushes any more.
   - `SIMULATOR_PUSH=1` delivers rings to simulators with `xcrun simctl push` (development only).
-  - Deployed: `8e5b291` on `relay-1` (see Deployment today).
+  - Deployed: `a80fd7a` on `relay-1` (see Deployment today).
 - **Membership:** active. Xcode registered Steve's devices and created the profiles; the watch App ID has Push Notifications and Time Sensitive Notifications.
 
 ### Measured on Steve's watch (no debugger, real APNs; runs 16–22 in the doc)
@@ -62,7 +62,9 @@ Each conversation runs on **one relay node**, and both apps connect to it, so `r
 
 #### Left over from steps 1–3
 
-- **A real ring through `relay-1` on Steve's watch** hasn't happened yet; only bot-to-bot smoke tests have. It checks that the APNs key from Secret Manager works. The watch needs no rebuild: it still uses `walkie.cypressoakstudios.com`.
+- **Tap → first audio and the TLS certificate:** through `relay-1` with Let's Encrypt it was 3.8–4.2 s (runs 24, 26, 27), against 2.9–3.4 s on the old VM. A packet capture on `relay-1` (run 27) showed the watch spending ~1.0 s evaluating the certificate chain on every new connection: Let's Encrypt's YE2 chains to ISRG Root YE, which isn't in Apple's trust store. `relay-1` now gets certificates from **Google Trust Services** (Google Cloud's free Public CA; `acme-eab` secret, see `server/container/entrypoint.sh`). Run 28: tap → first audio 3.12 s; certificate evaluation 0.76 s on the first connection after a tap and 0.31 s on later ones. Most of run 28's gain was a faster network wake, so the certificate saves ~0.25 s on the first connection; the rest looks like a cold-start cost on the watch. One sample: a few more rings would confirm it. To capture again: `toolbox` on the node has `tcpdump` (reinstalled after each node replacement, ~5 min). The in-app ring (run 25) was 1.50 s, against 0.95 s in run 22. Recording `URLSessionTaskMetrics` on the watch didn't work: it never delivered metrics for the cancelled stream.
+- **Each new node needs a fresh Public CA key** before it's added: `gcloud publicca external-account-keys create --format=json | gcloud secrets versions add acme-eab --data-file=-` (a key registers one ACME account; Caddy keeps the account on the node's disk).
+- **The watch app now connects to `relay-1.overandout.app`** (`OAO_SERVER_HOST` in `app/Config/Base.xcconfig`, changed 2026-09-26). `relay-1` still serves `walkie.cypressoakstudios.com` for older builds. Once none are left, drop that name from `relay-1`'s `relay-hostnames` metadata and its uptime check; Steve can then delete the GoDaddy record.
 - The hand-built `walkie-relay` VM and its scripts (`create-vm.sh`, `deploy.sh`, `provision.sh`) were deleted on 2026-09-26, after its data was imported into Firestore. There's no rollback to it; roll back by deploying an earlier commit.
 - **OS updates without deploys:** nodes get the newest COS whenever they're replaced, so a quiet month with no deploys means no OS update. A scheduled monthly replacement (for example, Cloud Scheduler calling the group's rolling replace) isn't set up yet.
 - **Cloud Build runs as the Compute Engine default service account,** which has Editor. A dedicated build service account with only Artifact Registry write would be tighter.
@@ -93,10 +95,10 @@ Sign-in tokens (signed by the API, checked on each node with a public key) come 
   - instance group `relay` (zone us-central1-a) with one node, `relay-1` (e2-micro, COS, 10 GB boot disk, 10 GB data disk `relay-1-1`), template `relay-<commit>`;
   - static IP `walkie-relay-ip` `35.209.96.216` (Standard tier), now on `relay-1`;
   - Firestore (default) database; service account `relay-node` (Firestore, logs, metrics, image pull, the two secrets);
-  - Artifact Registry repo `relay`; Secret Manager secrets `relay-token` and `apns-key`;
+  - Artifact Registry repo `relay`; Secret Manager secrets `relay-token`, `apns-key` and `acme-eab` (the Public CA account key);
   - health check `relay-health`, firewall rule `walkie-web` (80/443), two uptime checks and alert policies.
 - **DNS** (A records at GoDaddy): `relay-1.overandout.app` and `walkie.cypressoakstudios.com` → `35.209.96.216`.
-- **Deploy:** commit, then `deploy/gcp/deploy-relay.sh`. It builds the committed code, then replaces `relay-1` (about 2 minutes of downtime with one node). `gcloud` is at `~/google-cloud-sdk/bin`, which isn't on the agent shell's PATH, so prefix `export PATH=$HOME/google-cloud-sdk/bin:$PATH`. Running now: `8e5b291`.
+- **Deploy:** commit, then `deploy/gcp/deploy-relay.sh`. It builds the committed code, then replaces `relay-1` (about 2 minutes of downtime with one node). `gcloud` is at `~/google-cloud-sdk/bin`, which isn't on the agent shell's PATH, so prefix `export PATH=$HOME/google-cloud-sdk/bin:$PATH`. Running now: `a80fd7a`.
 - **Logs:**
 
   ```bash
@@ -132,7 +134,7 @@ Sign-in tokens (signed by the API, checked on each node with a public key) come 
 - **Ring it with the bot**, from `server/`, in the background:
 
   ```bash
-  SPIKE_SERVER=https://walkie.cypressoakstudios.com SPIKE_TOKEN=… node tools/bot.ts send --to watch-0d34 --name "Test Bot" --say "…" --ring-until-answered --stay 30
+  SPIKE_SERVER=https://relay-1.overandout.app SPIKE_TOKEN=… node tools/bot.ts send --to watch-0d34 --name "Test Bot" --say "…" --ring-until-answered --stay 30
   ```
 
   `--again N` sends a second message N s after the watch joins.
