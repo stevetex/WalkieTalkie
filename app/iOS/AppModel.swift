@@ -21,6 +21,8 @@ final class AppModel: ObservableObject {
     @Published private(set) var blocks: [BlockedUser] = []
     @Published var pendingInvite: PendingInvite?
     @Published var errorMessage: String?
+    /// Set by a deletion, so the root shows "Your account is deleted" before signing in again.
+    @Published var accountDeleted = false
     @AppStorage("onboarded") var onboarded = false
 
     let client: AccountClient
@@ -80,6 +82,7 @@ final class AppModel: ObservableObject {
     func deleteAccount(authorizationCode: String) async throws {
         try await client.deleteAccount(authorizationCode: authorizationCode)
         watch.signedInChanged(false)
+        accountDeleted = true
         didSignOut()
     }
 

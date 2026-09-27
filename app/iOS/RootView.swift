@@ -8,26 +8,22 @@ struct RootView: View {
 
     var body: some View {
         Group {
-            if model.session == nil {
+            if model.accountDeleted {
+                AccountDeletedView()
+                    .masthead()
+            } else if model.session == nil {
                 SignInView()
+                    .masthead()
             } else if !model.onboarded {
                 OnboardingView()
+                    .masthead()
             } else {
+                // Inside the stack, so its navigation bar (and the Settings button) stays above it.
                 NavigationStack {
                     FriendsView()
+                        .masthead()
                 }
             }
-        }
-        .safeAreaInset(edge: .top, spacing: 0) {
-            Image("OverAndOutBrand")
-                .resizable()
-                .scaledToFit()
-                .frame(height: 112)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 4)
-                .background(Brand.indigo)
-                .accessibilityLabel("Over&Out")
-                .accessibilityAddTraits(.isHeader)
         }
         .brandScreen()
         .sheet(item: inviteBinding) { _ in
@@ -51,6 +47,23 @@ struct RootView: View {
 
     private var errorBinding: Binding<Bool> {
         Binding(get: { model.errorMessage != nil }, set: { if !$0 { model.errorMessage = nil } })
+    }
+}
+
+private extension View {
+    /// The wordmark on indigo, above the screen's content.
+    func masthead() -> some View {
+        safeAreaInset(edge: .top, spacing: 0) {
+            Image("OverAndOutBrand")
+                .resizable()
+                .scaledToFit()
+                .frame(height: 112)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 4)
+                .background(Brand.indigo)
+                .accessibilityLabel("Over&Out")
+                .accessibilityAddTraits(.isHeader)
+        }
     }
 }
 

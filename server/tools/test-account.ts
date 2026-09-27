@@ -14,6 +14,9 @@
 //   node tools/test-account.ts accept <invite link or code>
 //       Accepts an invite as the bot (send yourself one from the iPhone app).
 //
+//   node tools/test-account.ts invite
+//       Prints a new invite link from the bot, to open on the iPhone (tests the acceptance sheet).
+//
 //   node tools/test-account.ts friends
 //       The bot's friends.
 //
@@ -28,7 +31,8 @@ import { Accounts } from "../src/accounts.ts";
 import { Firestore, gcloudAccessToken } from "../src/firestore.ts";
 import { SessionSigner, parseSigningKey } from "../src/session.ts";
 
-export const BOT_TOKEN_FILE = join(import.meta.dirname, "..", "data", "bot-token.json");
+// OAO_BOT_TOKEN_FILE keeps a local bot (simulator testing) apart from the Google Cloud one.
+export const BOT_TOKEN_FILE = process.env.OAO_BOT_TOKEN_FILE ?? join(import.meta.dirname, "..", "data", "bot-token.json");
 const BOT_APPLE_SUB = "test-bot.overandout";
 const BOT_DEVICE = "test-bot";
 
@@ -106,13 +110,17 @@ if (import.meta.main) {
     const code = arg.split("/").filter(Boolean).at(-1)!;
     const { friend } = await api(session.api, session.token, "POST", `/v1/invites/${code}/accept`);
     console.log(`Test Bot and ${friend.name} (${friend.id}) are friends.`);
+  } else if (command === "invite") {
+    const session = loadBotSession();
+    const { url, expiresAt } = await api(session.api, session.token, "POST", "/v1/invites");
+    console.log(`${url}  (from ${session.name}, single use, expires ${new Date(expiresAt).toISOString()})`);
   } else if (command === "friends") {
     const session = loadBotSession();
     const { friends } = await api(session.api, session.token, "GET", "/v1/friends");
     for (const f of friends) console.log(`${f.id}  ${f.name}`);
     if (!friends.length) console.log("No friends yet. Send the bot an invite from the iPhone app, then run: accept <link>");
   } else {
-    console.error("usage: node tools/test-account.ts create | accept <invite link or code> | friends");
+    console.error("usage: node tools/test-account.ts create | accept <invite link or code> | invite | friends");
     process.exit(2);
   }
 }
