@@ -4,7 +4,7 @@ Read this first. Over&Out: Watch Walkie Talkie replaces Apple's Watch Walkie-Tal
 
 ## Start here
 
-1. Read this file, then the feasibility doc: its **Hosting** section (option E and the options it beat), **Design decisions** (especially the 2026-09-26 rows), and **Prototype results** runs 16–30. Then [deploy/gcp/README.md](deploy/gcp/README.md) for how relay nodes are set up and deployed.
+1. Read this file, then the feasibility doc: its **Hosting** section (option E and the options it beat), **Design decisions** (especially the 2026-09-26 rows), and **Prototype results** runs 16–32. Then [deploy/gcp/README.md](deploy/gcp/README.md) for how relay nodes are set up and deployed.
 2. Check "Left over from steps 1–3" below, starting with tap → first audio through `relay-1` (runs 24–30).
 3. Do **option E steps 4–6**: relay protocol, apps, two-node test.
 4. Ask Steve before anything outward-facing or billed: creating Google Cloud resources, deploying to the live relay, DNS changes (he adds GoDaddy records by hand), and deleting VMs or data.
@@ -30,7 +30,7 @@ Read this first. Over&Out: Watch Walkie Talkie replaces Apple's Watch Walkie-Tal
   - On nodes it reads the relay token and APNs key from Secret Manager (`src/secrets.ts`), drains open conversations for up to 45 s on SIGTERM, and reports its revision in `/healthz`.
   - It sends time-sensitive **alert** pushes (`ringAlert()` in `src/apns.ts`) to the watch app's topic. There are no VoIP pushes any more.
   - `SIMULATOR_PUSH=1` delivers rings to simulators with `xcrun simctl push` (development only).
-  - Deployed: `a80fd7a` on `relay-1` (see Deployment today).
+  - Deployed: `ddc6849` on `relay-1` (see Deployment today).
 - **Membership:** active. Xcode registered Steve's devices and created the profiles; the watch App ID has Push Notifications and Time Sensitive Notifications.
 
 ### Measured on Steve's watch (no debugger, real APNs; runs 16–22 in the doc)
@@ -84,7 +84,11 @@ Sign-in tokens (signed by the API, checked on each node with a public key) come 
 
 ## Open risks
 
-- **Tapping the notification still takes ~3.2 s** to first audio. The app isn't running when the ring arrives, so it can't pre-connect as the in-app ring does. Ideas: open a stream when watchOS launches the app early (it did in run 16, not in run 20), or a Notification Service Extension on watchOS (availability unverified).
+- **Prefetch prototype (built 2026-09-27; keep, refine or back out):** tapping the notification took 2.4–3.7 s to first audio, mostly the watch's network waking for the first request after the tap. Now the relay sends a second, silent push with the same collapse ID 3 s after an APNs ring, or when the sender's first burst ends (`prefetchAlert`, `PREFETCH_PUSH_MS`; `deploy-relay.sh` sets 3000, 0 turns it off). The watch's notification service extension (`app/WatchNotificationService`) downloads the held message from `GET /v1/rings/audio` into the app group `group.<bundle ID>`. On a tap the app plays it before the relay stream opens (`Watch/Prefetch.swift`, `ConversationController.playPrefetched`) and skips those frames in the replay. Run 32: tap → first audio **0.77 s**; the download finished 13 s before the tap. Open questions:
+  - whether the second push buzzes the wrist again;
+  - what remains: mostly the audio session starting (0.49 s), which could start as soon as the app opens from the notification;
+  - a tap within ~3 s of the ring takes the old path;
+  - the simulator never runs the extension for `simctl push`, so test it on the watch.
 - **Fallbacks haven't run on a device:** rejoining on a fresh stream after a failed or stale one.
 - **watchOS 9–11 is untested:** whether the Opus encoder exists there (`VoiceEncoder` silently falls back to 256 kbps PCM), and background behaviour.
 - **App Review:** see the doc's "App Store, privacy and business" section.
@@ -98,7 +102,7 @@ Sign-in tokens (signed by the API, checked on each node with a public key) come 
   - Artifact Registry repo `relay`; Secret Manager secrets `relay-token`, `apns-key` and `acme-eab` (the Public CA account key);
   - health check `relay-health`, firewall rule `walkie-web` (80/443), two uptime checks and alert policies.
 - **DNS** (A records at GoDaddy): `relay-1.overandout.app` and `walkie.cypressoakstudios.com` → `35.209.96.216`.
-- **Deploy:** commit, then `deploy/gcp/deploy-relay.sh`. It builds the committed code, then replaces `relay-1` (about 2 minutes of downtime with one node). `gcloud` is at `~/google-cloud-sdk/bin`, which isn't on the agent shell's PATH, so prefix `export PATH=$HOME/google-cloud-sdk/bin:$PATH`. Running now: `a80fd7a`.
+- **Deploy:** commit, then `deploy/gcp/deploy-relay.sh`. It builds the committed code, then replaces `relay-1` (about 2 minutes of downtime with one node). `gcloud` is at `~/google-cloud-sdk/bin`, which isn't on the agent shell's PATH, so prefix `export PATH=$HOME/google-cloud-sdk/bin:$PATH`. Running now: `ddc6849`.
 - **Logs:**
 
   ```bash
