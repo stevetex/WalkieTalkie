@@ -37,6 +37,13 @@ struct AppSettings: Equatable {
         static let friendName = "friendName"
     }
 
+    /// The notification service extension downloads a ring's message as this user
+    /// (prefetch prototype), so it reads the ID from the app group.
+    private static func shareUserId(_ userId: String) {
+        guard let group = Prefetched.appGroup else { return }
+        UserDefaults(suiteName: group)?.set(userId, forKey: Key.userId)
+    }
+
     static func load(_ defaults: UserDefaults = .standard) -> AppSettings {
         let info = Bundle.main.infoDictionary ?? [:]
         let userId = defaults.string(forKey: Key.userId) ?? {
@@ -44,6 +51,7 @@ struct AppSettings: Equatable {
             defaults.set(generated, forKey: Key.userId)
             return generated
         }()
+        shareUserId(userId)
         return AppSettings(
             userId: userId,
             displayName: defaults.string(forKey: Key.displayName) ?? WKInterfaceDevice.current().name,
@@ -56,6 +64,7 @@ struct AppSettings: Equatable {
 
     func save(_ defaults: UserDefaults = .standard) {
         defaults.set(userId, forKey: Key.userId)
+        Self.shareUserId(userId)
         defaults.set(displayName, forKey: Key.displayName)
         defaults.set(friendId, forKey: Key.friendId)
         defaults.set(friendName, forKey: Key.friendName)

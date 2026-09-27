@@ -71,6 +71,27 @@ export function ringAlert(ring: RingPayload, expiresAt: number): AlertPush {
   };
 }
 
+// Prototype (PREFETCH_PUSH): a second push for the same ring, sent once the sender has said
+// something, so the watch's notification service extension downloads the message while the
+// watch's network is still awake from the push, and a tap plays it without a request. It
+// replaces the ring (same collapse ID) and carries no sound, so it shouldn't ring twice.
+export function prefetchAlert(ring: RingPayload, expiresAt: number): AlertPush {
+  return {
+    payload: {
+      aps: {
+        alert: { title: ring.fromName, body: "Tap to listen" },
+        "mutable-content": 1,
+        "interruption-level": "time-sensitive",
+        "thread-id": ring.conversationId,
+      },
+      ...ring,
+      prefetch: 1,
+    },
+    collapseId: ring.conversationId,
+    expiresAt,
+  };
+}
+
 export class DryRunPusher implements Pusher {
   sent: Array<{ token: string; env: ApnsEnvironment } & AlertPush> = [];
 

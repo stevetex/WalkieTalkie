@@ -15,6 +15,8 @@
 //   SPIKE_TOKEN_SECRET, APNS_KEY_SECRET
 //                     relay nodes: Secret Manager secret IDs to read SPIKE_TOKEN and APNS_KEY
 //                     (the .p8 key's text) from
+//   PREFETCH_PUSH_MS  prototype: send a prefetch push this long after an APNs ring (or when the
+//                     sender's first burst ends, if sooner); unset or 0 = off (see prefetchAlert)
 //   DRAIN_MS          on SIGTERM, how long to let open conversations finish (default 0)
 //   REVISION          the git commit, reported by /healthz
 //   SIMULATOR_PUSH    1 = deliver rings to simulators on this Mac with simctl (development
@@ -52,6 +54,7 @@ export interface ServerOptions {
   pusher: Pusher;
   ringTimeoutMs?: number;
   answerJoinTimeoutMs?: number;
+  prefetchPushAfterMs?: number;
 }
 
 export interface RunningServer {
@@ -72,6 +75,7 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
     metrics,
     ...(options.ringTimeoutMs ? { ringTimeoutMs: options.ringTimeoutMs } : {}),
     ...(options.answerJoinTimeoutMs ? { answerJoinTimeoutMs: options.answerJoinTimeoutMs } : {}),
+    ...(options.prefetchPushAfterMs ? { prefetchPushAfterMs: options.prefetchPushAfterMs } : {}),
   });
 
   const authorized = (req: IncomingMessage, url: URL): boolean => {
@@ -194,6 +198,19 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
       }
       if (req.method === "GET" && url.pathname === "/v1/relay/stream") return openStream(req, res, url);
       if (req.method === "POST" && url.pathname === "/v1/relay/send") return await receiveRecords(req, res, url);
+      // Prototype: the message a ring is holding, for the watch's notification service
+      // extension to download before the tap (see Relay.bufferedAudio).
+      if (req.method === "GET" && url.pathname === "/v1/rings/audio") {
+        const audio = relay.bufferedAudio(url.searchParams.get("userId") ?? "", url.searchParams.get("conversationId") ?? "");
+        if (!audio) return send(res, 404, { error: "unknown conversation" });
+        res.writeHead(200, {
+          "content-type": "application/octet-stream",
+          "cache-control": "no-store",
+          "x-bursts": String(audio.bursts),
+          "x-frames": String(audio.frames),
+        });
+        return void res.end(audio.records);
+      }
       // For devices registered with a "poll:" token (no VoIP push): collect pending rings.
       if (req.method === "GET" && url.pathname === "/v1/rings/poll") {
         return send(res, 200, relay.takePolledRings(url.searchParams.get("userId") ?? ""));
@@ -291,20 +308,22 @@ if (import.meta.main) {
   const token = env.SPIKE_TOKEN || null;
   const host = env.HOST || undefined;
   const port = Number(env.PORT ?? 8080);
+  const prefetchPushAfterMs = Number(env.PREFETCH_PUSH_MS ?? 0);
   let running: RunningServer;
   if (env.STORE === "firestore") {
     const db = new Firestore({ projectId, emulatorHost, accessToken });
     const devices = new FirestoreDeviceStore(db);
     const metrics = new FirestoreMetricsStore(db);
-    running = await startServer({ port, host, dataDir: null, devices, metrics, token, pusher });
+    running = await startServer({ port, host, dataDir: null, devices, metrics, token, pusher, prefetchPushAfterMs });
     console.log(`[server] listening on ${host ?? ""}:${running.port}, data in Firestore ${emulatorHost ? `emulator ${emulatorHost}, ` : ""}project ${projectId}`);
   } else {
     const dataDir = ensureDir(resolve(env.DATA_DIR ?? "data"));
-    running = await startServer({ port, host, dataDir, token, pusher });
+    running = await startServer({ port, host, dataDir, token, pusher, prefetchPushAfterMs });
     console.log(`[server] listening on ${host ?? ""}:${running.port}, data in ${dataDir}`);
   }
   console.log(`[server] revision ${env.REVISION ?? "local"}${secrets.length ? `, secrets ${secrets.join(", ")} from Secret Manager` : ""}`);
   console.log(apnsConfig ? `[server] APNs alert pushes, topic ${apnsConfig.bundleId}` : "[server] APNs not configured: dry-run pushes");
+  if (prefetchPushAfterMs) console.log(`[server] prefetch pushes ${prefetchPushAfterMs} ms after a ring (prototype)`);
   if (simulatorPush) console.warn("[server] SIMULATOR_PUSH: rings to simulator tokens run xcrun simctl push");
   if (!token) console.warn("[server] SPIKE_TOKEN not set: API and relay are unauthenticated");
   // Container stops (deploys, autohealing) send SIGTERM. Let conversations in progress

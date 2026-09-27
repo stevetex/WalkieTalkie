@@ -4,10 +4,11 @@ import { startServer, type RunningServer, type ServerOptions } from "../src/main
 import { JsonDeviceStore, type Device, type DeviceStore } from "../src/store.ts";
 import { DryRunPusher } from "../src/apns.ts";
 import { SpikeClient } from "../tools/client.ts";
+import { RecordParser } from "../src/records.ts";
 
 async function withServer(
   fn: (s: RunningServer, pusher: DryRunPusher) => Promise<void>,
-  options: Partial<Pick<ServerOptions, "ringTimeoutMs" | "answerJoinTimeoutMs" | "devices">> = {},
+  options: Partial<Pick<ServerOptions, "ringTimeoutMs" | "answerJoinTimeoutMs" | "devices" | "prefetchPushAfterMs">> = {},
 ): Promise<void> {
   const pusher = new DryRunPusher();
   const running = await startServer({ port: 0, dataDir: null, token: "secret", pusher, ...options });
@@ -435,4 +436,80 @@ test("a failed device lookup grants the floor without ringing", async () => {
     },
     { devices },
   );
+});
+
+test("prefetch: a second push once the first burst ends, and the buffered audio to download", async () => {
+  await withServer(
+    async (s, pusher) => {
+      const alice = client(s, "alice");
+      const bob = client(s, "bob");
+      await alice.register("Alice");
+      await bob.register("Bob", "abcdef0123456789");
+      await alice.connect();
+
+      const { conversationId } = await alice.talk("bob", pcm(10), { realtime: false });
+      for (let i = 0; i < 50 && pusher.sent.length < 2; i++) await new Promise((r) => setTimeout(r, 20));
+      assert.equal(pusher.sent.length, 2);
+      const prefetch = pusher.sent[1].payload as Record<string, unknown> & { aps: Record<string, unknown> };
+      assert.equal(prefetch.prefetch, 1);
+      assert.equal(prefetch.conversationId, conversationId);
+      assert.equal(prefetch.aps["mutable-content"], 1);
+      assert.equal(prefetch.aps.sound, undefined);
+      assert.equal(pusher.sent[1].collapseId, pusher.sent[0].collapseId);
+
+      const res = await fetch(`http://localhost:${s.port}/v1/rings/audio?userId=bob&conversationId=${conversationId}`, {
+        headers: { authorization: "Bearer secret" },
+      });
+      assert.equal(res.status, 200);
+      assert.equal(res.headers.get("x-frames"), "10");
+      const records = new RecordParser().push(Buffer.from(await res.arrayBuffer()));
+      assert.equal(records.length, 12); // burst-start, 10 frames, burst-end
+      assert.equal(JSON.parse(records[0].payload.toString()).type, "burst-start");
+      assert.equal(records[1].payload.readUInt32BE(1), 0);
+
+      // Downloading doesn't count as heard: the join still replays everything.
+      await bob.connect();
+      bob.send({ type: "join", conversationId });
+      assert.equal((await bob.waitFor("joined")).replayBursts, 1);
+      await bob.waitFor("burst-end");
+      assert.equal(bob.frames.length, 10);
+      alice.close();
+      bob.close();
+    },
+    { prefetchPushAfterMs: 3_000 },
+  );
+});
+
+test("prefetch: no second push if the recipient joined first, and none unless enabled", async () => {
+  for (const prefetchPushAfterMs of [50, 0]) {
+    await withServer(
+      async (s, pusher) => {
+        const alice = client(s, "alice");
+        const bob = client(s, "bob");
+        await alice.register("Alice");
+        await bob.register("Bob", "abcdef0123456789");
+        await alice.connect();
+        await bob.connect();
+        alice.send({ type: "talk-start", to: "bob", burstId: "a1" });
+        const { conversationId } = await alice.waitFor("floor-granted");
+        bob.send({ type: "join", conversationId });
+        await bob.waitFor("joined");
+        alice.send({ type: "talk-end", burstId: "a1" });
+        await new Promise((r) => setTimeout(r, 120));
+        assert.equal(pusher.sent.length, 1);
+        alice.close();
+        bob.close();
+      },
+      { prefetchPushAfterMs },
+    );
+  }
+});
+
+test("prefetch: other users can't download a conversation's audio", async () => {
+  await withServer(async (s) => {
+    const res = await fetch(`http://localhost:${s.port}/v1/rings/audio?userId=eve&conversationId=nope`, {
+      headers: { authorization: "Bearer secret" },
+    });
+    assert.equal(res.status, 404);
+  });
 });

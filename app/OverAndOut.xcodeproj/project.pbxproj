@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		0AA000000000000000000041 /* OverAndOutWatch.app in Embed Watch Content */ = {isa = PBXBuildFile; fileRef = 0AA000000000000000000006 /* OverAndOutWatch.app */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		0AA000000000000000000042 /* OverAndOutKit in Frameworks */ = {isa = PBXBuildFile; productRef = 0AA000000000000000000052 /* OverAndOutKit */; };
+		0AA00000000000000000006C /* OverAndOutWatchNotificationService.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 0AA000000000000000000060 /* OverAndOutWatchNotificationService.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -18,6 +19,13 @@
 			proxyType = 1;
 			remoteGlobalIDString = 0AA000000000000000000030;
 			remoteInfo = OverAndOutWatch;
+		};
+		0AA00000000000000000006D /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 0AA000000000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 0AA000000000000000000064;
+			remoteInfo = OverAndOutWatchNotificationService;
 		};
 /* End PBXContainerItemProxy section */
 
@@ -33,6 +41,17 @@
 			name = "Embed Watch Content";
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		0AA00000000000000000006B /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				0AA00000000000000000006C /* OverAndOutWatchNotificationService.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
@@ -43,6 +62,9 @@
 		0AA00000000000000000000A /* Watch-Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "Watch-Info.plist"; sourceTree = "<group>"; };
 		0AA00000000000000000000B /* Watch.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Watch.entitlements; sourceTree = "<group>"; };
 		0AA00000000000000000000C /* Watch-NoPush.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = "Watch-NoPush.entitlements"; sourceTree = "<group>"; };
+		0AA000000000000000000060 /* OverAndOutWatchNotificationService.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = OverAndOutWatchNotificationService.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		0AA000000000000000000061 /* WatchNotificationService-Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "WatchNotificationService-Info.plist"; sourceTree = "<group>"; };
+		0AA000000000000000000062 /* WatchNotificationService.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = WatchNotificationService.entitlements; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -54,6 +76,11 @@
 		0AA00000000000000000000E /* Watch */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = Watch;
+			sourceTree = "<group>";
+		};
+		0AA000000000000000000063 /* WatchNotificationService */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = WatchNotificationService;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -74,6 +101,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		0AA000000000000000000066 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -82,6 +116,7 @@
 			children = (
 				0AA00000000000000000000D /* iOS */,
 				0AA00000000000000000000E /* Watch */,
+				0AA000000000000000000063 /* WatchNotificationService */,
 				0AA000000000000000000004 /* Config */,
 				0AA000000000000000000003 /* Products */,
 			);
@@ -92,6 +127,7 @@
 			children = (
 				0AA000000000000000000005 /* OverAndOut.app */,
 				0AA000000000000000000006 /* OverAndOutWatch.app */,
+				0AA000000000000000000060 /* OverAndOutWatchNotificationService.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -104,6 +140,8 @@
 				0AA00000000000000000000A /* Watch-Info.plist */,
 				0AA00000000000000000000B /* Watch.entitlements */,
 				0AA00000000000000000000C /* Watch-NoPush.entitlements */,
+				0AA000000000000000000061 /* WatchNotificationService-Info.plist */,
+				0AA000000000000000000062 /* WatchNotificationService.entitlements */,
 			);
 			path = Config;
 			sourceTree = "<group>";
@@ -142,10 +180,12 @@
 				0AA000000000000000000031 /* Sources */,
 				0AA000000000000000000032 /* Frameworks */,
 				0AA000000000000000000033 /* Resources */,
+				0AA00000000000000000006B /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				0AA00000000000000000006E /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				0AA00000000000000000000E /* Watch */,
@@ -157,6 +197,28 @@
 			productName = OverAndOutWatch;
 			productReference = 0AA000000000000000000006 /* OverAndOutWatch.app */;
 			productType = "com.apple.product-type.application";
+		};
+		0AA000000000000000000064 /* OverAndOutWatchNotificationService */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 0AA000000000000000000068 /* Build configuration list for PBXNativeTarget "OverAndOutWatchNotificationService" */;
+			buildPhases = (
+				0AA000000000000000000065 /* Sources */,
+				0AA000000000000000000066 /* Frameworks */,
+				0AA000000000000000000067 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				0AA000000000000000000063 /* WatchNotificationService */,
+			);
+			name = OverAndOutWatchNotificationService;
+			packageProductDependencies = (
+			);
+			productName = OverAndOutWatchNotificationService;
+			productReference = 0AA000000000000000000060 /* OverAndOutWatchNotificationService.appex */;
+			productType = "com.apple.product-type.app-extension";
 		};
 /* End PBXNativeTarget section */
 
@@ -172,6 +234,9 @@
 						CreatedOnToolsVersion = 27.0;
 					};
 					0AA000000000000000000030 = {
+						CreatedOnToolsVersion = 27.0;
+					};
+					0AA000000000000000000064 = {
 						CreatedOnToolsVersion = 27.0;
 					};
 				};
@@ -195,6 +260,7 @@
 			targets = (
 				0AA000000000000000000020 /* OverAndOut */,
 				0AA000000000000000000030 /* OverAndOutWatch */,
+				0AA000000000000000000064 /* OverAndOutWatchNotificationService */,
 			);
 		};
 /* End PBXProject section */
@@ -208,6 +274,13 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		0AA000000000000000000033 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		0AA000000000000000000067 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -231,6 +304,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		0AA000000000000000000065 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -238,6 +318,11 @@
 			isa = PBXTargetDependency;
 			target = 0AA000000000000000000030 /* OverAndOutWatch */;
 			targetProxy = 0AA000000000000000000043 /* PBXContainerItemProxy */;
+		};
+		0AA00000000000000000006E /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 0AA000000000000000000064 /* OverAndOutWatchNotificationService */;
+			targetProxy = 0AA00000000000000000006D /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -398,6 +483,60 @@
 			};
 			name = Release;
 		};
+		0AA000000000000000000069 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = Config/WatchNotificationService.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "Config/WatchNotificationService-Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = "Over&Out";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 0.1;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(OAO_BUNDLE_ID).watchkitapp.notificationservice";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = watchos;
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 4;
+				WATCHOS_DEPLOYMENT_TARGET = 9.0;
+			};
+			name = Debug;
+		};
+		0AA00000000000000000006A /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = Config/WatchNotificationService.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "Config/WatchNotificationService-Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = "Over&Out";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 0.1;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(OAO_BUNDLE_ID).watchkitapp.notificationservice";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = watchos;
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 4;
+				WATCHOS_DEPLOYMENT_TARGET = 9.0;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -424,6 +563,15 @@
 			buildConfigurations = (
 				0AA000000000000000000036 /* Debug */,
 				0AA000000000000000000037 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		0AA000000000000000000068 /* Build configuration list for PBXNativeTarget "OverAndOutWatchNotificationService" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				0AA000000000000000000069 /* Debug */,
+				0AA00000000000000000006A /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

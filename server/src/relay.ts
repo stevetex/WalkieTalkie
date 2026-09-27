@@ -2,7 +2,8 @@
 // Transport-agnostic so tests can drive it with fake peers.
 
 import { randomUUID } from "node:crypto";
-import { ringAlert, type Pusher } from "./apns.ts";
+import { prefetchAlert, ringAlert, type ApnsEnvironment, type Pusher } from "./apns.ts";
+import { encodeJSONRecord, encodeRecord, RecordType } from "./records.ts";
 import type { Device, DeviceStore, MetricsStore } from "./store.ts";
 import type { ClientMessage, RingPayload, ServerMessage } from "./protocol.ts";
 
@@ -43,6 +44,14 @@ interface Conversation {
   // Set while a ring is waiting to be answered (or, once answered, to be joined).
   ringTimer: NodeJS.Timeout | null;
   ringFrom: string | null;
+  // Prototype: the second, prefetch push for the current APNs ring (see prefetchAlert).
+  prefetch: {
+    to: string;
+    pushToken: string;
+    apnsEnvironment: ApnsEnvironment;
+    payload: RingPayload;
+    timer: NodeJS.Timeout | null;
+  } | null;
 }
 
 export interface RelayOptions {
@@ -60,6 +69,9 @@ export interface RelayOptions {
   // After the watch reports it answered, how long it has to open the relay socket and
   // join before the ring is abandoned. Socket setup on a real watch took ~7 s.
   answerJoinTimeoutMs?: number;
+  // Prototype: after an APNs ring, send a prefetch push once the sender's first burst ends,
+  // or this long after the ring if they're still talking. 0 = no prefetch pushes.
+  prefetchPushAfterMs?: number;
 }
 
 export class Relay {
@@ -71,7 +83,14 @@ export class Relay {
   private opts: Required<RelayOptions>;
 
   constructor(options: RelayOptions) {
-    this.opts = { now: Date.now, bufferTtlMs: 120_000, ringTimeoutMs: 35_000, answerJoinTimeoutMs: 30_000, ...options };
+    this.opts = {
+      now: Date.now,
+      bufferTtlMs: 120_000,
+      ringTimeoutMs: 35_000,
+      answerJoinTimeoutMs: 30_000,
+      prefetchPushAfterMs: 0,
+      ...options,
+    };
   }
 
   close(): void {
@@ -235,7 +254,30 @@ export class Relay {
     for (const member of burst.deliveredTo) {
       this.peers.get(member)?.sendJSON({ type: "burst-end", conversationId: conversation.id, burstId: burst.id });
     }
+    if (conversation.prefetch && burst.from !== conversation.prefetch.to) this.sendPrefetchPush(conversation);
     this.prune(conversation);
+  }
+
+  // The buffered message a ring's recipient hasn't heard yet, as stream records (burst-start,
+  // frames, burst-end if it has ended), for the watch's notification service extension to
+  // download before the tap. Read-only: the join still replays it, and the app skips the
+  // frames it already played.
+  bufferedAudio(userId: string, conversationId: string): { records: Buffer; bursts: number; frames: number } | null {
+    const conversation = this.byId.get(conversationId);
+    if (!conversation || !conversation.members.includes(userId)) return null;
+    const parts: Buffer[] = [];
+    let bursts = 0;
+    let frames = 0;
+    for (const burst of conversation.bursts) {
+      if (burst.from === userId || burst.deliveredTo.has(userId)) continue;
+      bursts++;
+      frames += burst.frames.length;
+      parts.push(encodeJSONRecord({ type: "burst-start", conversationId, burstId: burst.id, from: burst.from, replay: true }));
+      for (const frame of burst.frames) parts.push(encodeRecord(RecordType.audio, frame));
+      if (burst.ended) parts.push(encodeJSONRecord({ type: "burst-end", conversationId, burstId: burst.id }));
+    }
+    this.opts.metrics.server(conversationId, "audioPrefetched", this.opts.now(), `${bursts} bursts, ${frames} frames`);
+    return { records: Buffer.concat(parts), bursts, frames };
   }
 
   // conversationId "pending" joins the user's newest queued ring instead, for the watch's
@@ -327,6 +369,12 @@ export class Relay {
       return true;
     }
     const push = ringAlert(payload, conversation.lastRingAt + this.opts.ringTimeoutMs);
+    if (this.opts.prefetchPushAfterMs > 0) {
+      this.clearPrefetch(conversation);
+      conversation.prefetch = { to, pushToken: device.pushToken, apnsEnvironment: device.apnsEnvironment, payload, timer: null };
+      conversation.prefetch.timer = setTimeout(() => this.sendPrefetchPush(conversation), this.opts.prefetchPushAfterMs);
+      conversation.prefetch.timer.unref();
+    }
     void this.opts.pusher.sendAlert(device.pushToken, device.apnsEnvironment, push).then((result) => {
       const detail = `status ${result.status}${result.reason ? ` ${result.reason}` : ""} in ${result.latencyMs.toFixed(0)} ms${result.dryRun ? " (dry run)" : ""}`;
       this.opts.metrics.server(conversation.id, result.ok ? "pushAccepted" : "pushFailed", this.opts.now(), detail);
@@ -367,6 +415,26 @@ export class Relay {
   private clearRing(conversation: Conversation): void {
     if (conversation.ringTimer) clearTimeout(conversation.ringTimer);
     conversation.ringTimer = null;
+    this.clearPrefetch(conversation);
+  }
+
+  private clearPrefetch(conversation: Conversation): void {
+    if (conversation.prefetch?.timer) clearTimeout(conversation.prefetch.timer);
+    conversation.prefetch = null;
+  }
+
+  // Once per ring: the recipient hasn't joined, so the watch should fetch what's buffered.
+  private sendPrefetchPush(conversation: Conversation): void {
+    const prefetch = conversation.prefetch;
+    if (!prefetch) return;
+    this.clearPrefetch(conversation);
+    if (conversation.joined.has(prefetch.to) || !conversation.ringTimer || conversation.lastRingAt === null) return;
+    const push = prefetchAlert(prefetch.payload, conversation.lastRingAt + this.opts.ringTimeoutMs);
+    this.opts.metrics.server(conversation.id, "prefetchPushSent", this.opts.now());
+    void this.opts.pusher.sendAlert(prefetch.pushToken, prefetch.apnsEnvironment, push).then((result) => {
+      const detail = `status ${result.status}${result.reason ? ` ${result.reason}` : ""} in ${result.latencyMs.toFixed(0)} ms${result.dryRun ? " (dry run)" : ""}`;
+      this.opts.metrics.server(conversation.id, result.ok ? "prefetchPushAccepted" : "prefetchPushFailed", this.opts.now(), detail);
+    });
   }
 
   private conversationFor(a: string, b: string): Conversation {
@@ -383,6 +451,7 @@ export class Relay {
         lastRingAt: null,
         ringTimer: null,
         ringFrom: null,
+        prefetch: null,
       };
       this.byPair.set(key, conversation);
       this.byId.set(conversation.id, conversation);

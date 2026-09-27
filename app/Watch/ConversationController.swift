@@ -81,6 +81,11 @@ final class ConversationController: NSObject, ObservableObject {
     private var activatingAudio = false
     /// Answering already retried on a fresh stream once.
     private var rejoinedOnFreshStream = false
+    /// Prototype: frames of each burst already played from the extension's download, so
+    /// the relay's replay of them is skipped (see playPrefetched).
+    private var prefetchedFrames: [String: Int] = [:]
+    /// The burst the relay is currently sending us.
+    private var incomingBurstId: String?
     /// Server clock minus watch clock. The relay's hello-ack gives a first estimate, but the
     /// watch's first request is slowed by its network starting up, so it's refined with a
     /// few quick /v1/time samples once the network is up (smallest round trip wins).
@@ -100,6 +105,9 @@ final class ConversationController: NSObject, ObservableObject {
         relay.onReady = { [unowned self] offset in relayReady(clockOffsetMs: offset) }
         relay.onMessage = { [unowned self] message in handle(message) }
         relay.onFrame = { [unowned self] frame in
+            // Already played from the prefetch download.
+            if let burst = incomingBurstId, let played = prefetchedFrames[burst],
+               let seq = VoiceFrame.decode(frame)?.seq, seq < played { return }
             if conversation?.timeline.has("firstFrameReceived") == false { conversation?.timeline.mark("firstFrameReceived") }
             audio.enqueue(frame)
         }
@@ -290,6 +298,7 @@ final class ConversationController: NSObject, ObservableObject {
         peerName = ring.fromName
         statusLine = "Connecting to \(ring.fromName)…"
         rejoinedOnFreshStream = false
+        playPrefetched(ring.conversationId)
         if preconnect != nil, relay.isReady || relay.isConnecting {
             joinOverPreconnectedStream(ring.conversationId)
         } else {
@@ -300,6 +309,34 @@ final class ConversationController: NSObject, ObservableObject {
         activateOwnAudio()
         resetIdleTimer()
         removeDeliveredNotifications(for: ring.conversationId)
+    }
+
+    /// Prototype: plays what the notification service extension downloaded when the
+    /// relay's prefetch push arrived, before the relay stream is even open. The join still
+    /// replays everything; relay.onFrame skips the frames played here.
+    private func playPrefetched(_ conversationId: String) {
+        guard let prefetched = Prefetched.take(conversationId: conversationId) else { return }
+        let meta = prefetched.meta
+        if let t = meta["receivedAt"] as? Double { conversation?.timeline.mark("nseReceived", at: t) }
+        if let t = meta["fetchStartedAt"] as? Double { conversation?.timeline.mark("nseFetchStarted", at: t) }
+        let error = (meta["error"] as? String).map { ", \($0)" } ?? ""
+        if let t = meta["fetchEndedAt"] as? Double {
+            conversation?.timeline.mark("nseFetchEnded", at: t,
+                                        detail: "HTTP \(meta["status"] ?? 0), \(meta["bytes"] ?? 0) bytes, \(prefetched.frameCount) frames\(error)")
+        } else if !error.isEmpty {
+            conversation?.timeline.mark("nseFetchFailed", detail: String(error.dropFirst(2)))
+        }
+        guard prefetched.frameCount > 0 else { return }
+        conversation?.timeline.mark("prefetchedAudioQueued", detail: "\(prefetched.bursts.count) bursts, \(prefetched.frameCount) frames")
+        remoteTalking = true
+        statusLine = "\(conversation?.peerName ?? "Your friend") is talking"
+        // Queued before the audio session is up: the pipeline holds frames until it starts.
+        for burst in prefetched.bursts where !burst.frames.isEmpty {
+            prefetchedFrames[burst.burstId] = burst.frames.count
+            audio.beginPlayback()
+            for frame in burst.frames { audio.enqueue(frame) }
+            if burst.ended { audio.endPlayback() }
+        }
     }
 
     /// Opens the relay stream without joining while an in-app ring is showing.
@@ -430,11 +467,16 @@ final class ConversationController: NSObject, ObservableObject {
             phase = .live
             statusLine = "With \(name)"
         case "burst-start":
-            conversation?.timeline.mark("burstStartReceived", detail: message.replay == true ? "replay" : "live", once: false)
+            incomingBurstId = message.burstId
+            let prefetched = message.burstId.flatMap { prefetchedFrames[$0] }
+            conversation?.timeline.mark("burstStartReceived",
+                                        detail: (message.replay == true ? "replay" : "live") + (prefetched.map { ", \($0) frames prefetched" } ?? ""),
+                                        once: false)
             remoteTalking = true
             statusLine = "\(name) is talking"
             idleTimer?.invalidate()
-            audio.beginPlayback()
+            // A prefetched burst is already playing; resetting the decoder would glitch it.
+            if prefetched == nil { audio.beginPlayback() }
         case "burst-end":
             remoteTalking = false
             statusLine = "With \(name)"
@@ -574,6 +616,8 @@ final class ConversationController: NSObject, ObservableObject {
 
         conversation = nil
         preconnect = nil
+        prefetchedFrames = [:]
+        incomingBurstId = nil
         talkReady = false
         talkHeld = false
         isTalking = false
@@ -661,6 +705,8 @@ extension ConversationController: UNUserNotificationCenterDelegate {
         DispatchQueue.main.async {
             defer { completionHandler([]) }
             guard self.conversation?.conversationId != ring.conversationId else { return }
+            // The prefetch push for a ring that's already ringing in the app: don't ring again.
+            guard self.incomingRing?.conversationId != ring.conversationId else { return }
             self.incomingRing = ring
             self.incomingRingDelivered = notification.date
             self.preconnectRelay()

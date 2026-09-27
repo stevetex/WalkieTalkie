@@ -28,6 +28,9 @@ trap 'rm -rf "$stage"' EXIT
   echo "SPIKE_TOKEN_SECRET=relay-token"
   # Certificates from Google Trust Services (see server/container/entrypoint.sh).
   echo "ACME_EAB_SECRET=acme-eab"
+  # Prototype: the prefetch push for the watch's notification service extension
+  # (prefetchAlert in server/src/apns.ts). PREFETCH_PUSH_MS=0 in config.sh turns it off.
+  echo "PREFETCH_PUSH_MS=${PREFETCH_PUSH_MS:-3000}"
   # Public CA refuses ACME accounts without a contact address.
   acme_email=${ACME_EMAIL:-${ALERT_EMAIL:-}}
   if [ -n "$acme_email" ]; then echo "ACME_EMAIL=$acme_email"; fi
