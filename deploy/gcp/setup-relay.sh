@@ -14,8 +14,9 @@ here=$(cd "$(dirname "$0")" && pwd)
 node_sa="relay-node@$PROJECT_ID.iam.gserviceaccount.com"
 gc() { gcloud --project="$PROJECT_ID" --quiet "$@"; }
 
-echo "Enabling Artifact Registry, Cloud Build and Secret Manager…"
-gc services enable artifactregistry.googleapis.com cloudbuild.googleapis.com secretmanager.googleapis.com
+echo "Enabling Artifact Registry, Cloud Build, Secret Manager and Public CA…"
+gc services enable artifactregistry.googleapis.com cloudbuild.googleapis.com secretmanager.googleapis.com \
+  publicca.googleapis.com
 
 if ! gc artifacts repositories describe relay --location="$REGION" >/dev/null 2>&1; then
   echo "Creating the relay image repository in $REGION…"
@@ -37,7 +38,17 @@ create_secret() {
 if [ -z "$SPIKE_TOKEN" ]; then echo "Set SPIKE_TOKEN in config.sh first." >&2; exit 1; fi
 printf %s "$SPIKE_TOKEN" | create_secret relay-token
 if [ -n "$APNS_KEY_FILE" ]; then create_secret apns-key <"$APNS_KEY_FILE"; fi
-for secret in relay-token apns-key; do
+# Google Trust Services (Public CA) external account key: Caddy uses it once, to register
+# the node's ACME account, which it then keeps on the node's disk. A key registers one
+# account, so before adding another node, add a fresh version:
+#   gcloud publicca external-account-keys create --format=json | gcloud secrets versions add acme-eab --data-file=-
+if ! gc secrets describe acme-eab >/dev/null 2>&1; then
+  # Held in a variable first, so a failed request doesn't create an empty secret.
+  eab=$(gc publicca external-account-keys create --format=json)
+  printf %s "$eab" | create_secret acme-eab
+  unset eab
+fi
+for secret in relay-token apns-key acme-eab; do
   if gc secrets describe "$secret" >/dev/null 2>&1; then
     gc secrets add-iam-policy-binding "$secret" --member="serviceAccount:$node_sa" \
       --role=roles/secretmanager.secretAccessor >/dev/null

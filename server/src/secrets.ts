@@ -3,7 +3,7 @@
 // environment, loadSecrets sets NAME to that secret's latest version, read with the VM
 // service account's token.
 
-import { metadataAccessToken } from "./firestore.ts";
+import { metadataAccessToken, metadataProjectId } from "./firestore.ts";
 
 export async function loadSecrets(
   env: NodeJS.ProcessEnv,
@@ -26,4 +26,16 @@ export async function loadSecrets(
     loaded.push(name);
   }
   return loaded;
+}
+
+// For container/entrypoint.sh, which needs Caddy's ACME account key before the relay runs:
+//   node src/secrets.ts <secret id> [JSON field…]
+// prints the secret, or the named fields of a JSON secret, space-separated.
+if (import.meta.main) {
+  const [secretId, ...fields] = process.argv.slice(2);
+  const env: NodeJS.ProcessEnv = { VALUE_SECRET: secretId };
+  await loadSecrets(env, await metadataProjectId());
+  const value = env.VALUE ?? "";
+  const parsed = fields.length ? (JSON.parse(value) as Record<string, string>) : null;
+  process.stdout.write(parsed ? fields.map((f) => parsed[f] ?? "").join(" ") : value);
 }
