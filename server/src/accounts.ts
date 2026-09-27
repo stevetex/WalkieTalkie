@@ -4,7 +4,8 @@
 //   users/{uid}/friends/{friendId}  since. Written on both sides in one commit
 //   users/{uid}/blocks/{otherId}    since. Blocking also deletes the friendship both ways
 //   users/{uid}/devices/{deviceId}  platform, pushToken, apnsEnvironment, updatedAt
-//   users/{uid}/sessions/{sid}      deviceId, platform, createdAt, refreshedAt
+//   users/{uid}/sessions/{deviceId} sid, platform, createdAt, refreshedAt. One per device, so
+//                                   concurrent sign-ins on a device can't leave extras
 //   appleSubs/{sub}                 userId. Created only if absent: one account per Apple ID
 //   invites/{code}                  from, createdAt, expireAt (Firestore TTL deletes it)
 //   reports/{id}                    reporter, reported, reason, note, conversationId, createdAt, status
@@ -147,25 +148,46 @@ export class Accounts {
     return (await this.user(id))!;
   }
 
-  // Sessions: one per device. Signing in again on a device replaces its session.
+  // Sessions: one per device, keyed by the device, so signing in again (even several times at
+  // once) replaces its session. The newest sid wins; older tokens for the device stop refreshing.
   async createSession(userId: string, deviceId: string, platform: Platform): Promise<string> {
     checkId(deviceId, "device");
     const sessions = await this.docs.list(`users/${requireUserId(userId)}/sessions`);
     const sid = randomId(16);
     const now = new Date(this.opts.now());
     await this.docs.commit([
-      ...sessions.filter((s) => s.data.deviceId === deviceId).map((s): Write => ({ delete: `users/${userId}/sessions/${s.id}` })),
-      { set: `users/${userId}/sessions/${sid}`, data: { deviceId, platform, createdAt: now, refreshedAt: now }, exists: false },
+      // Sessions stored before 2026-09-27's change were keyed by their sid.
+      ...sessions
+        .filter((s) => s.id !== deviceId && s.data.deviceId === deviceId)
+        .map((s): Write => ({ delete: `users/${userId}/sessions/${s.id}` })),
+      { set: `users/${userId}/sessions/${deviceId}`, data: { sid, platform, createdAt: now, refreshedAt: now } },
     ]);
     return sid;
   }
 
-  // Refreshing: true (and the session's refreshedAt updated) if the session still exists.
-  async touchSession(userId: string, sid: string): Promise<boolean> {
-    if (!isUserId(userId) || !isId(sid)) return false;
+  // Refreshing: true (and the session's refreshedAt updated) if this is still the device's
+  // session.
+  async touchSession(userId: string, sid: string, deviceId: string): Promise<boolean> {
+    if (!isUserId(userId) || !isId(sid) || !isId(deviceId)) return false;
+    const [current, legacy] = await this.docs.getAll([`users/${userId}/sessions/${deviceId}`, `users/${userId}/sessions/${sid}`]);
+    const now = new Date(this.opts.now());
     try {
+      if (current) {
+        if (current.sid !== sid) return false;
+        await this.docs.commit([
+          { set: `users/${userId}/sessions/${deviceId}`, data: { refreshedAt: now }, fields: ["refreshedAt"], exists: true },
+        ]);
+        return true;
+      }
+      // A session from before the change: move it to the device's key.
+      if (!legacy || legacy.deviceId !== deviceId) return false;
       await this.docs.commit([
-        { set: `users/${userId}/sessions/${sid}`, data: { refreshedAt: new Date(this.opts.now()) }, fields: ["refreshedAt"], exists: true },
+        {
+          set: `users/${userId}/sessions/${deviceId}`,
+          data: { sid, platform: legacy.platform, createdAt: legacy.createdAt, refreshedAt: now },
+          exists: false,
+        },
+        { delete: `users/${userId}/sessions/${sid}`, exists: true },
       ]);
       return true;
     } catch (err) {
@@ -175,10 +197,17 @@ export class Accounts {
   }
 
   // Signing out: the session and the device's push registration go, so it stops ringing.
+  // A token the device has already replaced ends nothing.
   async endSession(userId: string, sid: string, deviceId: string): Promise<void> {
+    requireUserId(userId);
+    checkId(sid, "session");
+    checkId(deviceId, "device");
+    const [current, legacy] = await this.docs.getAll([`users/${userId}/sessions/${deviceId}`, `users/${userId}/sessions/${sid}`]);
+    const isCurrent = current ? current.sid === sid : legacy?.deviceId === deviceId;
+    if (!isCurrent) return;
     await this.docs.commit([
-      { delete: `users/${requireUserId(userId)}/sessions/${checkId(sid, "session")}` },
-      { delete: `users/${userId}/devices/${checkId(deviceId, "device")}` },
+      { delete: `users/${userId}/sessions/${current ? deviceId : sid}` },
+      { delete: `users/${userId}/devices/${deviceId}` },
     ]);
   }
 

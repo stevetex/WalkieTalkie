@@ -131,17 +131,47 @@ export function accountsSuite(label: string, makeDocs: () => Docs, skip: string 
   });
 
   test(`${label}: sessions are one per device and end on sign-out`, { skip }, async () => {
-    const { accounts, alice } = await setup();
+    const { docs, accounts, alice } = await setup();
     const first = await accounts.createSession(alice.id, "phone-1", "iphone");
     const second = await accounts.createSession(alice.id, "phone-1", "iphone");
     const watch = await accounts.createSession(alice.id, "watch-1", "watch");
-    assert.equal(await accounts.touchSession(alice.id, first), false);
-    assert.equal(await accounts.touchSession(alice.id, second), true);
+    assert.equal(await accounts.touchSession(alice.id, first, "phone-1"), false);
+    assert.equal(await accounts.touchSession(alice.id, second, "phone-1"), true);
+    // A sid only works with its own device.
+    assert.equal(await accounts.touchSession(alice.id, second, "watch-1"), false);
     await accounts.registerDevice(alice.id, "watch-1", { platform: "watch", pushToken: "t", apnsEnvironment: "sandbox" });
+    // Signing out with a replaced token ends nothing.
+    const newer = await accounts.createSession(alice.id, "watch-1", "watch");
     await accounts.endSession(alice.id, watch, "watch-1");
-    assert.equal(await accounts.touchSession(alice.id, watch), false);
+    assert.equal(await accounts.touchSession(alice.id, newer, "watch-1"), true);
+    assert.equal((await accounts.devices(alice.id)).length, 1);
+    await accounts.endSession(alice.id, newer, "watch-1");
+    assert.equal(await accounts.touchSession(alice.id, newer, "watch-1"), false);
     assert.deepEqual(await accounts.devices(alice.id), []);
-    assert.equal(await accounts.touchSession("u_nobodyatall1234", second), false);
+    assert.equal(await accounts.touchSession("u_nobodyatall1234", second, "phone-1"), false);
+    assert.deepEqual((await docs.list(`users/${alice.id}/sessions`)).map((s) => s.id), ["phone-1"]);
+  });
+
+  test(`${label}: concurrent sessions for one device leave one`, { skip }, async () => {
+    const { docs, accounts, alice } = await setup();
+    const sids = await Promise.all([1, 2, 3, 4].map(() => accounts.createSession(alice.id, "watch-1", "watch")));
+    assert.equal((await docs.list(`users/${alice.id}/sessions`)).length, 1);
+    const valid = await Promise.all(sids.map((sid) => accounts.touchSession(alice.id, sid, "watch-1")));
+    assert.equal(valid.filter(Boolean).length, 1);
+  });
+
+  test(`${label}: sessions stored by sid before the change still refresh, and move`, { skip }, async () => {
+    const { docs, accounts, alice } = await setup();
+    const created = new Date(Date.UTC(2026, 8, 27));
+    await docs.commit([{ set: `users/${alice.id}/sessions/oldSid123`, data: { deviceId: "watch-1", platform: "watch", createdAt: created, refreshedAt: created } }]);
+    assert.equal(await accounts.touchSession(alice.id, "oldSid123", "phone-9"), false);
+    assert.equal(await accounts.touchSession(alice.id, "oldSid123", "watch-1"), true);
+    assert.deepEqual((await docs.list(`users/${alice.id}/sessions`)).map((s) => [s.id, s.data.sid]), [["watch-1", "oldSid123"]]);
+    assert.equal(await accounts.touchSession(alice.id, "oldSid123", "watch-1"), true);
+    // A legacy session also signs out.
+    await docs.commit([{ set: `users/${alice.id}/sessions/oldSid456`, data: { deviceId: "phone-2", platform: "iphone", createdAt: created, refreshedAt: created } }]);
+    await accounts.endSession(alice.id, "oldSid456", "phone-2");
+    assert.equal(await accounts.touchSession(alice.id, "oldSid456", "phone-2"), false);
   });
 
   test(`${label}: reports are kept with IDs only`, { skip }, async () => {

@@ -80,7 +80,7 @@ export function createApi(options: ApiOptions): ApiHandler {
     }],
     ["POST", /^\/v1\/auth\/refresh$/, async (req) => {
       const claims = authenticate(req, REFRESH_GRACE_MS);
-      if (!(await accounts.touchSession(claims.sub, claims.sid))) throw new AccountError(401, "session-ended");
+      if (!(await accounts.touchSession(claims.sub, claims.sid, claims.dev))) throw new AccountError(401, "session-ended");
       return [200, issue(claims.sub, claims.sid, claims.dev)];
     }],
     ["POST", /^\/v1\/auth\/device$/, async (req) => {
