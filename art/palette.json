@@ -1,0 +1,10 @@
+{
+  "description": "Design target colors; generated artwork contains shading and slight variations.",
+  "colors": {
+    "indigo": "#272D50",
+    "ivory": "#FFF6DF",
+    "ink": "#10161B",
+    "silver_blue": "#BED5DF",
+    "talk_orange": "#FF8B1A"
+  }
+}

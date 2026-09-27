@@ -15,6 +15,7 @@ struct InviteAcceptView: View {
             Spacer()
         }
         .padding(24)
+        .brandScreen()
         .presentationDetents([.medium])
         .task {
             if model.pendingInvite?.info == nil, model.pendingInvite?.error == nil { await model.loadPendingInvite() }
@@ -29,15 +30,15 @@ struct InviteAcceptView: View {
                 .font(.title2.bold())
                 .multilineTextAlignment(.center)
             Text("Ring \(friend.name) from Over&Out on your watch.")
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Brand.secondary)
             primary("Done") { dismiss() }
         } else if let error = invite.error {
-            icon("exclamationmark.triangle.fill", .orange)
+            icon("exclamationmark.triangle.fill", Brand.accent)
             Text(error)
                 .multilineTextAlignment(.center)
             primary("OK") { dismiss() }
         } else if let info = invite.info {
-            icon("person.crop.circle.badge.plus", .orange)
+            icon("person.crop.circle.badge.plus", Brand.accent)
             if info.alreadyFriends {
                 Text("You and \(info.from.name) are already friends")
                     .font(.title2.bold())
@@ -48,7 +49,7 @@ struct InviteAcceptView: View {
                     .font(.title2.bold())
                     .multilineTextAlignment(.center)
                 Text("You'll be able to ring each other from your watches.")
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Brand.secondary)
                     .multilineTextAlignment(.center)
                 primary(invite.accepting ? "Adding…" : "Add Friend") {
                     Task { await model.acceptPendingInvite() }
@@ -72,7 +73,8 @@ struct InviteAcceptView: View {
             Text(title).frame(maxWidth: .infinity)
         }
         .buttonStyle(.borderedProminent)
+        .foregroundStyle(Brand.ink)
         .controlSize(.large)
-        .tint(.orange)
+        .tint(Brand.orange)
     }
 }

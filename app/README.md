@@ -46,3 +46,17 @@ cd Packages/OverAndOutKit && swift test
 ```
 
 Never measure timing under Xcode's debugger on the watch (see [HANDOFF.md](../HANDOFF.md), Gotchas).
+
+## Artwork and appearance
+
+Each target’s `Assets.xcassets` contains its `AppIcon`, `OverAndOutBrand` wordmark,
+and matching light/dark semantic colors. `ASSETCATALOG_COMPILER_APPICON_NAME` is
+set for Debug and Release on both app targets. Source artwork and print exports
+live in [`../art`](../art); refresh the copies in both targets when artwork changes.
+
+`OverAndOutKit/Brand.swift` provides the shared palette and screen modifier.
+Light mode uses ivory and ink; dark mode uses indigo and ivory. Orange is the
+Talk/primary-button fill, with ink labels for contrast. Text/link accents use a
+darker orange in light mode. Success and destructive actions retain semantic
+system colors. The iPhone root reserves a top masthead; the Watch root reserves
+a small noninteractive bottom-right wordmark so it does not cover controls.
