@@ -31,7 +31,8 @@ import { Accounts } from "../src/accounts.ts";
 import { Firestore, gcloudAccessToken } from "../src/firestore.ts";
 import { SessionSigner, parseSigningKey } from "../src/session.ts";
 
-export const BOT_TOKEN_FILE = join(import.meta.dirname, "..", "data", "bot-token.json");
+// OAO_BOT_TOKEN_FILE keeps a local bot (simulator testing) apart from the Google Cloud one.
+export const BOT_TOKEN_FILE = process.env.OAO_BOT_TOKEN_FILE ?? join(import.meta.dirname, "..", "data", "bot-token.json");
 const BOT_APPLE_SUB = "test-bot.overandout";
 const BOT_DEVICE = "test-bot";
 

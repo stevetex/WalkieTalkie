@@ -89,6 +89,10 @@ final class ConversationController: NSObject, ObservableObject {
     private var prefetchedFrames: [String: Int] = [:]
     /// The burst the relay is currently sending us.
     private var incomingBurstId: String?
+    /// The relay has sent all of the friend's burst (burst-end)…
+    private var incomingBurstEnded = false
+    /// …and the speaker has played everything queued. Both, and they've stopped talking.
+    private var speakerIdle = true
     /// Server clock minus watch clock. The relay's hello-ack gives a first estimate, but the
     /// watch's first request is slowed by its network starting up, so it's refined with a
     /// few quick /v1/time samples once the network is up (smallest round trip wins).
@@ -112,6 +116,7 @@ final class ConversationController: NSObject, ObservableObject {
             if let burst = incomingBurstId, let played = prefetchedFrames[burst],
                let seq = VoiceFrame.decode(frame)?.seq, seq < played { return }
             if conversation?.timeline.has("firstFrameReceived") == false { conversation?.timeline.mark("firstFrameReceived") }
+            speakerIdle = false
             audio.enqueue(frame)
         }
         relay.onClose = { [unowned self] reason in
@@ -140,6 +145,10 @@ final class ConversationController: NSObject, ObservableObject {
                 self?.conversation?.timeline.mark("firstAudioScheduled")
                 self?.conversation?.timeline.mark("burstAudioStarted", once: false)
             }
+        }
+        audio.onPlaybackDrained = { [weak self] in
+            self?.speakerIdle = true
+            self?.friendStoppedTalkingIfDone()
         }
         audio.onFirstCapturedFrame = { [weak self] t in
             DispatchQueue.main.async { self?.conversation?.timeline.mark("micFirstFrame", at: t, once: false) }
@@ -363,6 +372,7 @@ final class ConversationController: NSObject, ObservableObject {
         for burst in prefetched.bursts where !burst.frames.isEmpty {
             prefetchedFrames[burst.burstId] = burst.frames.count
             audio.beginPlayback()
+            speakerIdle = false
             for frame in burst.frames { audio.enqueue(frame) }
             if burst.ended { audio.endPlayback() }
         }
@@ -522,14 +532,16 @@ final class ConversationController: NSObject, ObservableObject {
                                         detail: (message.replay == true ? "replay" : "live") + (prefetched.map { ", \($0) frames prefetched" } ?? ""),
                                         once: false)
             remoteTalking = true
+            incomingBurstEnded = false
             statusLine = "\(name) is talking"
             idleTimer?.invalidate()
             // A prefetched burst is already playing; resetting the decoder would glitch it.
             if prefetched == nil { audio.beginPlayback() }
         case "burst-end":
-            remoteTalking = false
-            statusLine = "With \(name)"
+            // Still talking until the speaker has played it all.
+            incomingBurstEnded = true
             audio.endPlayback()
+            friendStoppedTalkingIfDone()
             resetIdleTimer()
         case "peer-left":
             log("\(name) left")
@@ -572,6 +584,14 @@ final class ConversationController: NSObject, ObservableObject {
             sentFirstFrame = true
             conversation?.timeline.mark("firstFrameSent")
         }
+    }
+
+    /// A replayed burst arrives far faster than it plays, so "is talking" lasts until both
+    /// the relay's burst-end and the speaker going quiet.
+    private func friendStoppedTalkingIfDone() {
+        guard remoteTalking, incomingBurstEnded, speakerIdle else { return }
+        remoteTalking = false
+        statusLine = "With \(conversation?.peerName ?? "Your friend")"
     }
 
     // MARK: Conversation window
@@ -667,6 +687,8 @@ final class ConversationController: NSObject, ObservableObject {
         preconnect = nil
         prefetchedFrames = [:]
         incomingBurstId = nil
+        incomingBurstEnded = false
+        speakerIdle = true
         talkReady = false
         talkHeld = false
         isTalking = false

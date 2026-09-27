@@ -10,6 +10,10 @@ public final class AudioPipeline {
     public var onFrame: ((Data) -> Void)?
     /// The first buffer of a received burst was handed to the player. Called on the audio queue.
     public var onFirstPlayback: (() -> Void)?
+    /// Everything handed to the player has been played. A replayed burst arrives much
+    /// faster than it plays, so this, not the burst's end, is when the speaker goes quiet.
+    /// Called on the main queue.
+    public var onPlaybackDrained: (() -> Void)?
     /// The microphone produced the first frame of a burst (time in ms). Called on the audio queue.
     public var onFirstCapturedFrame: ((Double) -> Void)?
     /// The engine was restarted after watchOS changed its configuration (for example
@@ -45,6 +49,7 @@ public final class AudioPipeline {
     private var held: [AVAudioPCMBuffer] = []
     private var prebuffering = false
     private var reportedFirstPlayback = false
+    private var scheduled = 0
 
     /// Frames of jitter buffer before a live burst starts playing (4 × 20 ms).
     private static let prebufferFrames = 4
@@ -137,6 +142,7 @@ public final class AudioPipeline {
             self.capturing = false
             self.pendingSamples.removeAll()
             self.held.removeAll()
+            self.scheduled = 0
         }
     }
 
@@ -245,7 +251,17 @@ public final class AudioPipeline {
     private func flushHeld() {
         guard running, !held.isEmpty else { return }
         for buffer in held {
-            player.scheduleBuffer(buffer, completionHandler: nil)
+            scheduled += 1
+            player.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack) { [weak self] _ in
+                guard let self else { return }
+                self.queue.async {
+                    guard self.scheduled > 0 else { return }
+                    self.scheduled -= 1
+                    if self.scheduled == 0, self.held.isEmpty {
+                        DispatchQueue.main.async { self.onPlaybackDrained?() }
+                    }
+                }
+            }
         }
         held.removeAll()
         if !player.isPlaying { player.play() }
