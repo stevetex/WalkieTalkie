@@ -16,11 +16,8 @@ struct FriendDetailView: View {
             Group {
                 Section {
                     VStack(spacing: 10) {
-                        Text(String(friend.name.prefix(1)).uppercased())
-                            .font(.largeTitle.bold())
-                            .foregroundStyle(Brand.ink)
-                            .frame(width: 80, height: 80)
-                            .background(Circle().fill(Brand.orange.gradient))
+                        Avatar(name: friend.name, userId: friend.id, photoVersion: friend.photoVersion,
+                               size: 96, client: model.client)
                         Text(friend.name)
                             .font(.title2.bold())
                         Text(

@@ -49,6 +49,28 @@ struct AccountTests {
         return AccountSession(token: "old", expiresAt: Date(timeIntervalSince1970: ms / 1000), userId: "u_a", name: "Alice", deviceId: "phone")
     }
 
+    @Test func photosUploadAsJPEGAndFriendsCarryTheirVersion() async throws {
+        let store = MemorySessionStore()
+        store.save(session(expiresIn: 3600))
+        StubProtocol.reset([
+            .init(status: 200, json: #"{"photoVersion":1790000000000}"#),
+            .init(status: 200, json: #"{"friends":[{"id":"u_b","name":"Bob","since":1,"photoVersion":1790000000001},{"id":"u_c","name":"Carol","since":2}]}"#),
+            .init(status: 200, json: "jpeg bytes"),
+        ])
+        let c = client(store)
+        let jpeg = Data([0xff, 0xd8, 0xff, 0xd9])
+        #expect(try await c.setPhoto(jpeg: jpeg) == 1_790_000_000_000)
+        let upload = StubProtocol.requests[0]
+        #expect(upload.httpMethod == "PUT")
+        #expect(upload.url?.path == "/v1/me/photo")
+        #expect(upload.value(forHTTPHeaderField: "Content-Type") == "image/jpeg")
+        #expect(try upload.bodyStreamData() == jpeg)
+        let friends = try await c.friends()
+        #expect(friends.map(\.photoVersion) == [1_790_000_000_001, nil])
+        #expect(try await c.photo(userId: "u_b") == Data("jpeg bytes".utf8))
+        #expect(StubProtocol.requests[2].url?.path == "/v1/users/u_b/photo")
+    }
+
     @Test func signInStoresTheSession() async throws {
         let store = MemorySessionStore()
         StubProtocol.reset([.init(status: 200, json: #"{"token":"t1","expiresAt":1792000000000,"user":{"id":"u_a","name":"Alice"},"created":true}"#)])

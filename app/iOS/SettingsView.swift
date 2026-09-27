@@ -11,14 +11,23 @@ struct SettingsView: View {
         Form {
             Group {
                 Section {
-                    TextField("Your name", text: $name)
+                    ProfilePhotoPicker()
+                        .padding(.vertical, 4)
+                } header: {
+                    Text("Photo")
+                } footer: {
+                    Text("Friends see your photo on their iPhone and watch.")
+                }
+
+                Section {
+                    TextField("Screen name", text: $name)
                         .submitLabel(.done)
                         .onSubmit(saveName)
                     if nameChanged {
                         Button("Save Name", action: saveName)
                     }
                 } header: {
-                    Text("Your name")
+                    Text("Screen name")
                 } footer: {
                     Text("Friends see this when you ring them.")
                 }
@@ -51,6 +60,7 @@ struct SettingsView: View {
                 Section {
                     Link("Privacy Policy", destination: URL(string: "https://\(model.linkDomain)/privacy")!)
                     Link("Help and Support", destination: URL(string: "https://\(model.linkDomain)/support")!)
+                    NavigationLink("About Over&Out") { AboutView() }
                 }
 
                 Section {

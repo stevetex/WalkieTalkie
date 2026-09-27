@@ -20,9 +20,12 @@
 //   DELETE /v1/invites/{code}        (the inviter cancels it)
 //   GET    /v1/blocks                POST /v1/blocks {userId}   DELETE /v1/blocks/{id}
 //   POST   /v1/reports               {userId, reason, note?, conversationId?, block?}
+//   PUT    /v1/me/photo              the profile photo, as an image/jpeg body → {photoVersion}
+//   DELETE /v1/me/photo
+//   GET    /v1/users/{id}/photo      → image/jpeg: your own photo or a friend's
 
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { AccountError, isPlatform, type Accounts, type User } from "./accounts.ts";
+import { AccountError, MAX_PHOTO_BYTES, isPlatform, type Accounts, type User } from "./accounts.ts";
 import type { AppleIdentity } from "./apple.ts";
 import { REFRESH_GRACE_MS, SessionError, type SessionClaims, type SessionSigner, type SessionVerifier } from "./session.ts";
 
@@ -41,7 +44,7 @@ export interface ApiOptions {
 export type ApiHandler = (req: IncomingMessage, res: ServerResponse, url: URL) => Promise<boolean>;
 
 // Returns true if it handled the request (any /v1/auth, /v1/me, /v1/friends, /v1/invites,
-// /v1/blocks or /v1/reports path).
+// /v1/blocks or /v1/reports path, or /v1/users/{id}/photo).
 export function createApi(options: ApiOptions): ApiHandler {
   const { accounts, signer, verifier } = options;
   const log = options.log ?? ((line: string) => console.log(line));
@@ -59,7 +62,9 @@ export function createApi(options: ApiOptions): ApiHandler {
 
   const issue = (userId: string, sid: string, deviceId: string) => signer.issue({ sub: userId, sid, dev: deviceId });
 
-  const routes: Array<[string, RegExp, (req: IncomingMessage, params: string[]) => Promise<[number, unknown]>]> = [
+  // A handler's result: a JSON body, or raw bytes with their content type.
+  type Reply = [number, unknown] | [number, { bytes: Buffer; contentType: string; version: number }];
+  const routes: Array<[string, RegExp, (req: IncomingMessage, params: string[]) => Promise<Reply>]> = [
     ["POST", /^\/v1\/auth\/apple$/, async (req) => {
       const body = await readBody(req);
       const { identityToken, nonce, name, deviceId, platform } = body;
@@ -145,6 +150,21 @@ export function createApi(options: ApiOptions): ApiHandler {
       });
       return [200, {}];
     }],
+    ["PUT", /^\/v1\/me\/photo$/, async (req) => {
+      const claims = authenticate(req);
+      const jpeg = await readBytes(req, MAX_PHOTO_BYTES);
+      const photoVersion = await accounts.setPhoto(claims.sub, jpeg);
+      log(`[api] ${claims.sub} set a photo (${jpeg.length} bytes)`);
+      return [200, { photoVersion }];
+    }],
+    ["DELETE", /^\/v1\/me\/photo$/, async (req) => {
+      await accounts.removePhoto(authenticate(req).sub);
+      return [200, {}];
+    }],
+    ["GET", /^\/v1\/users\/([\w.-]+)\/photo$/, async (req, [id]) => {
+      const { jpeg, version } = await accounts.photo(authenticate(req).sub, id);
+      return [200, { bytes: jpeg, contentType: "image/jpeg", version }];
+    }],
     ["GET", /^\/v1\/friends$/, async (req) => [200, { friends: await accounts.friends(authenticate(req).sub) }]],
     ["DELETE", /^\/v1\/friends\/([\w.-]+)$/, async (req, [id]) => {
       await accounts.removeFriend(authenticate(req).sub, id);
@@ -195,14 +215,21 @@ export function createApi(options: ApiOptions): ApiHandler {
   ];
 
   return async (req, res, url) => {
-    if (!/^\/v1\/(auth|me|friends|invites|blocks|reports)(\/|$)/.test(url.pathname)) return false;
+    // /v1/users itself is the relay's (diagnostics); only a user's photo is the API's.
+    if (!/^\/v1\/(auth|me|friends|invites|blocks|reports)(\/|$)|^\/v1\/users\/[\w.-]+\/photo$/.test(url.pathname)) return false;
     try {
       for (const [method, pattern, handler] of routes) {
         const match = url.pathname.match(pattern);
         if (!match) continue;
         if (req.method !== method) continue;
         const [status, body] = await handler(req, match.slice(1));
-        send(res, status, body);
+        if (isBytes(body)) {
+          // Private: only the viewer and their friends may see it, so no shared caches.
+          res.writeHead(status, { "content-type": body.contentType, "cache-control": "private, no-cache", etag: `"${body.version}"` });
+          res.end(body.bytes);
+        } else {
+          send(res, status, body);
+        }
         return true;
       }
       send(res, 404, { error: "not-found", message: `no route for ${req.method} ${url.pathname}` });
@@ -220,8 +247,26 @@ export function createApi(options: ApiOptions): ApiHandler {
   };
 }
 
-function userJSON(user: User): { id: string; name: string } {
-  return { id: user.id, name: user.name };
+function userJSON(user: User): { id: string; name: string; photoVersion?: number } {
+  return { id: user.id, name: user.name, ...(user.photoVersion !== undefined ? { photoVersion: user.photoVersion } : {}) };
+}
+
+function isBytes(body: unknown): body is { bytes: Buffer; contentType: string; version: number } {
+  return typeof body === "object" && body !== null && Buffer.isBuffer((body as { bytes?: unknown }).bytes);
+}
+
+// Past `max`, the rest is read and dropped (up to 1 MB) so the client sees the 413 rather
+// than a reset connection.
+async function readBytes(req: IncomingMessage, max: number): Promise<Buffer> {
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const chunk of req) {
+    size += (chunk as Buffer).length;
+    if (size > 1024 * 1024) break;
+    if (size <= max) chunks.push(chunk as Buffer);
+  }
+  if (size > max) throw new AccountError(413, "photo-too-large");
+  return Buffer.concat(chunks);
 }
 
 export function bearer(req: IncomingMessage): string | null {

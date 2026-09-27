@@ -117,6 +117,9 @@ struct ContentView: View {
                 }
                 .buttonStyle(.plain)
             } else if let ring = controller.incomingRing {
+                if let caller = account.friends.first(where: { $0.id == ring.from }) {
+                    Avatar(name: caller.name, userId: caller.id, photoVersion: caller.photoVersion, size: 32, client: account.client)
+                }
                 Text(ring.fromName)
                 Text("is calling")
                     .font(.caption2)
@@ -319,6 +322,7 @@ struct FriendPicker: View {
                 dismiss()
             } label: {
                 HStack {
+                    Avatar(name: friend.name, userId: friend.id, photoVersion: friend.photoVersion, size: 28, client: account.client)
                     Text(friend.name)
                     Spacer()
                     if friend.id == account.selectedFriend?.id {
