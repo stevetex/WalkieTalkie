@@ -1,29 +1,25 @@
-# Handoff: Over&Out — accounts built; next, the end-to-end test on Steve's devices (2026-09-27)
+# Handoff: Over&Out — accounts working on Steve's devices; finish the end-to-end test (2026-09-27)
 
-Read this first. Over&Out: Watch Walkie Talkie replaces Apple's Watch Walkie-Talkie app, which Apple removed in watchOS 27. The watch app works end to end on Steve's watch with real APNs pushes, through relay nodes on Google Cloud, with a prototype that plays a ring's message about 0.7 s after the tap. **Accounts and the iPhone companion app are now built** (Sign in with Apple, friends, invites, block and report, account deletion), the account API and overandout.app are live, and the relay accepts session tokens. Everything has run in simulators; **nothing account-related has run on Steve's iPhone and watch yet**. There are no secrets in this file. Tokens and keys live in gitignored files and Secret Manager, listed under Local config.
+Read this first. Over&Out: Watch Walkie Talkie replaces Apple's Watch Walkie-Talkie app, which Apple removed in watchOS 27. The watch app works end to end on Steve's watch with real APNs pushes, through relay nodes on Google Cloud, with a prototype that plays a ring's message about 0.7 s after the tap. **Accounts and the iPhone companion app are now built** (Sign in with Apple, friends, invites, block and report, account deletion), the account API and overandout.app are live, and the relay accepts session tokens. On Steve's devices, sign-in on the iPhone and watch, an invite to the Test Bot and a ring both ways all worked, with **tap → first audio 0.48 s** (run 36). The universal link, block and report, and account deletion are still to test. There are no secrets in this file. Tokens and keys live in gitignored files and Secret Manager, listed under Local config.
 
 ## Start here
 
 1. Read this file, then the feasibility doc's **Design decisions** (the six 2026-09-27 rows: the account API, the watch's identity, session tokens, overandout.app hosting, the Firestore model and invites, and two-account testing) and **Hosting → Accounts and overandout.app**.
-2. Check that overandout.app serves over HTTPS (`curl https://overandout.app/v1/health`). Steve changed the GoDaddy records on 2026-09-27 (below); Google then issues the certificate.
-3. Do the **end-to-end test** below with Steve.
+2. Finish the **end-to-end test** below with Steve (steps 5–7).
 4. Ask Steve before anything outward-facing or billed: creating Google Cloud resources, deploying to the live relay, DNS changes (he adds GoDaddy records by hand), App Store Connect or developer-portal changes Xcode doesn't make itself, and deleting VMs or data.
 
 ## Links
 
 - **Feasibility doc (Claude Docs):** https://claude.ai/code/artifact/59ab6e47-6e5d-4698-8bd1-173293953df9. Log design decisions in its Design decisions table (date, decision, why, revisit if), and measured results in Prototype results (runs 1–35 so far).
 - **Backlog (Claude Docs):** https://claude.ai/code/artifact/30273f1c-2795-4fd7-b15a-370b1a177118. Small follow-ups with a Status column. New on 2026-09-27: retiring the shared relay token, blocks ending an open conversation, a device's registration under a previous account, invites across the App Store install, session key rotation, and reviewing reports.
-- **Repo:** https://github.com/stevetex/WalkieTalkie. `main` is pushed up to `2b3c8fe`. Commit `665153a` (server, deploy scripts, site) is local only, made in order to deploy; the app changes after it are uncommitted.
+- **Repo:** https://github.com/stevetex/WalkieTalkie. `main` is pushed (accounts: `665153a`, `c22cbc2`, `8537f6c`).
 - **App name and domain:** "Over&Out: Watch Walkie Talkie", overandout.app (DNS at GoDaddy, nameservers `ns61/ns62.domaincontrol.com`). Bundle IDs `com.cypressoakstudios.overandout` (iPhone), `…overandout.watchkitapp` (watch) and `…overandout.watchkitapp.notificationservice`. Team `A39XNKNDPX`.
 
 ## Next job: the end-to-end test on Steve's devices
 
 **Install:** Steve runs the **OverAndOut** scheme on his iPhone from Xcode (it embeds the watch app), then opens Over&Out on the watch. Then:
 
-1. **Sign in with Apple** on the iPhone; onboarding asks for the name, shows the Focus step and the watch step.
-2. **Watch session:** opening the watch app should sign it in within a few seconds (WatchConnectivity, untested on devices: the simulators' IDS is broken, see Gotchas). Its Settings shows "Signed in as" and "Registered".
-3. **Invite the bot:** in the iPhone app, Invite a Friend → Copy (or send to himself in Messages) → `cd server && node tools/test-account.ts accept <link>`. The bot's production account already exists (`u_NvlyGM47nb3JKca_`, token in `server/data/bot-token.json`).
-4. **Ring both ways:** `SPIKE_SERVER=https://relay-1.overandout.app node tools/bot.ts send --account --ring-until-answered --stay 30` (add `SPIKE_TOKEN=…` for `--ring-until-answered`, which reads timelines); then `listen --account` and Talk from the watch. Check tap → first audio is still ~0.7 s with the session token (the extension reads it from the Keychain).
+1–4. **Done 2026-09-27 (run 36):** Sign in with Apple and onboarding on the iPhone; the watch signed in over WatchConnectivity; the bot accepted Steve's invite (Steve is `u_gNuPMeGUZQe1GC5A`); the bot rang the watch and Steve replied. Tap → first audio 0.48 s, the extension prefetched with the Keychain token. The iPhone had made four sessions for the watch at once; fixed in `c22cbc2` (sessions keyed by device) and `8537f6c` (the iPhone reuses one session per burst). Steve needs to rebuild the OverAndOut scheme to get the iPhone half.
 5. **Universal link:** once overandout.app has its certificate, send an invite link in Messages to a second person or device, tap it: the app should open and ask "Add … as a friend?". Without the app, the page at /i/<code> explains how to get it.
 6. **Block and report** the bot from the friend's page; its next ring should be refused (`talk-refused`, "Can't reach Test Bot" on the watch). Unblock in Settings → Blocked People.
 7. **Delete account** (after the rest): re-confirms with Sign in with Apple, revokes the Apple token (the API has the key), removes the friendship; the watch signs out.
@@ -45,12 +41,12 @@ Record what's measured in the doc's Prototype results, and what's decided in Des
 - **Relay (`server/`):** Node 24+, TypeScript run directly, no dependencies. Stores are async interfaces: JSON locally, Firestore (REST) on nodes. Reads its secrets from Secret Manager, drains for up to 45 s on SIGTERM, reports its revision in `/healthz`. `SIMULATOR_PUSH=1` delivers rings to simulators.
 - **Infrastructure:** option E steps 1–3 (relay nodes), plus the Cloud Run API and Firebase Hosting. Setup and runbook: [deploy/gcp/README.md](deploy/gcp/README.md).
 
-### Measured on Steve's watch (no debugger, real APNs; before accounts)
+### Measured on Steve's watch (no debugger, real APNs)
 
 | What | Result |
 | --- | --- |
 | Push sent → notification on the watch | 0.01–0.3 s |
-| Tap on notification → first audio | **0.60–0.77 s** with the prefetch prototype (runs 32–34); 2.4–3.7 s without it (runs 28–30) |
+| Tap on notification → first audio | **0.48 s** with accounts (run 36); 0.60–0.77 s with the prefetch prototype (runs 32–34); 2.4–3.7 s without it (runs 28–30) |
 | Answer in the app → first audio, with pre-connect | 0.95–1.50 s (runs 22, 25, 35) |
 | Wrist down and quiet spells | Plays with the wrist down and survives 35 s of silence with **no** background modes (run 21) |
 | Do Not Disturb | Rings break through only if Over&Out is on the Focus's allowed apps. Onboarding now guides users to that |
@@ -58,7 +54,7 @@ Record what's measured in the doc's Prototype results, and what's decided in Des
 
 ## Open risks
 
-- **WatchConnectivity handoff is untested on hardware.** If it's unreliable, the fallbacks are the watch asking again on reachability changes (already there), Settings → "Sign In on Watch Again" on the iPhone, or Sign in with Apple on the watch.
+- **WatchConnectivity handoff** worked once on hardware (run 36). If it proves unreliable, the fallbacks are the watch asking again on reachability changes (already there), Settings → "Sign In on Watch Again" on the iPhone, or Sign in with Apple on the watch.
 - **App Review:** report/block and account deletion are in; the listing, privacy label and review notes aren't written yet.
 - **watchOS 9–11 is untested** (Opus encoder, background behaviour, the extension). In the backlog, needed before the Beta.
 - **One relay node:** a deploy or a node failure means about 2 minutes without the relay until option E's failover and a second node exist.
@@ -70,7 +66,7 @@ Record what's measured in the doc's Prototype results, and what's decided in Des
   - static IP `walkie-relay-ip` `35.209.96.216` (Standard tier), on `relay-1`;
   - Firestore (default) database, TTL policies on `timelines.expireAt` and `invites.expireAt`;
   - service accounts `relay-node` (Firestore, logs, metrics, image pull, its secrets) and `account-api` (Firestore, the API's secrets);
-  - Cloud Run service `api` (`https://api-yqgprbu3ja-uc.a.run.app`, scales to zero, max 4 instances, running `665153a`);
+  - Cloud Run service `api` (`https://api-yqgprbu3ja-uc.a.run.app`, scales to zero, max 4 instances, running `c22cbc2`);
   - Firebase added to the project (Steve accepted the terms in the console); Hosting site `walkie-talkie-relay` (`walkie-talkie-relay.web.app`) with the custom domain overandout.app; `/v1/*` rewritten to `api`;
   - Artifact Registry repo `relay` (images `relay` and `api`); Secret Manager secrets `relay-token`, `apns-key`, `acme-eab`, `session-signing-key`, `session-public-keys` (key ID `k20260927`) and `apple-siwa-key`;
   - health check `relay-health`, firewall rule `walkie-web` (80/443), two uptime checks and alert policies, and the alert policy "Over&Out: user report".
@@ -87,7 +83,7 @@ Record what's measured in the doc's Prototype results, and what's decided in Des
   ```
 
   After a node is replaced, SSH refuses its new host key; see the deploy README's Everyday commands.
-- **Data:** accounts in Firestore: the Test Bot (`u_NvlyGM47nb3JKca_`, Apple ID stand-in `test-bot.overandout`). Legacy `devices`: `watch-0d34` (the product app on Steve's watch, old build), `watch-abee` (the spike), `bot`, and the test users `smoke-listener`, `smoke-sender` and `smoke-http`. Deleting them is in the backlog (with retiring the shared token).
+- **Data:** accounts in Firestore: Steve (`u_gNuPMeGUZQe1GC5A`) and the Test Bot (`u_NvlyGM47nb3JKca_`, Apple ID stand-in `test-bot.overandout`), who are friends. Legacy `devices`: `watch-0d34` (the product app on Steve's watch, old build), `watch-abee` (the spike), `bot`, and the test users `smoke-listener`, `smoke-sender` and `smoke-http`. Deleting them is in the backlog (with retiring the shared token).
 - **Project list lag:** the project may not show in `gcloud projects list`, but it works by ID.
 
 ## Local config (gitignored; don't commit or print)
