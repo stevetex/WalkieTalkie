@@ -98,6 +98,12 @@ final class WatchAccount: NSObject, ObservableObject {
                     self.session = self.store.load()
                     self.setFriends(loaded)
                 }
+                // Download changed photos now, while idle, so a ring never waits on one.
+                for friend in loaded {
+                    guard let version = friend.photoVersion else { continue }
+                    let id = friend.id
+                    _ = await PhotoCache.shared.photo(userId: id, version: version) { try await client.photo(userId: id) }
+                }
             } catch {
                 print("[oao] account refresh failed: \(error.localizedDescription)")
             }

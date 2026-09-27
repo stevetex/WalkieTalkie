@@ -60,7 +60,7 @@ private extension View {
                 .frame(height: 112)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 4)
-                .background(Brand.indigo)
+                .background(Brand.artIndigo)
                 .accessibilityLabel("Over&Out")
                 .accessibilityAddTraits(.isHeader)
         }
@@ -84,7 +84,7 @@ struct SignInView: View {
                     .foregroundStyle(Brand.secondary)
                     .padding(.top, 4)
                 VStack(alignment: .leading, spacing: 14) {
-                    Label("Hold Talk on your watch, and your friend hears you", systemImage: "mic.fill")
+                    Label("Hold the mascot's mouth on your watch to talk, and your friend hears you", systemImage: "mic.fill")
                     Label("They tap the ring to listen and talk back", systemImage: "bell.and.waves.left.and.right")
                     Label("Only friends you invite can ring you", systemImage: "person.2.fill")
                 }
@@ -123,7 +123,7 @@ struct SignInView: View {
                     .padding(.top, 12)
                 }
                 #endif
-                Text("Your name is shown to the friends you invite. We never see your email.")
+                Text("Your screen name is shown to the friends you invite. We never see your email.")
                     .font(.footnote)
                     .foregroundStyle(Brand.secondary)
                     .multilineTextAlignment(.center)

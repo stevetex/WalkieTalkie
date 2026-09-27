@@ -86,15 +86,12 @@ extension InviteLink: @retroactive Identifiable {
 }
 
 struct FriendRow: View {
+    @EnvironmentObject private var model: AppModel
     let friend: Friend
 
     var body: some View {
         HStack(spacing: 12) {
-            Text(String(friend.name.prefix(1)).uppercased())
-                .font(.headline)
-                .foregroundStyle(Brand.ink)
-                .frame(width: 36, height: 36)
-                .background(Circle().fill(Brand.orange.gradient))
+            Avatar(name: friend.name, userId: friend.id, photoVersion: friend.photoVersion, size: 36, client: model.client)
             Text(friend.name)
         }
         .padding(.vertical, 2)

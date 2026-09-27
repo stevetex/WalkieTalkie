@@ -203,6 +203,45 @@ test("refresh works past expiry until the session ends", async () => {
   });
 });
 
+test("profile photos: upload, a friend downloads it, strangers can't", async () => {
+  await withApi(async ({ url }) => {
+    const alice = await signIn(url, "001.alice", "Alice", "alice-phone");
+    const bob = await signIn(url, "001.bob", "Bob", "bob-phone");
+    const carol = await signIn(url, "001.carol", "Carol", "carol-phone");
+    await befriend(url, alice.token, bob.token);
+    const jpeg = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(2000, 7), Buffer.from([0xff, 0xd9])]);
+
+    const put = await fetch(new URL("/v1/me/photo", url), {
+      method: "PUT",
+      headers: { "content-type": "image/jpeg", authorization: `Bearer ${alice.token}` },
+      body: jpeg,
+    });
+    assert.equal(put.status, 200);
+    const { photoVersion } = await put.json();
+    assert.equal((await call(url, "GET", "/v1/me", alice.token)).body.photoVersion, photoVersion);
+    assert.equal((await call(url, "GET", "/v1/friends", bob.token)).body.friends[0].photoVersion, photoVersion);
+
+    const get = (token: string) => fetch(new URL(`/v1/users/${alice.user.id}/photo`, url), { headers: { authorization: `Bearer ${token}` } });
+    const seen = await get(bob.token);
+    assert.equal(seen.status, 200);
+    assert.equal(seen.headers.get("content-type"), "image/jpeg");
+    assert.match(seen.headers.get("cache-control") ?? "", /private/);
+    assert.deepEqual(Buffer.from(await seen.arrayBuffer()), jpeg);
+    assert.equal((await get(carol.token)).status, 404);
+
+    const tooBig = await fetch(new URL("/v1/me/photo", url), {
+      method: "PUT",
+      headers: { authorization: `Bearer ${alice.token}` },
+      body: Buffer.alloc(200 * 1024, 0xff),
+    });
+    assert.equal(tooBig.status, 413);
+
+    assert.equal((await call(url, "DELETE", "/v1/me/photo", alice.token)).status, 200);
+    assert.equal((await get(bob.token)).status, 404);
+    assert.equal((await call(url, "GET", "/v1/friends", bob.token)).body.friends[0].photoVersion, undefined);
+  });
+});
+
 test("deleting an account revokes the Apple token with a fresh code and removes the friendship", async () => {
   await withApi(async ({ url, revoked }) => {
     const alice = await signIn(url, "apple.alice", "Alice", "alice-phone");

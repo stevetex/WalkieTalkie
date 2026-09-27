@@ -185,9 +185,37 @@ export function accountsSuite(label: string, makeDocs: () => Docs, skip: string 
     assert.equal(await code(accounts.report(alice.id, { userId: bob.id, reason: "because" })), "bad-reason");
   });
 
+  test(`${label}: a profile photo is seen by its owner and friends only, and can be removed`, { skip }, async () => {
+    const { accounts, alice, bob, now } = await setup();
+    const carol = (await accounts.signInWithApple("001.carol.1", "Carol")).user;
+    await befriend(accounts, alice.id, bob.id);
+    const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3, 0xff, 0xd9]);
+
+    assert.equal(await code(accounts.photo(bob.id, alice.id)), "no-photo");
+    const version = await accounts.setPhoto(alice.id, jpeg);
+    assert.equal(version, now.t);
+    assert.equal((await accounts.user(alice.id))?.photoVersion, version);
+    assert.deepEqual((await accounts.friends(bob.id)).map((f) => f.photoVersion), [version]);
+    assert.deepEqual((await accounts.photo(alice.id, alice.id)).jpeg, jpeg);
+    assert.deepEqual((await accounts.photo(bob.id, alice.id)).jpeg, jpeg);
+    assert.equal(await code(accounts.photo(carol.id, alice.id)), "no-photo");
+
+    assert.equal(await code(accounts.setPhoto(alice.id, Buffer.from("not a jpeg"))), "not-a-jpeg");
+    assert.equal(await code(accounts.setPhoto(alice.id, Buffer.alloc(100 * 1024 + 1, 0xff))), "photo-too-large");
+
+    // A block ends the friendship, and with it the photo.
+    await accounts.block(bob.id, alice.id);
+    assert.equal(await code(accounts.photo(bob.id, alice.id)), "no-photo");
+
+    await accounts.removePhoto(alice.id);
+    assert.equal((await accounts.user(alice.id))?.photoVersion, undefined);
+    assert.equal(await code(accounts.photo(alice.id, alice.id)), "no-photo");
+  });
+
   test(`${label}: deleting an account removes it everywhere but reports`, { skip }, async () => {
     const { docs, accounts, alice, bob } = await setup();
     await befriend(accounts, alice.id, bob.id);
+    await accounts.setPhoto(alice.id, Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0xff, 0xd9]));
     const carol = (await accounts.signInWithApple("001.carol.1", "Carol")).user;
     await accounts.block(alice.id, carol.id);
     await accounts.block(carol.id, alice.id);
@@ -203,7 +231,7 @@ export function accountsSuite(label: string, makeDocs: () => Docs, skip: string 
     // Carol's block of Alice stays, but no longer names her.
     assert.deepEqual((await accounts.blocks(carol.id)).map((b) => b.name), [null]);
     for (const sub of ["friends", "blocks", "devices", "sessions"]) assert.deepEqual(await docs.list(`users/${alice.id}/${sub}`), []);
-    assert.deepEqual(await docs.getAll(["appleSubs/001.alice.1"]), [undefined]);
+    assert.deepEqual(await docs.getAll(["appleSubs/001.alice.1", `photos/${alice.id}`]), [undefined, undefined]);
     assert.notEqual((await docs.getAll([`reports/${reportId}`]))[0], undefined);
     // The same Apple ID starts over with a new account.
     const again = await accounts.signInWithApple("001.alice.1", "Alice");

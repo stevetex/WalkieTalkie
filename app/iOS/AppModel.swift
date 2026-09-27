@@ -19,6 +19,9 @@ final class AppModel: ObservableObject {
     @Published private(set) var friends: [Friend] = []
     @Published private(set) var friendsLoaded = false
     @Published private(set) var blocks: [BlockedUser] = []
+    /// Your own profile photo's version, from /v1/me; nil without one.
+    @Published private(set) var photoVersion: Double?
+    @Published private(set) var updatingPhoto = false
     @Published var pendingInvite: PendingInvite?
     @Published var errorMessage: String?
     /// Set by a deletion, so the root shows "Your account is deleted" before signing in again.
@@ -88,6 +91,7 @@ final class AppModel: ObservableObject {
 
     private func didSignOut() {
         session = nil
+        photoVersion = nil
         friends = []
         friendsLoaded = false
         blocks = []
@@ -106,6 +110,7 @@ final class AppModel: ObservableObject {
             let (user, loadedFriends, loadedBlocks) = try await (me, friendList, blockList)
             session = client.session
             if user.name != session?.name { session?.name = user.name }
+            photoVersion = user.photoVersion
             friends = loadedFriends
             blocks = loadedBlocks
             friendsLoaded = true
@@ -122,6 +127,34 @@ final class AppModel: ObservableObject {
         } catch {
             errorMessage = describe(error)
             return false
+        }
+    }
+
+    /// Crops and uploads a new profile photo; friends see it on their next friends refresh.
+    func setPhoto(_ image: UIImage) async {
+        guard let jpeg = ProfilePhoto.jpeg(from: image), let userId = session?.userId else {
+            errorMessage = "That photo couldn't be used. Try another one."
+            return
+        }
+        updatingPhoto = true
+        defer { updatingPhoto = false }
+        do {
+            let version = try await client.setPhoto(jpeg: jpeg)
+            await PhotoCache.shared.store(jpeg, userId: userId, version: version)
+            photoVersion = version
+        } catch {
+            errorMessage = describe(error)
+        }
+    }
+
+    func removePhoto() async {
+        updatingPhoto = true
+        defer { updatingPhoto = false }
+        do {
+            try await client.removePhoto()
+            photoVersion = nil
+        } catch {
+            errorMessage = describe(error)
         }
     }
 

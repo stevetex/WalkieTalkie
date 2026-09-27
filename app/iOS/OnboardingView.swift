@@ -37,9 +37,10 @@ struct OnboardingView: View {
         VStack(alignment: .leading, spacing: 16) {
             Text("What should friends call you?")
                 .font(.title.bold())
-            Text("Your name appears on their watch when you ring them.")
+            Text("Your screen name appears on their watch when you ring them.")
                 .foregroundStyle(Brand.secondary)
-            TextField("Your name", text: $name)
+            ProfilePhotoPicker(size: 56)
+            TextField("Screen name", text: $name)
                 .font(.title3)
                 .textContentType(.givenName)
                 .padding(14)

@@ -38,6 +38,8 @@ public struct AccountSession: Codable, Equatable, Sendable {
 public struct AccountUser: Codable, Equatable, Sendable {
     public let id: String
     public let name: String
+    /// When the profile photo last changed (ms since 1970); nil without one.
+    public let photoVersion: Double?
 }
 
 public struct Friend: Codable, Identifiable, Hashable, Sendable {
@@ -45,11 +47,14 @@ public struct Friend: Codable, Identifiable, Hashable, Sendable {
     public let name: String
     /// Milliseconds since 1970.
     public let since: Double
+    /// When their profile photo last changed (ms since 1970); nil without one.
+    public let photoVersion: Double?
 
-    public init(id: String, name: String, since: Double) {
+    public init(id: String, name: String, since: Double, photoVersion: Double? = nil) {
         self.id = id
         self.name = name
         self.since = since
+        self.photoVersion = photoVersion
     }
 }
 
@@ -82,6 +87,7 @@ public enum ReportReason: String, CaseIterable, Identifiable, Sendable {
     case harassment
     case spam
     case inappropriate
+    case photo
     case other
 
     public var id: String { rawValue }
@@ -91,6 +97,7 @@ public enum ReportReason: String, CaseIterable, Identifiable, Sendable {
         case .harassment: return "Harassment or bullying"
         case .spam: return "Spam or unwanted rings"
         case .inappropriate: return "Inappropriate content"
+        case .photo: return "Inappropriate profile photo"
         case .other: return "Something else"
         }
     }
@@ -120,6 +127,7 @@ public struct AccountAPIError: LocalizedError, Equatable, Sendable {
         switch code {
         case "invite-not-found": return "This invite has expired or has already been used. Ask your friend for a new one."
         case "own-invite": return "That's your own invite. Send it to a friend instead."
+        case "photo-too-large", "not-a-jpeg": return "That photo couldn't be used. Try another one."
         case "too-many-invites": return "You've sent a lot of invites today. Try again tomorrow."
         case "apple-token-rejected": return "Sign in with Apple didn't work. Try again."
         case "apple-revoke-failed": return "Couldn't reach Apple to finish deleting your account. Try again in a moment."
@@ -367,6 +375,28 @@ public actor AccountClient {
         ])
     }
 
+    // MARK: Profile photo
+
+    /// A square JPEG (see `ProfilePhoto.jpeg(from:)`). Returns the new photo version.
+    public func setPhoto(jpeg: Data) async throws -> Double {
+        struct Response: Decodable { let photoVersion: Double }
+        let data = try await authorized { token in
+            try await self.sendData("PUT", "/v1/me/photo", body: jpeg, contentType: "image/jpeg", token: token)
+        }
+        return try JSONDecoder().decode(Response.self, from: data).photoVersion
+    }
+
+    public func removePhoto() async throws {
+        let _: Empty = try await request("DELETE", "/v1/me/photo")
+    }
+
+    /// Your own photo or a friend's, as JPEG data.
+    public func photo(userId: String) async throws -> Data {
+        try await authorized { token in
+            try await self.sendData("GET", "/v1/users/\(userId)/photo", body: nil, contentType: nil, token: token)
+        }
+    }
+
     public func friends() async throws -> [Friend] {
         struct Response: Decodable { let friends: [Friend] }
         let response: Response = try await request("GET", "/v1/friends")
@@ -429,13 +459,17 @@ public actor AccountClient {
     /// An authenticated call: refreshes an expired token first, and retries once after a
     /// refresh if the server says the token expired.
     private func request<T: Decodable>(_ method: String, _ path: String, body: [String: Any]? = nil) async throws -> T {
+        try await authorized { token in try await self.send(method, path, body: body, token: token) }
+    }
+
+    private func authorized<T>(_ call: (String) async throws -> T) async throws -> T {
         guard var session = store.load() else { throw AccountAPIError.notSignedIn }
         if session.isExpired { session = try await refresh() }
         do {
-            return try await send(method, path, body: body, token: session.token)
+            return try await call(session.token)
         } catch let error as AccountAPIError where error.code == "token-expired" {
             let refreshed = try await refresh()
-            return try await send(method, path, body: body, token: refreshed.token)
+            return try await call(refreshed.token)
         } catch let error as AccountAPIError where error.endsSession {
             signedOut()
             throw error
@@ -443,12 +477,18 @@ public actor AccountClient {
     }
 
     private func send<T: Decodable>(_ method: String, _ path: String, body: [String: Any]?, token: String?) async throws -> T {
+        let json = try body.map { try JSONSerialization.data(withJSONObject: $0) }
+        let data = try await sendData(method, path, body: json, contentType: "application/json", token: token)
+        return try JSONDecoder().decode(T.self, from: data)
+    }
+
+    private func sendData(_ method: String, _ path: String, body: Data?, contentType: String?, token: String?) async throws -> Data {
         var request = URLRequest(url: baseURL.appendingPathComponent(path))
         request.httpMethod = method
         request.timeoutInterval = 20
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        if let contentType { request.setValue(contentType, forHTTPHeaderField: "Content-Type") }
         if let token { request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
-        if let body { request.httpBody = try JSONSerialization.data(withJSONObject: body) }
+        request.httpBody = body
         let (data, response) = try await urlSession.data(for: request)
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard (200..<300).contains(status) else {
@@ -456,7 +496,7 @@ public actor AccountClient {
             throw AccountAPIError(status: status, code: json?["error"] as? String ?? "http-\(status)",
                                   message: json?["message"] as? String ?? "")
         }
-        return try JSONDecoder().decode(T.self, from: data)
+        return data
     }
 }
 

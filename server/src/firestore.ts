@@ -269,6 +269,7 @@ type FirestoreValue =
   | { doubleValue: number }
   | { stringValue: string }
   | { timestampValue: string }
+  | { bytesValue: string }
   | { arrayValue: { values?: FirestoreValue[] } }
   | { mapValue: { fields?: Record<string, FirestoreValue> } };
 
@@ -289,6 +290,7 @@ export function encodeValue(value: unknown): FirestoreValue {
   }
   if (typeof value === "string") return { stringValue: value };
   if (value instanceof Date) return { timestampValue: value.toISOString() };
+  if (value instanceof Uint8Array) return { bytesValue: Buffer.from(value).toString("base64") };
   if (Array.isArray(value)) return { arrayValue: { values: value.map(encodeValue) } };
   if (typeof value === "object") return { mapValue: { fields: encodeFields(value as FirestoreData) } };
   throw new TypeError(`can't store a ${typeof value} in Firestore`);
@@ -307,6 +309,7 @@ export function decodeValue(value: FirestoreValue): unknown {
   if ("doubleValue" in value) return value.doubleValue;
   if ("stringValue" in value) return value.stringValue;
   if ("timestampValue" in value) return new Date(value.timestampValue);
+  if ("bytesValue" in value) return Buffer.from(value.bytesValue, "base64");
   if ("arrayValue" in value) return (value.arrayValue.values ?? []).map(decodeValue);
   if ("mapValue" in value) return decodeFields(value.mapValue.fields ?? {});
   throw new TypeError(`unsupported Firestore value ${JSON.stringify(value)}`);

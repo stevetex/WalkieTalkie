@@ -8,6 +8,9 @@ public enum Brand {
     public static let secondary = Color("BrandSecondary")
     public static let accent = Color("BrandAccent")
     public static let indigo = Color(red: 39 / 255, green: 45 / 255, blue: 80 / 255)
+    /// The background baked into the OverAndOutBrand art, a shade off `indigo`. Use it
+    /// behind that image so there's no visible seam around it.
+    public static let artIndigo = Color(red: 37 / 255, green: 42 / 255, blue: 81 / 255)
     public static let ivory = Color(red: 255 / 255, green: 246 / 255, blue: 223 / 255)
     public static let ink = Color(red: 16 / 255, green: 22 / 255, blue: 27 / 255)
     public static let orange = Color(red: 255 / 255, green: 139 / 255, blue: 26 / 255)

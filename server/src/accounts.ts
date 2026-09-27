@@ -1,6 +1,6 @@
 // Accounts, friends, invites, blocks, reports and devices (design decision 2026-09-27).
 //
-//   users/{uid}                     name, appleSub, createdAt
+//   users/{uid}                     name, appleSub, createdAt, photoVersion (when there's a photo)
 //   users/{uid}/friends/{friendId}  since. Written on both sides in one commit
 //   users/{uid}/blocks/{otherId}    since. Blocking also deletes the friendship both ways
 //   users/{uid}/devices/{deviceId}  platform, pushToken, apnsEnvironment, updatedAt
@@ -9,6 +9,9 @@
 //   appleSubs/{sub}                 userId. Created only if absent: one account per Apple ID
 //   invites/{code}                  from, createdAt, expireAt (Firestore TTL deletes it)
 //   reports/{id}                    reporter, reported, reason, note, conversationId, createdAt, status
+//   photos/{uid}                    jpeg (bytes, at most 100 KB), updatedAt. Apart from users/{uid}
+//                                   so friend lists don't carry photos; photoVersion there
+//                                   tells the apps when to download it again
 //
 // A ring is allowed only if users/{from}/friends/{to} exists, so deleting an account or
 // blocking someone takes effect on the next ring, whatever tokens are still out there.
@@ -21,12 +24,13 @@ import type { Docs } from "./docs.ts";
 export const USER_ID_PREFIX = "u_";
 export const PLATFORMS = ["watch", "iphone"] as const;
 export type Platform = (typeof PLATFORMS)[number];
-export const REPORT_REASONS = ["harassment", "spam", "inappropriate", "other"] as const;
+export const REPORT_REASONS = ["harassment", "spam", "inappropriate", "photo", "other"] as const;
 export type ReportReason = (typeof REPORT_REASONS)[number];
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const MAX_NAME = 40;
 const MAX_NOTE = 1000;
+export const MAX_PHOTO_BYTES = 100 * 1024;
 // Firestore's limit on writes per commit.
 const MAX_WRITES = 500;
 
@@ -34,12 +38,15 @@ export interface User {
   id: string;
   name: string;
   createdAt: number;
+  // When the profile photo last changed (ms); absent without one.
+  photoVersion?: number;
 }
 
 export interface Friend {
   id: string;
   name: string;
   since: number;
+  photoVersion?: number;
 }
 
 export interface BlockedUser {
@@ -232,7 +239,13 @@ export class Accounts {
     const rows = await this.docs.list(`users/${requireUserId(userId)}/friends`);
     const users = await this.docs.getAll(rows.map((r) => `users/${r.id}`));
     return rows
-      .flatMap((r, i) => (users[i] ? [{ id: r.id, name: String(users[i]!.name), since: millis(r.data.since) }] : []))
+      .flatMap((r, i) => {
+        const user = users[i];
+        if (!user) return [];
+        const friend: Friend = { id: r.id, name: String(user.name), since: millis(r.data.since) };
+        if (typeof user.photoVersion === "number") friend.photoVersion = user.photoVersion;
+        return [friend];
+      })
       .sort((a, b) => a.name.localeCompare(b.name));
   }
 
@@ -241,6 +254,53 @@ export class Accounts {
       { delete: `users/${requireUserId(userId)}/friends/${requireUserId(friendId)}` },
       { delete: `users/${friendId}/friends/${userId}` },
     ]);
+  }
+
+  // A square JPEG the app has already sized (256 px). Returns the new photoVersion.
+  async setPhoto(userId: string, jpeg: Uint8Array): Promise<number> {
+    requireUserId(userId);
+    if (jpeg.length > MAX_PHOTO_BYTES) throw new AccountError(413, "photo-too-large");
+    // SOI marker, and EOI at the end.
+    const isJpeg = jpeg.length > 4 && jpeg[0] === 0xff && jpeg[1] === 0xd8 && jpeg[2] === 0xff &&
+      jpeg[jpeg.length - 2] === 0xff && jpeg[jpeg.length - 1] === 0xd9;
+    if (!isJpeg) throw new AccountError(400, "not-a-jpeg");
+    const version = this.opts.now();
+    try {
+      await this.docs.commit([
+        { set: `users/${userId}`, data: { photoVersion: version }, fields: ["photoVersion"], exists: true },
+        { set: `photos/${userId}`, data: { jpeg: Buffer.from(jpeg), updatedAt: new Date(version) } },
+      ]);
+    } catch (err) {
+      if (err instanceof PreconditionFailed) throw new AccountError(404, "no-account");
+      throw err;
+    }
+    return version;
+  }
+
+  async removePhoto(userId: string): Promise<void> {
+    requireUserId(userId);
+    try {
+      await this.docs.commit([
+        { set: `users/${userId}`, data: {}, fields: ["photoVersion"], exists: true },
+        { delete: `photos/${userId}` },
+      ]);
+    } catch (err) {
+      if (err instanceof PreconditionFailed) throw new AccountError(404, "no-account");
+      throw err;
+    }
+  }
+
+  // Your own photo, or a friend's. Anyone else's (including after a block) is not found.
+  async photo(viewerId: string, userId: string): Promise<{ jpeg: Buffer; version: number }> {
+    requireUserId(viewerId);
+    requireUserId(userId);
+    const [photo, friendship] = await this.docs.getAll([
+      `photos/${userId}`,
+      ...(viewerId === userId ? [] : [`users/${viewerId}/friends/${userId}`]),
+    ]);
+    const allowed = viewerId === userId || friendship !== undefined;
+    if (!photo || !allowed || !(photo.jpeg instanceof Uint8Array)) throw new AccountError(404, "no-photo");
+    return { jpeg: Buffer.from(photo.jpeg), version: millis(photo.updatedAt) };
   }
 
   async createInvite(userId: string): Promise<{ code: string; expiresAt: number }> {
@@ -380,6 +440,7 @@ export class Accounts {
       ...sessions.map((s): Write => ({ delete: `users/${userId}/sessions/${s.id}` })),
       ...invites.map((i): Write => ({ delete: `invites/${i.id}` })),
       ...(appleSub ? [{ delete: `appleSubs/${appleSub}` }] : []),
+      { delete: `photos/${userId}` },
     ];
     for (let i = 0; i < writes.length; i += MAX_WRITES) await this.docs.commit(writes.slice(i, i + MAX_WRITES));
     await this.docs.commit([{ delete: `users/${userId}` }]);
@@ -436,7 +497,9 @@ export function cleanName(name: unknown): string | undefined {
 }
 
 function toUser(id: string, data: FirestoreData): User {
-  return { id, name: String(data.name), createdAt: millis(data.createdAt) };
+  const user: User = { id, name: String(data.name), createdAt: millis(data.createdAt) };
+  if (typeof data.photoVersion === "number") user.photoVersion = data.photoVersion;
+  return user;
 }
 
 function toDevice(id: string, data: FirestoreData): AccountDevice {

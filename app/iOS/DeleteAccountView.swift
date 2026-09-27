@@ -18,7 +18,7 @@ struct DeleteAccountView: View {
                 VStack(alignment: .leading, spacing: 12) {
                     Text("Deleting your account removes:")
                         .font(.headline)
-                    item("person.crop.circle", "Your account and your name")
+                    item("person.crop.circle", "Your account and your screen name")
                     item("person.2", "Your friends. You're removed from their lists, so they can't ring you.")
                     item("envelope", "Your invites and the people you've blocked")
                     item("applewatch", "Over&Out on your watch, which is signed out")
