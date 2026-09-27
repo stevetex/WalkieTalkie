@@ -1,6 +1,7 @@
 // A small Firestore client over the REST API, so the server stays free of dependencies.
-// It covers what the relay needs: get, set and create documents, list a collection, and
-// run a query. On a Google Cloud VM it authenticates with the VM service account's token
+// It covers what the relay and the account API need: get, set and create documents, read
+// several at once, list a collection, run a query, and commit several writes atomically
+// with preconditions. Collections can be subcollections ("users/u_1/friends"). On a Google Cloud VM it authenticates with the VM service account's token
 // from the metadata server; against the emulator it sends no real credentials.
 //
 // Firestore's REST API wraps every value in a typed object ({ stringValue: "x" }, and so
@@ -36,6 +37,12 @@ export interface QueryFilter {
   value: unknown;
 }
 
+// One write in an atomic commit. `exists` is a precondition: false = create only, true =
+// the document must already exist. `fields` limits a set to those fields (a merge).
+export type Write =
+  | { set: string; data: FirestoreData; fields?: string[]; exists?: boolean }
+  | { delete: string; exists?: boolean };
+
 export interface Query {
   where?: QueryFilter;
   orderBy?: { field: string; direction?: "ASCENDING" | "DESCENDING" };
@@ -52,6 +59,9 @@ export class FirestoreError extends Error {
     this.status = status;
   }
 }
+
+// A commit's precondition failed: the document existed (or didn't) when it mattered.
+export class PreconditionFailed extends Error {}
 
 export class Firestore {
   private base: string;
@@ -77,6 +87,18 @@ export class Firestore {
     return decodeFields((await res.json()).fields ?? {});
   }
 
+  // Several documents in one request, in the order asked for; undefined for missing ones.
+  // Paths are "collection/id" (or deeper).
+  async getAll(paths: string[]): Promise<Array<FirestoreData | undefined>> {
+    if (!paths.length) return [];
+    const names = paths.map((p) => this.fullName(p));
+    const res = await this.request("POST", `${this.documentsPath}:batchGet`, { documents: names });
+    const rows = (await res.json()) as Array<{ found?: { name: string; fields?: Record<string, FirestoreValue> }; missing?: string }>;
+    const byName = new Map<string, FirestoreData>();
+    for (const row of rows) if (row.found) byName.set(row.found.name, decodeFields(row.found.fields ?? {}));
+    return names.map((n) => byName.get(n));
+  }
+
   // Creates the document, or replaces all of its fields.
   async set(collection: string, id: string, data: FirestoreData): Promise<void> {
     await this.request("PATCH", this.documentPath(collection, id), { fields: encodeFields(data) });
@@ -84,7 +106,7 @@ export class Firestore {
 
   // Creates a document with a generated ID.
   async add(collection: string, data: FirestoreData): Promise<string> {
-    const res = await this.request("POST", `${this.documentsPath}/${collection}`, { fields: encodeFields(data) });
+    const res = await this.request("POST", this.collectionPath(collection), { fields: encodeFields(data) });
     return lastSegment((await res.json()).name);
   }
 
@@ -94,7 +116,7 @@ export class Firestore {
     let pageToken = "";
     do {
       const query = `pageSize=300${pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : ""}`;
-      const body = await (await this.request("GET", `${this.documentsPath}/${collection}?${query}`)).json();
+      const body = await (await this.request("GET", `${this.collectionPath(collection)}?${query}`)).json();
       for (const doc of body.documents ?? []) documents.push({ id: lastSegment(doc.name), data: decodeFields(doc.fields ?? {}) });
       pageToken = body.nextPageToken ?? "";
     } while (pageToken);
@@ -102,7 +124,10 @@ export class Firestore {
   }
 
   async query(collection: string, query: Query): Promise<FirestoreDocument[]> {
-    const structuredQuery: Record<string, unknown> = { from: [{ collectionId: collection }] };
+    const segments = splitPath(collection);
+    if (segments.length % 2 !== 1) throw new Error(`invalid collection ${JSON.stringify(collection)}`);
+    const collectionId = segments.pop()!;
+    const structuredQuery: Record<string, unknown> = { from: [{ collectionId }] };
     if (query.where) {
       structuredQuery.where = {
         fieldFilter: { field: { fieldPath: query.where.field }, op: query.where.op, value: encodeValue(query.where.value) },
@@ -112,22 +137,69 @@ export class Firestore {
       structuredQuery.orderBy = [{ field: { fieldPath: query.orderBy.field }, direction: query.orderBy.direction ?? "ASCENDING" }];
     }
     if (query.limit) structuredQuery.limit = query.limit;
-    const res = await this.request("POST", `${this.documentsPath}:runQuery`, { structuredQuery });
+    // A subcollection is queried under its parent document.
+    const parent = segments.length ? `${this.documentsPath}/${segments.map(encodeURIComponent).join("/")}` : this.documentsPath;
+    const res = await this.request("POST", `${parent}:runQuery`, { structuredQuery });
     const rows = (await res.json()) as Array<{ document?: { name: string; fields?: Record<string, FirestoreValue> } }>;
     return rows.flatMap((row) =>
       row.document ? [{ id: lastSegment(row.document.name), data: decodeFields(row.document.fields ?? {}) }] : [],
     );
   }
 
+  // Applies all the writes or none. Throws PreconditionFailed if an `exists` check fails.
+  async commit(writes: Write[]): Promise<void> {
+    if (!writes.length) return;
+    const body = {
+      writes: writes.map((w) => {
+        const precondition = w.exists === undefined ? {} : { currentDocument: { exists: w.exists } };
+        if ("delete" in w) return { delete: this.fullName(w.delete), ...precondition };
+        const fields = encodeFields(w.data);
+        return {
+          update: { name: this.fullName(w.set), fields },
+          ...(w.fields ? { updateMask: { fieldPaths: w.fields } } : {}),
+          ...precondition,
+        };
+      }),
+    };
+    // A commit isn't retried: a retry after a lost response could fail its own precondition.
+    const res = await this.request("POST", `${this.documentsPath}:commit`, body, [400, 404, 409], 1);
+    if (res.ok) return;
+    const text = await res.text();
+    if (res.status === 409 || res.status === 404 || text.includes("FAILED_PRECONDITION")) {
+      throw new PreconditionFailed(`Firestore commit precondition failed: ${text.slice(0, 200)}`);
+    }
+    throw new FirestoreError(`Firestore commit: ${res.status} ${text.slice(0, 300)}`, res.status);
+  }
+
   // Firestore document IDs can't contain "/", or be "." or "..".
   private documentPath(collection: string, id: string): string {
     if (!id || id.includes("/") || id === "." || id === "..") throw new Error(`invalid document ID ${JSON.stringify(id)}`);
-    return `${this.documentsPath}/${collection}/${encodeURIComponent(id)}`;
+    return `${this.collectionPath(collection)}/${encodeURIComponent(id)}`;
   }
 
-  private async request(method: string, path: string, body?: unknown, okStatuses: number[] = []): Promise<Response> {
+  private collectionPath(collection: string): string {
+    const segments = splitPath(collection);
+    if (segments.length % 2 !== 1) throw new Error(`invalid collection ${JSON.stringify(collection)}`);
+    return `${this.documentsPath}/${segments.map(encodeURIComponent).join("/")}`;
+  }
+
+  // The resource name batchGet and commit take in their JSON bodies (not URL-encoded):
+  // projects/…/documents/users/u_1.
+  private fullName(path: string): string {
+    const segments = splitPath(path);
+    if (segments.length % 2 !== 0) throw new Error(`invalid document path ${JSON.stringify(path)}`);
+    return `${this.documentsPath}/${segments.join("/")}`;
+  }
+
+  private async request(
+    method: string,
+    path: string,
+    body?: unknown,
+    okStatuses: number[] = [],
+    attempts = this.attempts,
+  ): Promise<Response> {
     let lastError: Error = new Error("no attempts");
-    for (let attempt = 1; attempt <= this.attempts; attempt++) {
+    for (let attempt = 1; attempt <= attempts; attempt++) {
       if (attempt > 1) await sleep(200 * 2 ** (attempt - 2) + Math.random() * 100);
       let res: Response;
       try {
@@ -238,6 +310,13 @@ export function decodeValue(value: FirestoreValue): unknown {
   if ("arrayValue" in value) return (value.arrayValue.values ?? []).map(decodeValue);
   if ("mapValue" in value) return decodeFields(value.mapValue.fields ?? {});
   throw new TypeError(`unsupported Firestore value ${JSON.stringify(value)}`);
+}
+
+// "users/u_1/friends" → ["users", "u_1", "friends"], rejecting empty, "." and ".." segments.
+export function splitPath(path: string): string[] {
+  const segments = path.split("/");
+  if (segments.some((s) => !s || s === "." || s === "..")) throw new Error(`invalid path ${JSON.stringify(path)}`);
+  return segments;
 }
 
 function lastSegment(name: string): string {

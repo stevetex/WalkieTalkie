@@ -13,6 +13,11 @@
 //       hears. Use it to test the watch as the sender.
 //
 // Server and token come from SPIKE_SERVER (default http://localhost:8080) and SPIKE_TOKEN.
+//
+// --account runs as the Test Bot's account (tools/test-account.ts create) instead of a
+// shared-token user: it connects with the account's session token, can only ring its
+// friends, and --to defaults to its first friend. SPIKE_TOKEN is then only used to read
+// timelines (--ring-until-answered).
 
 import { parseArgs } from "node:util";
 import { execFileSync } from "node:child_process";
@@ -20,6 +25,7 @@ import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SpikeClient } from "./client.ts";
+import { BOT_TOKEN_FILE, loadBotSession } from "./test-account.ts";
 import { Codec, FRAME_HEADER_BYTES } from "../src/protocol.ts";
 
 const { positionals, values } = parseArgs({
@@ -35,6 +41,7 @@ const { positionals, values } = parseArgs({
     again: { type: "string" },
     "say-again": { type: "string", default: "This is the second message. Did it play with your wrist down? Over." },
     "answer-delay": { type: "string", default: "1500" },
+    account: { type: "boolean", default: false },
   },
 });
 
@@ -42,13 +49,38 @@ const server = process.env.SPIKE_SERVER ?? "http://localhost:8080";
 const token = process.env.SPIKE_TOKEN || undefined;
 const mode = positionals[0];
 
-const client = new SpikeClient({ server, userId: values.as!, token });
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const client = values.account ? await accountClient() : new SpikeClient({ server, userId: values.as!, token });
+
+// The Test Bot's account, with its token refreshed when it's within a day of expiring.
+async function accountClient(): Promise<SpikeClient> {
+  const session = loadBotSession();
+  if (session.expiresAt - Date.now() < 24 * 3600_000) {
+    const res = await fetch(new URL("/v1/auth/refresh", session.api), { method: "POST", headers: { authorization: `Bearer ${session.token}` } });
+    if (!res.ok) throw new Error(`refreshing the bot's token: HTTP ${res.status}; run node tools/test-account.ts create`);
+    Object.assign(session, await res.json());
+    writeFileSync(BOT_TOKEN_FILE, JSON.stringify(session, null, 2), { mode: 0o600 });
+  }
+  const accountBot = new SpikeClient({ server, userId: session.userId, token: session.token });
+  if (!values.to && mode === "send") {
+    const res = await fetch(new URL("/v1/friends", session.api), { headers: { authorization: `Bearer ${session.token}` } });
+    const { friends } = (await res.json()) as { friends: Array<{ id: string; name: string }> };
+    if (!friends?.length) throw new Error("the bot has no friends yet: node tools/test-account.ts accept <invite link>");
+    values.to = friends[0].id;
+    console.log(`Ringing the bot's friend ${friends[0].name}`);
+  }
+  return accountBot;
+}
+
+// Shared-token bots register a device; the bot's account registered one when it was created.
+async function register(): Promise<void> {
+  if (!values.account) await client.register(values.name!);
+}
 
 if (mode === "send") {
   if (!values.to) throw new Error("--to <userId> is required");
   const pcm = values.wav ? readPcm16Mono16k(values.wav) : synthesize(values.say!);
-  await client.register(values.name!);
+  await register();
   await client.connect();
   console.log(`Talking to ${values.to} for ${(pcm.length / 32000).toFixed(1)} s…`);
   let { conversationId, pushed } = await client.talk(values.to, pcm);
@@ -79,7 +111,7 @@ if (mode === "send") {
   client.close();
   console.log(`Done. Timeline: node tools/report.ts ${conversationId}`);
 } else if (mode === "listen") {
-  await client.register(values.name!);
+  await register();
   await client.connect();
   console.log(`Listening as ${client.userId}. Waiting for a ring…`);
   const ring = await client.waitFor("ring", () => true, 24 * 3600_000);

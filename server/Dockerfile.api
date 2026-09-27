@@ -1,0 +1,17 @@
+# The account API (src/api-main.ts) for Cloud Run. Built by deploy/gcp/build-image.sh with
+# IMAGE=api, and deployed by deploy/gcp/deploy-api.sh. No dependencies: Node runs the
+# TypeScript directly.
+FROM node:24-slim
+
+WORKDIR /app
+COPY package.json ./
+COPY src ./src
+
+ARG REVISION=unknown
+ENV NODE_ENV=production \
+    REVISION=$REVISION \
+    STORE=firestore \
+    PORT=8080
+
+USER node
+CMD ["node", "src/api-main.ts"]

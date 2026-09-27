@@ -1,0 +1,246 @@
+// The account API (design decision 2026-09-27): Sign in with Apple, sessions, the profile,
+// friends, invites, blocks, reports, push registration and account deletion. It runs as its
+// own Cloud Run service (api-main.ts), behind overandout.app/v1/* on Firebase Hosting, and
+// locally inside the relay's server (main.ts with SERVE_API=1).
+//
+// Every route except sign-in takes the session token as "Authorization: Bearer <token>".
+// Errors are { error: <code>, message } with a stable code the apps can switch on.
+//
+//   POST   /v1/auth/apple            {identityToken, nonce, name?, deviceId, platform} → session + user
+//   POST   /v1/auth/refresh          (a token up to a year past expiry) → {token, expiresAt}
+//   POST   /v1/auth/device           {deviceId, platform} → a session for another device (the watch)
+//   POST   /v1/auth/signout          ends this session and its device's push registration
+//   GET    /v1/me                    PATCH /v1/me {name}
+//   DELETE /v1/me                    {authorizationCode} → revokes the Apple token, deletes everything
+//   PUT    /v1/me/device             {platform, pushToken, apnsEnvironment} for this session's device
+//   GET    /v1/friends               DELETE /v1/friends/{id}
+//   POST   /v1/invites               → {code, url, expiresAt}
+//   GET    /v1/invites/{code}        → who it's from, before accepting
+//   POST   /v1/invites/{code}/accept → {friend}
+//   DELETE /v1/invites/{code}        (the inviter cancels it)
+//   GET    /v1/blocks                POST /v1/blocks {userId}   DELETE /v1/blocks/{id}
+//   POST   /v1/reports               {userId, reason, note?, conversationId?, block?}
+
+import type { IncomingMessage, ServerResponse } from "node:http";
+import { AccountError, isPlatform, type Accounts, type User } from "./accounts.ts";
+import type { AppleIdentity } from "./apple.ts";
+import { REFRESH_GRACE_MS, SessionError, type SessionClaims, type SessionSigner, type SessionVerifier } from "./session.ts";
+
+export interface ApiOptions {
+  accounts: Accounts;
+  signer: SessionSigner;
+  verifier: SessionVerifier;
+  apple: { verify(identityToken: string, nonce: string): Promise<AppleIdentity> };
+  // Null when no Sign in with Apple key is configured (local runs): deletion skips revoking.
+  revoker: { revokeWithCode(code: string): Promise<{ sub: string }> } | null;
+  // Invite links are this plus the code, for example https://overandout.app/i/.
+  inviteBaseUrl: string;
+  log?: (line: string) => void;
+}
+
+export type ApiHandler = (req: IncomingMessage, res: ServerResponse, url: URL) => Promise<boolean>;
+
+// Returns true if it handled the request (any /v1/auth, /v1/me, /v1/friends, /v1/invites,
+// /v1/blocks or /v1/reports path).
+export function createApi(options: ApiOptions): ApiHandler {
+  const { accounts, signer, verifier } = options;
+  const log = options.log ?? ((line: string) => console.log(line));
+
+  const authenticate = (req: IncomingMessage, graceMs = 0): SessionClaims => {
+    const token = bearer(req);
+    if (!token) throw new AccountError(401, "unauthorized");
+    try {
+      return verifier.verify(token, graceMs);
+    } catch (err) {
+      if (err instanceof SessionError) throw new AccountError(401, err.reason === "expired" ? "token-expired" : "unauthorized");
+      throw err;
+    }
+  };
+
+  const issue = (userId: string, sid: string, deviceId: string) => signer.issue({ sub: userId, sid, dev: deviceId });
+
+  const routes: Array<[string, RegExp, (req: IncomingMessage, params: string[]) => Promise<[number, unknown]>]> = [
+    ["POST", /^\/v1\/auth\/apple$/, async (req) => {
+      const body = await readBody(req);
+      const { identityToken, nonce, name, deviceId, platform } = body;
+      if (typeof identityToken !== "string" || typeof nonce !== "string" || typeof deviceId !== "string" || !isPlatform(platform)) {
+        throw new AccountError(400, "bad-request", "identityToken, nonce, deviceId and platform are required");
+      }
+      let identity: AppleIdentity;
+      try {
+        identity = await options.apple.verify(identityToken, nonce);
+      } catch (err) {
+        log(`[api] Sign in with Apple rejected: ${(err as Error).message}`);
+        throw new AccountError(401, "apple-token-rejected");
+      }
+      const { user, created } = await accounts.signInWithApple(identity.sub, typeof name === "string" ? name : undefined);
+      const sid = await accounts.createSession(user.id, deviceId, platform);
+      log(`[api] ${user.id} signed in on a ${platform}${created ? " (new account)" : ""}`);
+      return [200, { ...issue(user.id, sid, deviceId), user: userJSON(user), created }];
+    }],
+    ["POST", /^\/v1\/auth\/refresh$/, async (req) => {
+      const claims = authenticate(req, REFRESH_GRACE_MS);
+      if (!(await accounts.touchSession(claims.sub, claims.sid))) throw new AccountError(401, "session-ended");
+      return [200, issue(claims.sub, claims.sid, claims.dev)];
+    }],
+    ["POST", /^\/v1\/auth\/device$/, async (req) => {
+      const claims = authenticate(req);
+      const { deviceId, platform } = await readBody(req);
+      if (typeof deviceId !== "string" || !isPlatform(platform)) throw new AccountError(400, "bad-request", "deviceId and platform are required");
+      if (deviceId === claims.dev) throw new AccountError(400, "same-device");
+      const sid = await accounts.createSession(claims.sub, deviceId, platform);
+      log(`[api] ${claims.sub} added a ${platform}`);
+      return [200, issue(claims.sub, sid, deviceId)];
+    }],
+    ["POST", /^\/v1\/auth\/signout$/, async (req) => {
+      const claims = authenticate(req, REFRESH_GRACE_MS);
+      await accounts.endSession(claims.sub, claims.sid, claims.dev);
+      return [200, {}];
+    }],
+    ["GET", /^\/v1\/me$/, async (req) => {
+      const user = await accounts.user(authenticate(req).sub);
+      if (!user) throw new AccountError(404, "no-account");
+      return [200, userJSON(user)];
+    }],
+    ["PATCH", /^\/v1\/me$/, async (req) => {
+      const claims = authenticate(req);
+      const { name } = await readBody(req);
+      if (typeof name !== "string") throw new AccountError(400, "bad-name");
+      return [200, userJSON(await accounts.rename(claims.sub, name))];
+    }],
+    ["DELETE", /^\/v1\/me$/, async (req) => {
+      const claims = authenticate(req);
+      const { authorizationCode } = await readBody(req);
+      if (options.revoker) {
+        if (typeof authorizationCode !== "string" || !authorizationCode) {
+          throw new AccountError(400, "authorization-code-required");
+        }
+        const appleSub = await accounts.appleSub(claims.sub);
+        let revoked: { sub: string };
+        try {
+          revoked = await options.revoker.revokeWithCode(authorizationCode);
+        } catch (err) {
+          log(`[api] ${claims.sub}: revoking the Apple token failed: ${(err as Error).message}`);
+          throw new AccountError(502, "apple-revoke-failed");
+        }
+        // The code must come from the same Apple ID, or the wrong account's token was revoked.
+        if (appleSub && revoked.sub !== appleSub) throw new AccountError(403, "wrong-apple-id");
+      } else {
+        log(`[api] ${claims.sub}: no Sign in with Apple key configured, so the Apple token isn't revoked`);
+      }
+      await accounts.deleteAccount(claims.sub);
+      log(`[api] ${claims.sub} deleted their account`);
+      return [200, {}];
+    }],
+    ["PUT", /^\/v1\/me\/device$/, async (req) => {
+      const claims = authenticate(req);
+      const { platform, pushToken, apnsEnvironment } = await readBody(req);
+      if (!isPlatform(platform) || typeof pushToken !== "string" || !pushToken || pushToken.length > 512) {
+        throw new AccountError(400, "bad-request", "platform and pushToken are required");
+      }
+      await accounts.registerDevice(claims.sub, claims.dev, {
+        platform,
+        pushToken,
+        apnsEnvironment: apnsEnvironment === "production" ? "production" : "sandbox",
+      });
+      return [200, {}];
+    }],
+    ["GET", /^\/v1\/friends$/, async (req) => [200, { friends: await accounts.friends(authenticate(req).sub) }]],
+    ["DELETE", /^\/v1\/friends\/([\w.-]+)$/, async (req, [id]) => {
+      await accounts.removeFriend(authenticate(req).sub, id);
+      return [200, {}];
+    }],
+    ["POST", /^\/v1\/invites$/, async (req) => {
+      const { code, expiresAt } = await accounts.createInvite(authenticate(req).sub);
+      return [200, { code, url: `${options.inviteBaseUrl}${code}`, expiresAt }];
+    }],
+    ["GET", /^\/v1\/invites\/([\w.-]+)$/, async (req, [code]) => [200, await accounts.invite(code, authenticate(req).sub)]],
+    ["POST", /^\/v1\/invites\/([\w.-]+)\/accept$/, async (req, [code]) => {
+      const claims = authenticate(req);
+      const friend = await accounts.acceptInvite(code, claims.sub);
+      log(`[api] ${claims.sub} and ${friend.id} are friends`);
+      return [200, { friend }];
+    }],
+    ["DELETE", /^\/v1\/invites\/([\w.-]+)$/, async (req, [code]) => {
+      await accounts.cancelInvite(code, authenticate(req).sub);
+      return [200, {}];
+    }],
+    ["GET", /^\/v1\/blocks$/, async (req) => [200, { blocks: await accounts.blocks(authenticate(req).sub) }]],
+    ["POST", /^\/v1\/blocks$/, async (req) => {
+      const claims = authenticate(req);
+      const { userId } = await readBody(req);
+      await accounts.block(claims.sub, String(userId));
+      log(`[api] ${claims.sub} blocked ${userId}`);
+      return [200, {}];
+    }],
+    ["DELETE", /^\/v1\/blocks\/([\w.-]+)$/, async (req, [id]) => {
+      await accounts.unblock(authenticate(req).sub, id);
+      return [200, {}];
+    }],
+    ["POST", /^\/v1\/reports$/, async (req) => {
+      const claims = authenticate(req);
+      const body = await readBody(req);
+      const report = {
+        userId: String(body.userId),
+        reason: String(body.reason),
+        ...(typeof body.note === "string" ? { note: body.note } : {}),
+        ...(typeof body.conversationId === "string" ? { conversationId: body.conversationId } : {}),
+      };
+      const id = await accounts.report(claims.sub, report);
+      if (body.block === true) await accounts.block(claims.sub, report.userId);
+      // A log-based alert on "[report]" emails the operator (deploy/gcp/setup-api.sh).
+      log(`[report] ${id}: ${claims.sub} reported ${report.userId} for ${report.reason}${body.block === true ? ", and blocked them" : ""}`);
+      return [200, { id }];
+    }],
+  ];
+
+  return async (req, res, url) => {
+    if (!/^\/v1\/(auth|me|friends|invites|blocks|reports)(\/|$)/.test(url.pathname)) return false;
+    try {
+      for (const [method, pattern, handler] of routes) {
+        const match = url.pathname.match(pattern);
+        if (!match) continue;
+        if (req.method !== method) continue;
+        const [status, body] = await handler(req, match.slice(1));
+        send(res, status, body);
+        return true;
+      }
+      send(res, 404, { error: "not-found", message: `no route for ${req.method} ${url.pathname}` });
+    } catch (err) {
+      if (err instanceof AccountError) {
+        send(res, err.status, { error: err.code, message: err.message });
+      } else if (err instanceof SyntaxError) {
+        send(res, 400, { error: "bad-json", message: err.message });
+      } else {
+        log(`[api] ${req.method} ${url.pathname} failed: ${(err as Error).stack ?? err}`);
+        send(res, 500, { error: "internal", message: "something went wrong" });
+      }
+    }
+    return true;
+  };
+}
+
+function userJSON(user: User): { id: string; name: string } {
+  return { id: user.id, name: user.name };
+}
+
+export function bearer(req: IncomingMessage): string | null {
+  const header = req.headers.authorization;
+  return header?.startsWith("Bearer ") ? header.slice("Bearer ".length).trim() || null : null;
+}
+
+async function readBody(req: IncomingMessage): Promise<Record<string, unknown>> {
+  let raw = "";
+  for await (const chunk of req) {
+    raw += chunk;
+    if (raw.length > 64 * 1024) throw new AccountError(413, "body-too-large");
+  }
+  const body = JSON.parse(raw || "{}");
+  if (!body || typeof body !== "object" || Array.isArray(body)) throw new AccountError(400, "bad-json");
+  return body as Record<string, unknown>;
+}
+
+export function send(res: ServerResponse, status: number, body: unknown): void {
+  res.writeHead(status, { "content-type": "application/json", "cache-control": "no-store" });
+  res.end(JSON.stringify(body));
+}

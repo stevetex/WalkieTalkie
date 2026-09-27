@@ -4,7 +4,8 @@
 import { randomUUID } from "node:crypto";
 import { prefetchAlert, ringAlert, type ApnsEnvironment, type Pusher } from "./apns.ts";
 import { encodeJSONRecord, encodeRecord, RecordType } from "./records.ts";
-import type { Device, DeviceStore, MetricsStore } from "./store.ts";
+import type { DeviceStore, MetricsStore } from "./store.ts";
+import type { RingLookup } from "./accounts.ts";
 import type { ClientMessage, RingPayload, ServerMessage } from "./protocol.ts";
 
 // Devices registered with this token prefix are test bots: they are rung over their
@@ -19,6 +20,9 @@ export const PENDING_RING = "pending";
 
 export interface Peer {
   userId: string;
+  // Signed in with a session token (an account), rather than the shared relay token. An
+  // account can only ring its friends, and its rings go to its account's watches.
+  account?: boolean;
   sendJSON(message: ServerMessage): void;
   sendBinary(frame: Buffer): void;
 }
@@ -47,15 +51,25 @@ interface Conversation {
   // Prototype: the second, prefetch push for the current APNs ring (see prefetchAlert).
   prefetch: {
     to: string;
-    pushToken: string;
-    apnsEnvironment: ApnsEnvironment;
+    targets: RingTarget[];
     payload: RingPayload;
     timer: NodeJS.Timeout | null;
   } | null;
 }
 
+interface RingTarget {
+  pushToken: string;
+  apnsEnvironment: ApnsEnvironment;
+}
+
+type RingResult = { pushed: boolean } | { refused: true };
+
 export interface RelayOptions {
+  // Devices registered with the shared relay token (the spike's model, until every client
+  // signs in).
   devices: DeviceStore;
+  // Accounts: the friend check and the account's devices, once per ring.
+  accounts?: { ringLookup(from: string, to: string): Promise<RingLookup> };
   pusher: Pusher;
   metrics: MetricsStore;
   now?: () => number;
@@ -84,6 +98,7 @@ export class Relay {
 
   constructor(options: RelayOptions) {
     this.opts = {
+      accounts: { ringLookup: async () => ({ allowed: false }) },
       now: Date.now,
       bufferTtlMs: 120_000,
       ringTimeoutMs: 35_000,
@@ -227,7 +242,10 @@ export class Relay {
       // One ring per conversation start; further bursts queue behind the pending ring.
       // The ring looks the devices up in the store, so only a Talk that rings waits for
       // the store. Frames that arrive meanwhile are buffered in the burst as usual.
-      void this.ring(conversation, from, to, burstId).then((pushed) => this.grantFloor(peer, conversation, burstId, pushed));
+      void this.ring(conversation, from, to, burstId, peer.account === true).then((result) => {
+        if ("refused" in result) this.refuse(peer, conversation, burstId);
+        else this.grantFloor(peer, conversation, burstId, result.pushed);
+      });
     } else {
       this.grantFloor(peer, conversation, burstId, false);
     }
@@ -236,6 +254,18 @@ export class Relay {
   private grantFloor(peer: Peer, conversation: Conversation, burstId: string, pushed: boolean): void {
     peer.sendJSON({ type: "floor-granted", burstId, conversationId: conversation.id, pushed });
     this.opts.metrics.server(conversation.id, "floorGrantSent", this.opts.now(), peer.userId);
+  }
+
+  // Not friends: drop everything the sender has queued in this conversation, unring, and say
+  // why. Frames still arriving for the burst are ignored.
+  private refuse(peer: Peer, conversation: Conversation, burstId: string): void {
+    const from = peer.userId;
+    if (this.activeBursts.get(from)?.conversation === conversation) this.activeBursts.delete(from);
+    conversation.bursts = conversation.bursts.filter((b) => b.from !== from);
+    if (conversation.floor?.userId === from) conversation.floor = null;
+    conversation.joined.delete(from);
+    peer.sendJSON({ type: "talk-refused", burstId, reason: "not-friends" });
+    this.prune(conversation);
   }
 
   private talkEnd(userId: string, burstId: string): void {
@@ -326,61 +356,85 @@ export class Relay {
     if (burst.ended) peer.sendJSON({ type: "burst-end", conversationId: conversation.id, burstId: burst.id });
   }
 
-  private async ring(conversation: Conversation, from: string, to: string, burstId: string): Promise<boolean> {
+  private async ring(conversation: Conversation, from: string, to: string, burstId: string, account: boolean): Promise<RingResult> {
     // Armed before the lookup, so a second Talk meanwhile doesn't ring again.
     conversation.ringFrom = from;
     this.armRingTimer(conversation, to, this.opts.ringTimeoutMs);
-    let device: Device | undefined;
-    let sender: Device | undefined;
+    let lookup: RingLookup;
     try {
-      [device, sender] = await Promise.all([this.opts.devices.get(to), this.opts.devices.get(from)]);
+      lookup = account ? await this.opts.accounts.ringLookup(from, to) : await this.legacyLookup(from, to);
     } catch (err) {
       this.clearRing(conversation);
       this.opts.metrics.server(conversation.id, "pushFailed", this.opts.now(), `device lookup: ${(err as Error).message}`);
       console.error(`[relay] device lookup for ${to} failed: ${(err as Error).message}`);
-      return false;
+      return { pushed: false };
+    }
+    if (!lookup.allowed) {
+      this.clearRing(conversation);
+      this.opts.metrics.server(conversation.id, "ringRefused", this.opts.now(), "not friends");
+      return { refused: true };
     }
     // Answered, or the relay is shutting down, during the lookup.
-    if (!conversation.ringTimer) return false;
-    if (!device) {
+    if (!conversation.ringTimer) return { pushed: false };
+    // In the MVP only watches ring; the iPhone app is a companion.
+    const targets: RingTarget[] = lookup.devices.filter((d) => d.platform === "watch" && d.pushToken);
+    if (!targets.length) {
       this.clearRing(conversation);
       this.opts.metrics.server(conversation.id, "pushSkipped", this.opts.now(), `no device for ${to}`);
-      return false;
+      return { pushed: false };
     }
     conversation.lastRingAt = this.opts.now();
     this.armRingTimer(conversation, to, this.opts.ringTimeoutMs);
     const payload: RingPayload = {
       conversationId: conversation.id,
       from,
-      fromName: sender?.name ?? from,
+      fromName: lookup.fromName,
       burstId,
       pushSentAt: conversation.lastRingAt,
     };
-    this.opts.metrics.server(conversation.id, "pushSent", conversation.lastRingAt);
-    if (device.pushToken.startsWith(LOCAL_TOKEN_PREFIX)) {
-      const peer = this.peers.get(to);
-      peer?.sendJSON({ type: "ring", ...payload });
-      this.opts.metrics.server(conversation.id, peer ? "pushAccepted" : "pushFailed", this.opts.now(), "local ring");
-      return peer !== undefined;
+    this.opts.metrics.server(conversation.id, "pushSent", conversation.lastRingAt, targets.length > 1 ? `${targets.length} devices` : undefined);
+    const apnsTargets: RingTarget[] = [];
+    let pushed = false;
+    for (const target of targets) {
+      if (target.pushToken.startsWith(LOCAL_TOKEN_PREFIX)) {
+        const peer = this.peers.get(to);
+        peer?.sendJSON({ type: "ring", ...payload });
+        this.opts.metrics.server(conversation.id, peer ? "pushAccepted" : "pushFailed", this.opts.now(), "local ring");
+        pushed ||= peer !== undefined;
+      } else if (target.pushToken.startsWith(POLL_TOKEN_PREFIX)) {
+        this.polledRings.set(to, [...(this.polledRings.get(to) ?? []), payload]);
+        this.opts.metrics.server(conversation.id, "pushAccepted", this.opts.now(), "queued for polling");
+        pushed = true;
+      } else {
+        apnsTargets.push(target);
+      }
     }
-    if (device.pushToken.startsWith(POLL_TOKEN_PREFIX)) {
-      this.polledRings.set(to, [...(this.polledRings.get(to) ?? []), payload]);
-      this.opts.metrics.server(conversation.id, "pushAccepted", this.opts.now(), "queued for polling");
-      return true;
-    }
+    if (!apnsTargets.length) return { pushed };
     const push = ringAlert(payload, conversation.lastRingAt + this.opts.ringTimeoutMs);
     if (this.opts.prefetchPushAfterMs > 0) {
       this.clearPrefetch(conversation);
-      conversation.prefetch = { to, pushToken: device.pushToken, apnsEnvironment: device.apnsEnvironment, payload, timer: null };
+      conversation.prefetch = { to, targets: apnsTargets, payload, timer: null };
       conversation.prefetch.timer = setTimeout(() => this.sendPrefetchPush(conversation), this.opts.prefetchPushAfterMs);
       conversation.prefetch.timer.unref();
     }
-    void this.opts.pusher.sendAlert(device.pushToken, device.apnsEnvironment, push).then((result) => {
-      const detail = `status ${result.status}${result.reason ? ` ${result.reason}` : ""} in ${result.latencyMs.toFixed(0)} ms${result.dryRun ? " (dry run)" : ""}`;
-      this.opts.metrics.server(conversation.id, result.ok ? "pushAccepted" : "pushFailed", this.opts.now(), detail);
-      if (!result.ok) console.error(`[relay] push to ${to} failed: ${detail}`);
-    });
-    return true;
+    for (const target of apnsTargets) {
+      void this.opts.pusher.sendAlert(target.pushToken, target.apnsEnvironment, push).then((result) => {
+        const detail = `status ${result.status}${result.reason ? ` ${result.reason}` : ""} in ${result.latencyMs.toFixed(0)} ms${result.dryRun ? " (dry run)" : ""}`;
+        this.opts.metrics.server(conversation.id, result.ok ? "pushAccepted" : "pushFailed", this.opts.now(), detail);
+        if (!result.ok) console.error(`[relay] push to ${to} failed: ${detail}`);
+      });
+    }
+    return { pushed: true };
+  }
+
+  // Shared-token clients: any registered device can be rung, as in the spike.
+  private async legacyLookup(from: string, to: string): Promise<RingLookup> {
+    const [device, sender] = await Promise.all([this.opts.devices.get(to), this.opts.devices.get(from)]);
+    return {
+      allowed: true,
+      fromName: sender?.name ?? from,
+      devices: device ? [{ id: device.userId, platform: "watch", pushToken: device.pushToken, apnsEnvironment: device.apnsEnvironment, updatedAt: device.updatedAt }] : [],
+    };
   }
 
   // Nobody answered: drop what they didn't hear and tell the sender, so the next Talk
@@ -431,10 +485,12 @@ export class Relay {
     if (conversation.joined.has(prefetch.to) || !conversation.ringTimer || conversation.lastRingAt === null) return;
     const push = prefetchAlert(prefetch.payload, conversation.lastRingAt + this.opts.ringTimeoutMs);
     this.opts.metrics.server(conversation.id, "prefetchPushSent", this.opts.now());
-    void this.opts.pusher.sendAlert(prefetch.pushToken, prefetch.apnsEnvironment, push).then((result) => {
-      const detail = `status ${result.status}${result.reason ? ` ${result.reason}` : ""} in ${result.latencyMs.toFixed(0)} ms${result.dryRun ? " (dry run)" : ""}`;
-      this.opts.metrics.server(conversation.id, result.ok ? "prefetchPushAccepted" : "prefetchPushFailed", this.opts.now(), detail);
-    });
+    for (const target of prefetch.targets) {
+      void this.opts.pusher.sendAlert(target.pushToken, target.apnsEnvironment, push).then((result) => {
+        const detail = `status ${result.status}${result.reason ? ` ${result.reason}` : ""} in ${result.latencyMs.toFixed(0)} ms${result.dryRun ? " (dry run)" : ""}`;
+        this.opts.metrics.server(conversation.id, result.ok ? "prefetchPushAccepted" : "prefetchPushFailed", this.opts.now(), detail);
+      });
+    }
   }
 
   private conversationFor(a: string, b: string): Conversation {

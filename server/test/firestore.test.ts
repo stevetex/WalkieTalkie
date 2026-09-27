@@ -13,6 +13,7 @@ import { FirestoreDeviceStore, FirestoreMetricsStore } from "../src/store.ts";
 import { startServer } from "../src/main.ts";
 import { DryRunPusher } from "../src/apns.ts";
 import { SpikeClient } from "../tools/client.ts";
+import { accountsSuite } from "./accounts-suite.ts";
 
 const emulatorHost = process.env.FIRESTORE_EMULATOR_HOST;
 const skip = emulatorHost ? false : "FIRESTORE_EMULATOR_HOST not set";
@@ -21,6 +22,8 @@ const skip = emulatorHost ? false : "FIRESTORE_EMULATOR_HOST not set";
 function db(): Firestore {
   return new Firestore({ projectId: `demo-test-${randomUUID().slice(0, 8)}`, emulatorHost });
 }
+
+accountsSuite("firestore", () => db(), skip);
 
 test("devices round-trip through Firestore", { skip }, async () => {
   const devices = new FirestoreDeviceStore(db());

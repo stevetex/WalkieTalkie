@@ -9,7 +9,14 @@
 //                     firestore store: host:port of the Firestore emulator instead of Google Cloud
 //   FIRESTORE_AUTH    firestore store: "gcloud" uses the gcloud CLI's account instead of the VM's
 //                     service account (local runs against the real database)
-//   SPIKE_TOKEN       shared bearer token clients must present (unset = no auth, local only)
+//   SPIKE_TOKEN       the shared relay token: clients without accounts (the spike's model) and
+//                     the diagnostics endpoints. Unset = no auth for those (local only)
+//   SESSION_PUBLIC_KEYS  JSON {kid: PEM} of Ed25519 keys that sign session tokens (see
+//                     session.ts); with it, clients can connect with an account's token.
+//                     SESSION_PUBLIC_KEYS_SECRET names a Secret Manager secret instead
+//   SERVE_API         1 = also serve the account API (api.ts) on this port, for local runs.
+//                     Its settings are api-main.ts's; without SESSION_SIGNING_KEY a key is
+//                     generated and kept in DATA_DIR/session-key.json
 //   APNS_KEY_PATH, APNS_KEY_ID, APNS_TEAM_ID, APNS_BUNDLE_ID
 //                     APNs token auth; if any is missing, pushes are logged (dry run)
 //   SPIKE_TOKEN_SECRET, APNS_KEY_SECRET
@@ -23,7 +30,7 @@
 //                     only; see simulator.ts)
 
 import { createServer, type IncomingMessage, type ServerResponse, type Server } from "node:http";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { acceptUpgrade, rejectUpgrade } from "./ws.ts";
 import { ApnsPusher, DryRunPusher, apnsConfigFromEnv, type Pusher } from "./apns.ts";
 import { SimulatorPusher } from "./simulator.ts";
@@ -42,6 +49,11 @@ import { Relay, type Peer } from "./relay.ts";
 import { summarizeAttempts } from "./report.ts";
 import { RecordParser, RecordType, encodeJSONRecord, encodeRecord } from "./records.ts";
 import type { ClientMessage, MetricsUpload } from "./protocol.ts";
+import { SessionVerifier, parsePublicKeys } from "./session.ts";
+import { bearer, type ApiHandler } from "./api.ts";
+import { Accounts, USER_ID_PREFIX } from "./accounts.ts";
+import { apiFromEnv, type ApiSetup } from "./api-main.ts";
+import { MemoryDocs } from "./docs.ts";
 
 export interface ServerOptions {
   port: number;
@@ -51,6 +63,12 @@ export interface ServerOptions {
   devices?: DeviceStore;
   metrics?: MetricsStore;
   token: string | null;
+  // Verifies account session tokens; null or absent = only the shared token works.
+  sessions?: SessionVerifier | null;
+  // Friend checks for accounts' rings.
+  accounts?: Accounts;
+  // The account API, served on the same port (local runs).
+  api?: ApiHandler;
   pusher: Pusher;
   ringTimeoutMs?: number;
   answerJoinTimeoutMs?: number;
@@ -71,6 +89,7 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
   const metrics = options.metrics ?? new JsonMetricsStore(options.dataDir);
   const relay = new Relay({
     devices,
+    ...(options.accounts ? { accounts: options.accounts } : {}),
     pusher: options.pusher,
     metrics,
     ...(options.ringTimeoutMs ? { ringTimeoutMs: options.ringTimeoutMs } : {}),
@@ -78,9 +97,22 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
     ...(options.prefetchPushAfterMs ? { prefetchPushAfterMs: options.prefetchPushAfterMs } : {}),
   });
 
-  const authorized = (req: IncomingMessage, url: URL): boolean => {
-    if (!options.token) return true;
-    return req.headers.authorization === `Bearer ${options.token}` || url.searchParams.get("token") === options.token;
+  // Who's calling: an account (its user ID from the session token), or a client with the
+  // shared token, which names its own user ID. Null = unauthorized.
+  const authenticate = (req: IncomingMessage, url: URL): Caller | null => {
+    const presented = bearer(req) ?? url.searchParams.get("token");
+    if (presented && options.sessions && presented.split(".").length === 3) {
+      try {
+        return { account: true, userId: options.sessions.verify(presented).sub };
+      } catch {
+        return null;
+      }
+    }
+    if (options.token && presented !== options.token) return null;
+    // Shared-token clients can't claim an account's user ID.
+    const userId = url.searchParams.get("userId");
+    if (userId?.startsWith(USER_ID_PREFIX)) return null;
+    return { account: false, userId };
   };
 
   const sockets = new Set<ReturnType<typeof acceptUpgrade>>();
@@ -89,8 +121,8 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
 
   // GET /v1/relay/stream: the server-to-client half of the HTTP transport. The response
   // stays open for the conversation and carries the same messages as the WebSocket.
-  const openStream = (req: IncomingMessage, res: ServerResponse, url: URL): void => {
-    const userId = url.searchParams.get("userId");
+  const openStream = (req: IncomingMessage, res: ServerResponse, url: URL, caller: Caller): void => {
+    const userId = caller.userId;
     if (!userId) return send(res, 400, { error: "userId is required" });
     res.writeHead(200, {
       "content-type": "application/octet-stream",
@@ -100,6 +132,7 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
     res.flushHeaders();
     const peer: Peer = {
       userId,
+      account: caller.account,
       sendJSON: (m) => void res.write(encodeJSONRecord(m)),
       sendBinary: (b) => void res.write(encodeRecord(RecordType.audio, b)),
     };
@@ -127,8 +160,8 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
 
   // POST /v1/relay/send: the client-to-server half. Each body is a batch of records
   // (control messages and audio frames), applied in order.
-  const receiveRecords = async (req: IncomingMessage, res: ServerResponse, url: URL): Promise<void> => {
-    const stream = streams.get(url.searchParams.get("userId") ?? "");
+  const receiveRecords = async (req: IncomingMessage, res: ServerResponse, caller: Caller): Promise<void> => {
+    const stream = streams.get(caller.userId ?? "");
     if (!stream) return send(res, 409, { error: "open GET /v1/relay/stream first" });
     const parser = new RecordParser();
     for await (const chunk of req) {
@@ -147,7 +180,14 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
     const url = new URL(req.url ?? "/", "http://localhost");
     try {
       if (req.method === "GET" && url.pathname === "/healthz") return send(res, 200, { ok: true, revision: process.env.REVISION ?? "local" });
-      if (!authorized(req, url)) return send(res, 401, { error: "unauthorized" });
+      if (options.api && (await options.api(req, res, url))) return;
+      const caller = authenticate(req, url);
+      if (!caller) return send(res, 401, { error: "unauthorized" });
+      // Registration, the device list and diagnostics are for shared-token clients only.
+      // Accounts register with the account API.
+      const sharedOnly = ["/v1/devices", "/v1/users", "/v1/status"].includes(url.pathname) ||
+        (req.method === "GET" && url.pathname.startsWith("/v1/metrics"));
+      if (sharedOnly && caller.account) return send(res, 403, { error: "forbidden" });
 
       if (req.method === "POST" && url.pathname === "/v1/devices") {
         const body = await readJSON(req);
@@ -157,6 +197,7 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
         if (typeof userId !== "string" || !userId || typeof pushToken !== "string" || !pushToken) {
           return send(res, 400, { error: "userId and pushToken are required" });
         }
+        if (userId.startsWith(USER_ID_PREFIX)) return send(res, 403, { error: "forbidden" });
         await devices.upsert({
           userId,
           name: typeof name === "string" && name ? name : userId,
@@ -173,6 +214,7 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
       if (req.method === "POST" && url.pathname === "/v1/metrics") {
         const upload = (await readJSON(req)) as MetricsUpload;
         if (!upload?.conversationId || !Array.isArray(upload.events)) return send(res, 400, { error: "bad metrics" });
+        if (caller.account) upload.userId = caller.userId!;
         await metrics.upload(upload);
         return send(res, 200, { ok: true });
       }
@@ -190,18 +232,20 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
       // The watch answered a ring. Sent over HTTPS because the relay socket can take
       // several seconds to open after the call starts.
       if (req.method === "POST" && url.pathname === "/v1/rings/answer") {
-        const { userId, conversationId } = (await readJSON(req)) as Record<string, unknown>;
+        const body = (await readJSON(req)) as Record<string, unknown>;
+        const userId = caller.account ? caller.userId : body.userId;
+        const conversationId = body.conversationId;
         if (typeof userId !== "string" || typeof conversationId !== "string") {
           return send(res, 400, { error: "userId and conversationId are required" });
         }
         return send(res, relay.answered(userId, conversationId) ? 200 : 404, {});
       }
-      if (req.method === "GET" && url.pathname === "/v1/relay/stream") return openStream(req, res, url);
-      if (req.method === "POST" && url.pathname === "/v1/relay/send") return await receiveRecords(req, res, url);
+      if (req.method === "GET" && url.pathname === "/v1/relay/stream") return openStream(req, res, url, caller);
+      if (req.method === "POST" && url.pathname === "/v1/relay/send") return await receiveRecords(req, res, caller);
       // Prototype: the message a ring is holding, for the watch's notification service
       // extension to download before the tap (see Relay.bufferedAudio).
       if (req.method === "GET" && url.pathname === "/v1/rings/audio") {
-        const audio = relay.bufferedAudio(url.searchParams.get("userId") ?? "", url.searchParams.get("conversationId") ?? "");
+        const audio = relay.bufferedAudio(caller.userId ?? "", url.searchParams.get("conversationId") ?? "");
         if (!audio) return send(res, 404, { error: "unknown conversation" });
         res.writeHead(200, {
           "content-type": "application/octet-stream",
@@ -213,7 +257,7 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
       }
       // For devices registered with a "poll:" token (no VoIP push): collect pending rings.
       if (req.method === "GET" && url.pathname === "/v1/rings/poll") {
-        return send(res, 200, relay.takePolledRings(url.searchParams.get("userId") ?? ""));
+        return send(res, 200, relay.takePolledRings(caller.userId ?? ""));
       }
       send(res, 404, { error: "not found" });
     } catch (err) {
@@ -223,14 +267,16 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
 
   server.on("upgrade", (req, socket) => {
     const url = new URL(req.url ?? "/", "http://localhost");
-    const userId = url.searchParams.get("userId");
-    if (url.pathname !== "/v1/relay" || !userId) return rejectUpgrade(socket, 404, "Not Found");
-    if (!authorized(req, url)) return rejectUpgrade(socket, 401, "Unauthorized");
+    if (url.pathname !== "/v1/relay") return rejectUpgrade(socket, 404, "Not Found");
+    const caller = authenticate(req, url);
+    if (!caller) return rejectUpgrade(socket, 401, "Unauthorized");
+    const userId = caller.userId;
+    if (!userId) return rejectUpgrade(socket, 400, "Bad Request");
     const ws = acceptUpgrade(req, socket);
     if (!ws) return;
     sockets.add(ws);
 
-    const peer: Peer = { userId, sendJSON: (m) => ws.sendJSON(m), sendBinary: (b) => ws.sendBinary(b) };
+    const peer: Peer = { userId, account: caller.account, sendJSON: (m) => ws.sendJSON(m), sendBinary: (b) => ws.sendBinary(b) };
     relay.connect(peer);
     console.log(`[relay] ${userId} connected`);
     ws.on("text", (text: string) => {
@@ -279,6 +325,12 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
   });
 }
 
+interface Caller {
+  account: boolean;
+  // From the session token for accounts; from the request (?userId=) otherwise.
+  userId: string | null;
+}
+
 function send(res: ServerResponse, status: number, body: unknown): void {
   res.writeHead(status, { "content-type": "application/json" });
   res.end(JSON.stringify(body));
@@ -309,18 +361,28 @@ if (import.meta.main) {
   const host = env.HOST || undefined;
   const port = Number(env.PORT ?? 8080);
   const prefetchPushAfterMs = Number(env.PREFETCH_PUSH_MS ?? 0);
+  let sessions = env.SESSION_PUBLIC_KEYS ? new SessionVerifier(parsePublicKeys(env.SESSION_PUBLIC_KEYS)) : null;
   let running: RunningServer;
+  let api: ApiSetup | null = null;
   if (env.STORE === "firestore") {
     const db = new Firestore({ projectId, emulatorHost, accessToken });
     const devices = new FirestoreDeviceStore(db);
     const metrics = new FirestoreMetricsStore(db);
-    running = await startServer({ port, host, dataDir: null, devices, metrics, token, pusher, prefetchPushAfterMs });
+    if (env.SERVE_API === "1") api = apiFromEnv(env, db, null);
+    const accounts = api?.accounts ?? new Accounts(db);
+    sessions = api?.verifier ?? sessions;
+    running = await startServer({ port, host, dataDir: null, devices, metrics, token, sessions, accounts, api: api?.handler, pusher, prefetchPushAfterMs });
     console.log(`[server] listening on ${host ?? ""}:${running.port}, data in Firestore ${emulatorHost ? `emulator ${emulatorHost}, ` : ""}project ${projectId}`);
   } else {
     const dataDir = ensureDir(resolve(env.DATA_DIR ?? "data"));
-    running = await startServer({ port, host, dataDir, token, pusher, prefetchPushAfterMs });
+    // Accounts are only kept locally when this process also serves the API.
+    if (env.SERVE_API === "1") api = apiFromEnv(env, new MemoryDocs(join(dataDir, "accounts.json")), dataDir);
+    sessions = api?.verifier ?? sessions;
+    running = await startServer({ port, host, dataDir, token, sessions, accounts: api?.accounts, api: api?.handler, pusher, prefetchPushAfterMs });
     console.log(`[server] listening on ${host ?? ""}:${running.port}, data in ${dataDir}`);
   }
+  for (const note of api?.notes ?? []) console.log(`[api] ${note}`);
+  if (sessions) console.log("[server] accounts can connect with session tokens");
   console.log(`[server] revision ${env.REVISION ?? "local"}${secrets.length ? `, secrets ${secrets.join(", ")} from Secret Manager` : ""}`);
   console.log(apnsConfig ? `[server] APNs alert pushes, topic ${apnsConfig.bundleId}` : "[server] APNs not configured: dry-run pushes");
   if (prefetchPushAfterMs) console.log(`[server] prefetch pushes ${prefetchPushAfterMs} ms after a ring (prototype)`);

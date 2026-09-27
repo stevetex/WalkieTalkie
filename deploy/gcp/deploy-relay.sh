@@ -34,6 +34,8 @@ trap 'rm -rf "$stage"' EXIT
   # Public CA refuses ACME accounts without a contact address.
   acme_email=${ACME_EMAIL:-${ALERT_EMAIL:-}}
   if [ -n "$acme_email" ]; then echo "ACME_EMAIL=$acme_email"; fi
+  # Accounts' session tokens (setup-api.sh creates the public keys).
+  if gc secrets describe session-public-keys >/dev/null 2>&1; then echo "SESSION_PUBLIC_KEYS_SECRET=session-public-keys"; fi
   if [ -n "$APNS_KEY_FILE" ]; then
     echo "APNS_KEY_SECRET=apns-key"
     echo "APNS_KEY_ID=$APNS_KEY_ID"

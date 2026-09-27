@@ -28,6 +28,8 @@ export type ServerMessage =
   | { type: "hello-ack"; clientTime: number; serverTime: number }
   | { type: "floor-granted"; burstId: string; conversationId: string; pushed: boolean }
   | { type: "floor-denied"; burstId: string; holder: string }
+  // An account can only ring its friends: the burst was dropped, and nobody was rung.
+  | { type: "talk-refused"; burstId: string; reason: "not-friends" }
   | { type: "joined"; conversationId: string; peer: string; replayBursts: number }
   | { type: "burst-start"; conversationId: string; burstId: string; from: string; replay: boolean }
   | { type: "burst-end"; conversationId: string; burstId: string }

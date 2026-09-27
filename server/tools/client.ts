@@ -210,10 +210,11 @@ export class SpikeClient {
     this.mark("talkPressed");
     this.send({ type: "talk-start", to, burstId });
     const granted = await this.waitForMatch(
-      (m) => (m.type === "floor-granted" || m.type === "floor-denied") && m.burstId === burstId,
+      (m) => (m.type === "floor-granted" || m.type === "floor-denied" || m.type === "talk-refused") && m.burstId === burstId,
       "floor decision",
     );
     if (granted.type === "floor-denied") throw new Error(`floor held by ${granted.holder}`);
+    if (granted.type === "talk-refused") throw new Error(`refused: ${granted.reason}`);
     if (granted.type !== "floor-granted") throw new Error(`unexpected ${granted.type}`);
     this.mark("floorGranted", granted.pushed ? "rang recipient" : "recipient live");
     const bytesPerFrame = 320 * 2;
