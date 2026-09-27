@@ -1,37 +1,34 @@
 import SwiftUI
 
-/// Developer settings until the product has accounts: who this watch is, and a friend
-/// picked from the relay's user list.
+/// The account, whom Talk rings, and diagnostics.
 struct SettingsView: View {
     @ObservedObject var controller: ConversationController
-    @State private var users: [APIClient.User] = []
-    @State private var loadError: String?
+    @ObservedObject var account: WatchAccount
 
     var body: some View {
         List {
-            Section("Friend") {
-                if users.isEmpty {
-                    Text(loadError ?? "Loading…")
+            Section("Talk to") {
+                if account.friends.isEmpty {
+                    Text("Invite a friend from Over&Out on your iPhone.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
-                ForEach(users) { user in
+                ForEach(account.friends) { friend in
                     Button {
-                        controller.settings.friendId = user.userId
-                        controller.settings.friendName = user.name
+                        account.selectedFriendId = friend.id
                     } label: {
                         HStack {
-                            Text(user.name)
+                            Text(friend.name)
                             Spacer()
-                            if user.userId == controller.settings.friendId {
-                                Image(systemName: "checkmark")
+                            if friend.id == account.selectedFriend?.id {
+                                Image(systemName: "checkmark").foregroundStyle(.orange)
                             }
                         }
                     }
                 }
             }
             Section("This watch") {
-                LabeledRow(label: "User", value: controller.settings.userId)
+                LabeledRow(label: "Signed in as", value: account.session?.name ?? "Not signed in")
                 LabeledRow(label: "Server", value: controller.settings.serverHost.isEmpty ? "Not set" : controller.settings.serverHost)
                 Text(controller.registrationStatus)
                     .font(.footnote)
@@ -57,16 +54,7 @@ struct SettingsView: View {
             }
         }
         .navigationTitle("Settings")
-        .task { await loadUsers() }
-    }
-
-    private func loadUsers() async {
-        do {
-            users = try await controller.fetchUsers()
-            loadError = users.isEmpty ? "No one else is registered" : nil
-        } catch {
-            loadError = error.localizedDescription
-        }
+        .onAppear { account.refresh() }
     }
 }
 

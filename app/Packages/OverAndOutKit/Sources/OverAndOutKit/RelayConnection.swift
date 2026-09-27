@@ -15,6 +15,8 @@ public struct RelayMessage: Decodable {
     public var from: String?
     public var replay: Bool?
     public var message: String?
+    /// talk-refused: why ("not-friends").
+    public var reason: String?
 }
 
 /// Record framing shared with server/src/records.ts:

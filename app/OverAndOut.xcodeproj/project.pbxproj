@@ -10,6 +10,7 @@
 		0AA000000000000000000041 /* OverAndOutWatch.app in Embed Watch Content */ = {isa = PBXBuildFile; fileRef = 0AA000000000000000000006 /* OverAndOutWatch.app */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		0AA000000000000000000042 /* OverAndOutKit in Frameworks */ = {isa = PBXBuildFile; productRef = 0AA000000000000000000052 /* OverAndOutKit */; };
 		0AA00000000000000000006C /* OverAndOutWatchNotificationService.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 0AA000000000000000000060 /* OverAndOutWatchNotificationService.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		0AA000000000000000000070 /* OverAndOutKit in Frameworks */ = {isa = PBXBuildFile; productRef = 0AA000000000000000000071 /* OverAndOutKit */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -65,6 +66,8 @@
 		0AA000000000000000000060 /* OverAndOutWatchNotificationService.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = OverAndOutWatchNotificationService.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		0AA000000000000000000061 /* WatchNotificationService-Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "WatchNotificationService-Info.plist"; sourceTree = "<group>"; };
 		0AA000000000000000000062 /* WatchNotificationService.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = WatchNotificationService.entitlements; sourceTree = "<group>"; };
+		0AA000000000000000000072 /* iOS-Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "iOS-Info.plist"; sourceTree = "<group>"; };
+		0AA000000000000000000073 /* iOS.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = iOS.entitlements; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -90,6 +93,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				0AA000000000000000000070 /* OverAndOutKit in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -137,6 +141,8 @@
 			children = (
 				0AA000000000000000000007 /* Base.xcconfig */,
 				0AA000000000000000000009 /* Local.xcconfig.example */,
+				0AA000000000000000000072 /* iOS-Info.plist */,
+				0AA000000000000000000073 /* iOS.entitlements */,
 				0AA00000000000000000000A /* Watch-Info.plist */,
 				0AA00000000000000000000B /* Watch.entitlements */,
 				0AA00000000000000000000C /* Watch-NoPush.entitlements */,
@@ -168,6 +174,7 @@
 			);
 			name = OverAndOut;
 			packageProductDependencies = (
+				0AA000000000000000000071 /* OverAndOutKit */,
 			);
 			productName = OverAndOut;
 			productReference = 0AA000000000000000000005 /* OverAndOut.app */;
@@ -372,10 +379,12 @@
 		0AA000000000000000000026 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = Config/iOS.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "Config/iOS-Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = "Over&Out";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
@@ -399,10 +408,12 @@
 		0AA000000000000000000027 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = Config/iOS.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "Config/iOS-Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = "Over&Out";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
@@ -587,6 +598,10 @@
 
 /* Begin XCSwiftPackageProductDependency section */
 		0AA000000000000000000052 /* OverAndOutKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = OverAndOutKit;
+		};
+		0AA000000000000000000071 /* OverAndOutKit */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = OverAndOutKit;
 		};

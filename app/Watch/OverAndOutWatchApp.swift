@@ -8,7 +8,7 @@ struct OverAndOutWatchApp: App {
     var body: some Scene {
         WindowGroup {
             NavigationStack {
-                ContentView(controller: .shared)
+                ContentView(controller: .shared, account: .shared)
             }
         }
     }
@@ -30,7 +30,10 @@ final class AppDelegate: NSObject, WKApplicationDelegate {
     }
 
     // Diagnostics for the timeline: wrist down, app in the background.
-    func applicationDidBecomeActive() { ConversationController.shared.noteAppState("active") }
+    func applicationDidBecomeActive() {
+        ConversationController.shared.noteAppState("active")
+        ConversationController.shared.scheduleAccountRefresh()
+    }
     func applicationWillResignActive() { ConversationController.shared.noteAppState("inactive") }
     func applicationDidEnterBackground() {
         ConversationController.shared.noteAppState("background")

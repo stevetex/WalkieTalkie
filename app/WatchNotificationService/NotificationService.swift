@@ -1,4 +1,5 @@
 import Foundation
+import Security
 import UserNotifications
 
 /// Prototype: downloads a ring's message before it's tapped.
@@ -11,7 +12,8 @@ import UserNotifications
 /// tapped (ConversationController.playPrefetched) and skips those frames in the replay.
 ///
 /// Kept free of OverAndOutKit so the extension stays small: it only moves bytes. The file
-/// layout is shared with Watch/Prefetch.swift.
+/// layout is shared with Watch/Prefetch.swift, and the session (the account's token) is the
+/// one WatchAccount keeps in the Keychain under the app group (KeychainSessionStore).
 final class NotificationService: UNNotificationServiceExtension {
     private var contentHandler: ((UNNotificationContent) -> Void)?
     private var content: UNNotificationContent?
@@ -29,8 +31,8 @@ final class NotificationService: UNNotificationServiceExtension {
               let conversationId = info["conversationId"] as? String,
               let group = Bundle.main.object(forInfoDictionaryKey: "OAOAppGroup") as? String,
               let container = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: group),
-              let userId = UserDefaults(suiteName: group)?.string(forKey: "userId"),
-              let url = Self.audioURL(userId: userId, conversationId: conversationId)
+              let session = Self.session(accessGroup: group),
+              let url = Self.audioURL(userId: session.userId, conversationId: conversationId)
         else { return deliver() }
 
         let directory = container.appendingPathComponent("prefetch", isDirectory: true)
@@ -39,9 +41,7 @@ final class NotificationService: UNNotificationServiceExtension {
                  directory.appendingPathComponent("\(conversationId).json"))
 
         var request = URLRequest(url: url, timeoutInterval: 20)
-        if let token = Bundle.main.object(forInfoDictionaryKey: "OAOServerToken") as? String, !token.isEmpty {
-            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        }
+        request.setValue("Bearer \(session.token)", forHTTPHeaderField: "Authorization")
         meta["fetchStartedAt"] = Self.nowMs()
         task = URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
             guard let self else { return }
@@ -86,4 +86,25 @@ final class NotificationService: UNNotificationServiceExtension {
     }
 
     private static func nowMs() -> Double { Date().timeIntervalSince1970 * 1000 }
+
+    /// The watch's session. An expired token is left to the app to refresh: without it the
+    /// ring still works, just without the prefetch.
+    private static func session(accessGroup: String) -> (token: String, userId: String)? {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: "com.cypressoakstudios.overandout.session",
+            kSecAttrAccount as String: "session",
+            kSecAttrAccessGroup as String: accessGroup,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne,
+        ]
+        var result: AnyObject?
+        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
+              let data = result as? Data,
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let token = json["token"] as? String, let userId = json["userId"] as? String,
+              let expiresAt = json["expiresAt"] as? Double, expiresAt > nowMs()
+        else { return nil }
+        return (token, userId)
+    }
 }

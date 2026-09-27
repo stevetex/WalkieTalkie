@@ -1,15 +1,11 @@
 import Foundation
 
-/// HTTPS calls to the relay server. Plain HTTPS works on watchOS at any time, unlike
-/// WebSockets (TN3135).
+/// HTTPS calls to the relay (clock samples and timelines), with the account's session
+/// token. Plain HTTPS works on watchOS at any time, unlike WebSockets (TN3135). Account
+/// calls go to the account API through AccountClient instead.
 struct APIClient {
     let settings: AppSettings
-
-    struct User: Decodable, Identifiable, Hashable {
-        let userId: String
-        let name: String
-        var id: String { userId }
-    }
+    let token: String?
 
     enum APIError: LocalizedError {
         case notConfigured
@@ -21,22 +17,6 @@ struct APIClient {
             case let .http(status, body): return "HTTP \(status): \(body)"
             }
         }
-    }
-
-    /// `pushToken` is an APNs device token, or a pseudo-token for a watch that can't get one
-    /// (see ConversationController.registerForRings).
-    func registerDevice(pushToken: String) async throws {
-        try await send("POST", "/v1/devices", body: [
-            "userId": settings.userId,
-            "name": settings.displayName,
-            "pushToken": pushToken,
-            "apnsEnvironment": AppSettings.apnsEnvironment,
-        ])
-    }
-
-    func users() async throws -> [User] {
-        let data = try await send("GET", "/v1/users")
-        return try JSONDecoder().decode([User].self, from: data)
     }
 
     /// One clock sample: (server time minus device time, round trip), both in ms.
@@ -61,8 +41,8 @@ struct APIClient {
         request.httpMethod = method
         request.timeoutInterval = 15
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        if !settings.token.isEmpty {
-            request.setValue("Bearer \(settings.token)", forHTTPHeaderField: "Authorization")
+        if let token, !token.isEmpty {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
         if let body {
             request.httpBody = try JSONSerialization.data(withJSONObject: body)

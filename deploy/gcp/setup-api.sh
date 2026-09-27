@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # One-time setup for the account API (design decisions 2026-09-27), after setup-firestore.sh
-# and setup-relay.sh: the api service account, the session signing keys, the Sign in with
+# and setup-relay.sh: the account-api service account, the session signing keys, the Sign in with
 # Apple key, the invites TTL policy, and an email alert when a user files a report.
 # Safe to re-run; existing resources are left alone (secrets aren't overwritten). Then
 # deploy with deploy-api.sh, and redeploy the relay so nodes pick up the public keys.
@@ -11,7 +11,7 @@ repo=$(cd "$here/../.." && pwd)
 # shellcheck source-path=SCRIPTDIR source=config.example.sh
 . "$here/config.sh"
 
-api_sa="api@$PROJECT_ID.iam.gserviceaccount.com"
+api_sa="account-api@$PROJECT_ID.iam.gserviceaccount.com"
 node_sa="relay-node@$PROJECT_ID.iam.gserviceaccount.com"
 gc() { gcloud --project="$PROJECT_ID" --quiet "$@"; }
 
@@ -19,11 +19,18 @@ echo "Enabling Cloud Run…"
 gc services enable run.googleapis.com
 
 if ! gc iam service-accounts describe "$api_sa" >/dev/null 2>&1; then
-  echo "Creating the api service account…"
-  gc iam service-accounts create api --display-name="Over&Out account API"
+  echo "Creating the account-api service account…"
+  gc iam service-accounts create account-api --display-name="Over&Out account API"
 fi
-gc projects add-iam-policy-binding "$PROJECT_ID" \
-  --member="serviceAccount:$api_sa" --role=roles/datastore.user --condition=None >/dev/null
+# A new service account can take a few seconds to be usable in IAM policies.
+for attempt in 1 2 3 4 5 6; do
+  if gc projects add-iam-policy-binding "$PROJECT_ID" \
+    --member="serviceAccount:$api_sa" --role=roles/datastore.user --condition=None >/dev/null 2>&1; then
+    break
+  fi
+  [ "$attempt" -lt 6 ] || { echo "Couldn't grant Firestore access to $api_sa." >&2; exit 1; }
+  sleep 10
+done
 
 # create_secret <id>: the value comes on stdin and is never printed.
 create_secret() {

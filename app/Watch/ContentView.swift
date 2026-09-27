@@ -2,19 +2,28 @@ import SwiftUI
 
 struct ContentView: View {
     @ObservedObject var controller: ConversationController
+    @ObservedObject var account: WatchAccount
 
     private var talkTitle: String {
-        if let name = controller.peerName { return name }
-        let s = controller.settings
-        return s.friendName.isEmpty ? s.friendId : s.friendName
+        controller.peerName ?? account.selectedFriend?.name ?? ""
     }
 
     private var status: String {
         if !controller.statusLine.isEmpty { return controller.statusLine }
-        return controller.settings.hasFriend ? "Hold to talk" : "Pick a friend in Settings"
+        return account.selectedFriend != nil ? "Hold to talk" : "Choose a friend"
     }
 
     var body: some View {
+        if account.session == nil {
+            SignInPrompt(phoneSignedIn: account.phoneSignedIn)
+        } else if account.friends.isEmpty && controller.phase == .idle && controller.incomingRing == nil {
+            NoFriendsYet(loaded: account.friendsLoaded)
+        } else {
+            main
+        }
+    }
+
+    private var main: some View {
         VStack(spacing: 6) {
             if let ring = controller.incomingRing {
                 Text("\(ring.fromName) is calling")
@@ -25,17 +34,32 @@ struct ContentView: View {
                     Button("Decline", role: .destructive) { controller.declineIncomingRing() }
                 }
             } else {
-                Text(status)
-                    .font(.footnote)
-                    .multilineTextAlignment(.center)
-                    .lineLimit(2)
-                    .foregroundStyle(controller.remoteTalking ? .green : .secondary)
+                if controller.phase == .idle, account.friends.count > 1 || account.selectedFriend == nil {
+                    // Pick whom Talk rings.
+                    NavigationLink {
+                        FriendPicker(account: account)
+                    } label: {
+                        HStack(spacing: 2) {
+                            Text(status)
+                            Image(systemName: "chevron.right").font(.caption2)
+                        }
+                        .font(.footnote)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
+                } else {
+                    Text(status)
+                        .font(.footnote)
+                        .multilineTextAlignment(.center)
+                        .lineLimit(2)
+                        .foregroundStyle(controller.remoteTalking ? .green : .secondary)
+                }
 
                 TalkButton(
                     title: talkTitle.isEmpty ? "Talk" : talkTitle,
                     isTalking: controller.isTalking,
                     isWaiting: controller.phase != .idle && !controller.talkReady,
-                    isDisabled: controller.phase == .idle && !controller.settings.hasFriend
+                    isDisabled: controller.phase == .idle && account.selectedFriend == nil
                 ) { pressed in
                     pressed ? controller.talkPressed() : controller.talkReleased()
                 }
@@ -50,7 +74,7 @@ struct ContentView: View {
         .toolbar {
             ToolbarItem(placement: settingsPlacement) {
                 NavigationLink {
-                    SettingsView(controller: controller)
+                    SettingsView(controller: controller, account: account)
                 } label: {
                     Image(systemName: "gearshape")
                 }
@@ -112,5 +136,68 @@ struct TalkButton: View {
         )
         .accessibilityLabel("Hold to talk to \(title)")
         .accessibilityAddTraits(.isButton)
+    }
+}
+
+/// No session yet: the iPhone app signs the watch in.
+struct SignInPrompt: View {
+    let phoneSignedIn: Bool?
+
+    var body: some View {
+        VStack(spacing: 8) {
+            Image(systemName: "iphone")
+                .font(.title2)
+                .foregroundStyle(.orange)
+            if phoneSignedIn == true {
+                ProgressView()
+                Text("Signing in from your iPhone…")
+                    .font(.footnote)
+                    .multilineTextAlignment(.center)
+            } else {
+                Text("Open Over&Out on your iPhone and sign in")
+                    .font(.footnote)
+                    .multilineTextAlignment(.center)
+            }
+        }
+        .padding()
+    }
+}
+
+struct NoFriendsYet: View {
+    let loaded: Bool
+
+    var body: some View {
+        VStack(spacing: 8) {
+            Image(systemName: "person.2")
+                .font(.title2)
+                .foregroundStyle(.orange)
+            Text(loaded ? "Invite a friend from Over&Out on your iPhone" : "Loading friends…")
+                .font(.footnote)
+                .multilineTextAlignment(.center)
+        }
+        .padding()
+    }
+}
+
+struct FriendPicker: View {
+    @ObservedObject var account: WatchAccount
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        List(account.friends) { friend in
+            Button {
+                account.selectedFriendId = friend.id
+                dismiss()
+            } label: {
+                HStack {
+                    Text(friend.name)
+                    Spacer()
+                    if friend.id == account.selectedFriend?.id {
+                        Image(systemName: "checkmark").foregroundStyle(.orange)
+                    }
+                }
+            }
+        }
+        .navigationTitle("Friends")
     }
 }

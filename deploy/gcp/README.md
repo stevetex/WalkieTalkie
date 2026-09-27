@@ -1,4 +1,10 @@
-# Hosting the relay on Google Cloud
+# Hosting on Google Cloud
+
+Three pieces, all in the project `walkie-talkie-relay`:
+
+- **Relay nodes** carry the audio (below).
+- **The account API** (`server/src/api.ts`) is the Cloud Run service `api`: Sign in with Apple, sessions, friends, invites, blocks, reports and account deletion. See "The account API and overandout.app".
+- **overandout.app** is on Firebase Hosting: invite links, the apple-app-site-association file, the home, privacy and support pages, and `/v1/*` forwarded to the API.
 
 The relay runs on **relay nodes** (option E in the feasibility doc): small VMs in a managed instance group on Container-Optimized OS (COS), each running one container. Server data (devices and metrics timelines) lives in Firestore, so a node holds nothing that matters. Restarts, OS updates and replacing a failed node are automatic.
 
@@ -11,7 +17,7 @@ watch ──HTTPS──▶ relay-1.overandout.app ──▶ [ Caddy :443 ──�
 - **The image** (`server/Dockerfile`): Node 24 and Caddy. Caddy gets and renews certificates from Google Trust Services (Google Cloud's free Public CA, whose roots Apple trusts; the watch took ~1 s longer per connection to evaluate Let's Encrypt's newer chain) and proxies to the relay with streaming (`flush_interval -1`). Both run as an unprivileged user. It's built by Cloud Build from committed code, tagged with the commit, and stored in Artifact Registry.
 - **The node** (`relay-node.cloud-init.yaml`): cloud-init mounts the data disk, opens ports 80 and 443 in COS's host firewall, and runs the container as the systemd service `relay`. The image and settings come from instance metadata.
 - **The group** (`relay`, us-central1-a) is stateful. Each node keeps its name, its data disk and, per node, its static IP and hostnames, across replacements. Autohealing recreates a node that fails `relay-health` (HTTP port 80 `/healthz`, through Caddy to the relay) three times in a row.
-- **Secrets**: the relay token (`relay-token`), the APNs key (`apns-key`) and the Public CA account key (`acme-eab`) are in Secret Manager. Only the nodes' service account (`relay-node`) can read them. The image, template and metadata hold none.
+- **Secrets**: the relay token (`relay-token`), the APNs key (`apns-key`), the Public CA account key (`acme-eab`) and the session tokens' public keys (`session-public-keys`) are in Secret Manager. Only the nodes' service account (`relay-node`) can read them. The image, template and metadata hold none.
 
 ## Setting up (once)
 
@@ -63,6 +69,50 @@ It builds the image for `HEAD` (about 30 s) unless that commit is already built,
 
 To roll back, deploy an earlier commit: `deploy/gcp/deploy-relay.sh <commit>`.
 
+## The account API and overandout.app
+
+```
+iPhone, watch ──HTTPS──▶ overandout.app (Firebase Hosting) ──/v1/*──▶ Cloud Run "api" ──▶ Firestore
+                          /i/<code>, apple-app-site-association,       scales to zero      users, friends, invites,
+                          home, privacy, support (web/public)                             blocks, reports, sessions
+```
+
+- **Sessions**: the API signs Ed25519 JWTs with `session-signing-key` (only the `account-api` service account can read it). Relay nodes verify them with `session-public-keys`, with no session store.
+- **Sign in with Apple**: `apple-siwa-key` (the .p8 from the developer portal) lets the API revoke a user's Apple tokens when they delete their account.
+- **Reports** log a `[report]` line; an alert policy emails `ALERT_EMAIL`. Read them in the Firestore console (`reports`).
+
+Once, after the relay's setup (the Firebase step also needs Firebase added to the project in its console, which accepts its terms):
+
+```bash
+deploy/gcp/setup-api.sh
+```
+
+```bash
+deploy/gcp/deploy-web.sh setup
+```
+
+`setup-api.sh` enables Cloud Run, creates the `account-api` service account, generates the session keys straight into Secret Manager, stores the Sign in with Apple key (`APPLE_SIWA_KEY_FILE`), adds the invites TTL policy, and creates the report alert. `deploy-web.sh setup` creates the Hosting site and the custom domain, and prints the DNS records to add at GoDaddy (`deploy-web.sh dns` shows their state).
+
+To deploy the API (from committed code) and the site:
+
+```bash
+deploy/gcp/deploy-api.sh
+```
+
+```bash
+deploy/gcp/deploy-web.sh
+```
+
+The site's apple-app-site-association gets the team ID from `APPLE_TEAM_ID` (or `APNS_TEAM_ID`), and the privacy and support pages get `SUPPORT_EMAIL`. After adding a node or a new session key, redeploy the relay so nodes read `session-public-keys` again.
+
+**Test Bot as an account** (for testing with one set of devices), with your gcloud credentials:
+
+```bash
+cd server && node tools/test-account.ts create
+```
+
+Then invite the bot from the iPhone app, copy the link, and run `node tools/test-account.ts accept <link>`. `node tools/bot.ts send --account` rings its first friend; `listen --account` waits to be rung. Its token is saved in `server/data/bot-token.json` (gitignored), never printed.
+
 ## Everyday commands
 
 Use these flags on every command below:
@@ -79,6 +129,8 @@ Use these flags on every command below:
 | Restart a node's container | `gcloud compute ssh relay-1 -- sudo systemctl restart relay` |
 | Recreate a node | `gcloud compute instance-groups managed recreate-instances relay --instances=relay-1` |
 | Relay state | `curl -H "Authorization: Bearer $SPIKE_TOKEN" https://relay-1.overandout.app/v1/status` |
+| API logs | `gcloud logging read 'resource.labels.service_name="api"' --limit=50` |
+| API revision | `curl https://overandout.app/v1/health` |
 
 Logs also go to Cloud Logging, in Logs Explorer under the VM instance.
 
@@ -98,10 +150,11 @@ cd server && STORE=firestore FIRESTORE_AUTH=gcloud FIRESTORE_PROJECT=walkie-talk
 
 ## Costs
 
-For the Beta, the one charge is the static IP, about $3.65 a month. One e2-micro and 30 GB of standard disk are free in us-central1, and a node uses 20 GB. Firestore's free quota is 50,000 reads and 20,000 writes a day, and a conversation costs about 2 reads and 3 writes. Artifact Registry (0.5 GB), Cloud Build (2,500 minutes a month), Secret Manager (6 versions) and uptime checks (1 million runs) all stay in their free tiers.
+For the Beta, the one charge is the static IP, about $3.65 a month. One e2-micro and 30 GB of standard disk are free in us-central1, and a node uses 20 GB. Firestore's free quota is 50,000 reads and 20,000 writes a day, and a conversation costs about 2 reads and 3 writes. Artifact Registry (0.5 GB), Cloud Build (2,500 minutes a month) and uptime checks (1 million runs) stay in their free tiers. Secret Manager's free tier covers 6 active secret versions and there are 6 (a few cents a month beyond that). Cloud Run (2 million requests a month) and Firebase Hosting (10 GB stored, 360 MB a day served) stay free at Beta scale.
 
 ## Security notes
 
-- Every API and relay call needs the shared relay token (`SPIKE_TOKEN`). It stands in for real accounts (Sign in with Apple), which replace it later.
-- Nodes read the relay token and the APNs key from Secret Manager at startup. Only the `relay-node` service account can read them.
+- Apps connect with their account's session token. An account can only ring its friends; the relay refuses other rings (`talk-refused`).
+- The shared relay token (`SPIKE_TOKEN`) still works for old builds, the bot's shared-token mode and the diagnostics endpoints, which session tokens can't use. It can't claim an account's user ID. Retiring it is in the backlog.
+- Nodes read the relay token, the APNs key and the session public keys from Secret Manager at startup. Only the `relay-node` service account can read them. Only the `account-api` service account can read the session signing key and the Sign in with Apple key.
 - The container runs as an unprivileged user with every capability dropped except binding ports 80 and 443.

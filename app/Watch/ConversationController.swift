@@ -29,9 +29,9 @@ final class ConversationController: NSObject, ObservableObject {
         case live
     }
 
-    @Published var settings = AppSettings.load() {
-        didSet { if settings != oldValue { settings.save() } }
-    }
+    let settings = AppSettings.load()
+    /// Who this watch is (its session) and its friends.
+    let account = WatchAccount.shared
     @Published private(set) var phase: Phase = .idle
     @Published private(set) var statusLine = ""
     @Published private(set) var peerName: String?
@@ -53,6 +53,9 @@ final class ConversationController: NSObject, ObservableObject {
     @Published var quitWhenBackgrounded = false
     #endif
     @Published private(set) var registrationStatus = "Not registered yet"
+    /// The APNs token (or a pseudo-token), registered under the account whenever there's a
+    /// session.
+    private var pushToken: (token: String, note: String?)?
     @Published private(set) var logLines: [String] = []
 
     var codecDescription: String { audio.codecDescription }
@@ -148,7 +151,27 @@ final class ConversationController: NSObject, ObservableObject {
         ) { [unowned self] note in handleAudioInterruption(note) }
         startMainThreadWatchdog()
         log("Codec: \(audio.codecDescription)")
+        account.onSessionChanged = { [unowned self] session in
+            if session != nil {
+                registerPushToken()
+            } else {
+                registrationStatus = "Signed out"
+                if conversation != nil { finish(status: "Signed out") }
+            }
+        }
+        account.activate()
+        scheduleAccountRefresh()
         registerForRings()
+    }
+
+    /// Refreshes the token and friends a few seconds after the app comes to the front, and
+    /// only if no conversation is starting: a tap on a ring needs the watch's waking network
+    /// for the relay, not for the account API.
+    func scheduleAccountRefresh() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in
+            guard let self, conversation == nil, incomingRing == nil else { return }
+            account.refresh()
+        }
     }
 
     // MARK: Permissions and push registration
@@ -189,29 +212,35 @@ final class ConversationController: NSObject, ObservableObject {
     /// conversations; it just can't be rung. A "poll:" token keeps it in the user list.
     func didFailToRegisterForRemoteNotifications(_ error: Error) {
         log("Push registration failed: \(error.localizedDescription)")
-        registerDevice(pushToken: "poll:\(settings.userId)", note: "can't be rung (no push)")
+        registerDevice(pushToken: "poll:\(account.deviceId)", note: "can't be rung (no push)")
     }
 
     private func registerDevice(pushToken: String, note: String? = nil) {
-        let api = APIClient(settings: settings)
+        self.pushToken = (pushToken, note)
+        registerPushToken()
+    }
+
+    /// Registers the push token under the account (again after a new session arrives).
+    private func registerPushToken() {
+        guard let (token, note) = pushToken else { return }
+        guard account.session != nil else {
+            registrationStatus = "Waiting to sign in"
+            return
+        }
         Task { @MainActor in
             do {
-                try await api.registerDevice(pushToken: pushToken)
-                registrationStatus = "Registered as \(settings.userId)" + (note.map { ", \($0)" } ?? "")
+                try await account.registerDevice(pushToken: token, apnsEnvironment: AppSettings.apnsEnvironment)
+                registrationStatus = "Registered" + (note.map { ", \($0)" } ?? "")
             } catch {
                 registrationStatus = "Registration failed: \(error.localizedDescription)"
             }
         }
     }
 
-    func fetchUsers() async throws -> [APIClient.User] {
-        try await APIClient(settings: settings).users().filter { $0.userId != settings.userId }
-    }
-
     // MARK: UI actions
 
     func talkPressed() {
-        guard !talkHeld, conversation != nil || settings.hasFriend else { return }
+        guard !talkHeld, conversation != nil || account.selectedFriend != nil else { return }
         talkHeld = true
         isTalking = true
         idleTimer?.invalidate()
@@ -343,7 +372,10 @@ final class ConversationController: NSObject, ObservableObject {
     private func preconnectRelay() {
         guard conversation == nil, preconnect == nil, let baseURL = settings.baseURL else { return }
         preconnect = (Clock.nowMs(), nil)
-        relay.connect(baseURL: baseURL, token: settings.token, userId: settings.userId)
+        account.withToken { [unowned self] session in
+            guard let session, preconnect != nil, conversation == nil else { return }
+            relay.connect(baseURL: baseURL, token: session.token, userId: session.userId)
+        }
     }
 
     private func closePreconnect() {
@@ -390,11 +422,12 @@ final class ConversationController: NSObject, ObservableObject {
     // MARK: Outgoing
 
     private func startOutgoingConversation() {
+        guard let friend = account.selectedFriend else { return }
         var timeline = Timeline(role: .sender)
         timeline.mark("talkPressed")
-        let name = settings.friendName.isEmpty ? settings.friendId : settings.friendName
+        let name = friend.name
         conversation = Conversation(outgoing: true, conversationId: nil,
-                                    peerId: settings.friendId, peerName: name, timeline: timeline)
+                                    peerId: friend.id, peerName: name, timeline: timeline)
         phase = .connecting
         peerName = name
         statusLine = "Connecting…"
@@ -409,7 +442,16 @@ final class ConversationController: NSObject, ObservableObject {
             log("The server isn't configured in this build")
             return finish(status: "No server configured")
         }
-        relay.connect(baseURL: baseURL, token: settings.token, userId: settings.userId, join: join)
+        // Normally synchronous; an expired token (a watch unused for 30 days) is refreshed first.
+        let conversationId = conversation?.conversationId
+        account.withToken { [unowned self] session in
+            guard conversation != nil, conversation?.conversationId == conversationId else { return }
+            guard let session else {
+                log("Not signed in")
+                return finish(status: "Sign in on your iPhone")
+            }
+            relay.connect(baseURL: baseURL, token: session.token, userId: session.userId, join: join)
+        }
     }
 
     private func updateTalkReady() {
@@ -437,7 +479,7 @@ final class ConversationController: NSObject, ObservableObject {
 
     private func refineClockOffset() {
         guard conversation != nil else { return }
-        let api = APIClient(settings: settings)
+        let api = APIClient(settings: settings, token: account.session?.token)
         Task { @MainActor in
             for _ in 0..<3 {
                 guard let sample = try? await api.timeSample(), conversation != nil else { return }
@@ -461,6 +503,13 @@ final class ConversationController: NSObject, ObservableObject {
             statusLine = "\(name) is talking"
             audio.endCapture {}
             burstId = nil
+        case "talk-refused":
+            // No longer friends (removed or blocked): nobody was rung.
+            WKInterfaceDevice.current().play(.failure)
+            audio.endCapture {}
+            burstId = nil
+            finish(status: "Can't reach \(name)")
+            account.refresh()
         case "joined":
             conversation?.joined = true
             conversation?.timeline.mark("joined", detail: "\(message.replayBursts ?? 0) buffered bursts")
@@ -629,8 +678,8 @@ final class ConversationController: NSObject, ObservableObject {
         statusLine = status
 
         guard let conversationId = ended.conversationId else { return }
-        let body = ended.timeline.upload(conversationId: conversationId, userId: settings.userId, clockOffsetMs: offset)
-        let api = APIClient(settings: settings)
+        let body = ended.timeline.upload(conversationId: conversationId, userId: account.session?.userId ?? "", clockOffsetMs: offset)
+        let api = APIClient(settings: settings, token: account.session?.token)
         Task { @MainActor in
             do {
                 try await api.uploadMetrics(body)

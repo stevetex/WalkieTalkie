@@ -2,22 +2,15 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<key>NSExtension</key>
-	<dict>
-		<key>NSExtensionPointIdentifier</key>
-		<string>com.apple.usernotifications.service</string>
-		<key>NSExtensionPrincipalClass</key>
-		<string>$(PRODUCT_MODULE_NAME).NotificationService</string>
-	</dict>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<!-- Lets the simulator reach a server on this Mac over plain HTTP. -->
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
-	<key>OAOServerHost</key>
-	<string>$(OAO_SERVER_HOST)</string>
-	<key>OAOAppGroup</key>
-	<string>$(OAO_APP_GROUP)</string>
+	<key>OAOApiHost</key>
+	<string>$(OAO_API_HOST)</string>
+	<key>OAOLinkDomain</key>
+	<string>$(OAO_LINK_DOMAIN)</string>
 </dict>
 </plist>

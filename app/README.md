@@ -5,9 +5,12 @@ The product: an iPhone companion app and an Apple Watch app. The relay is in [`.
 ```
 OverAndOut.xcodeproj    Hand-written project; iOS/ and Watch/ are synchronized folders,
                         so new files are picked up without editing the project
-iOS/                    iPhone app (iOS 16+): sign-in, invites, friends, settings
+iOS/                    iPhone app (iOS 16+): Sign in with Apple, onboarding (name, Focus,
+                        watch), friends, invites, block and report, settings, account deletion
 Watch/                  Watch app (watchOS 9+), embedded in the iPhone app
-Packages/OverAndOutKit  Shared code: relay transport, voice codec, audio pipeline
+WatchNotificationService/  The watch's notification service extension (ring prefetch)
+Packages/OverAndOutKit  Shared code: accounts (session, Keychain, API client), relay
+                        transport, voice codec, audio pipeline
 Config/                 xcconfigs, the watch's Info.plist additions and entitlements
 ```
 
@@ -17,7 +20,14 @@ Copy `Config/Local.xcconfig.example` to `Config/Local.xcconfig` (gitignored) and
 
 - **Bundle IDs:** `com.cypressoakstudios.overandout`, and `com.cypressoakstudios.overandout.watchkitapp` for the watch.
 - **Before the paid membership is active:** sign with the free Personal Team, and set `OAO_PUSH = no` and `OAO_BUNDLE_ID = com.cypressoakstudios.overandout.dev`. Automatic signing registers the bundle ID with whichever team signs, so a Personal Team mustn't claim the real one.
-- **With the paid team:** leave both unset. The watch then gets the Push Notifications and Time Sensitive Notifications entitlements. The watch registers for pushes itself, so the server's `APNS_BUNDLE_ID` (the APNs topic) must be the watch app's ID, `com.cypressoakstudios.overandout.watchkitapp`.
+- **With the paid team:** leave both unset. The watch then gets the Push Notifications and Time Sensitive Notifications entitlements. The watch registers for pushes itself, so the server's `APNS_BUNDLE_ID` (the APNs topic) must be the watch app's ID, `com.cypressoakstudios.overandout.watchkitapp`. The iPhone app has Sign in with Apple and Associated Domains (`applinks:overandout.app`), which Xcode's automatic signing adds to the App ID.
+- **Servers:** `OAO_SERVER_HOST` is the relay (relay-1.overandout.app) and `OAO_API_HOST` the account API (overandout.app, which Firebase Hosting forwards to Cloud Run). Builds hold no secrets: each device gets its own session token.
+
+## Accounts
+
+- The iPhone signs in with Apple (with a nonce) and gets a 30-day session token for itself. The watch gets its own session from the iPhone over WatchConnectivity (`iOS/PhoneWatchLink.swift`, `Watch/WatchAccount.swift`): it asks with its device ID, and the iPhone makes the session with the API. After that the watch refreshes its token itself.
+- Tokens live in the Keychain. The watch's is under the app group, so the notification service extension can prefetch with it.
+- Invite links (`https://overandout.app/i/<code>`) open the iPhone app, which asks before adding the friend. Signing out on the iPhone signs the watch out too.
 
 ## Build and test
 
@@ -27,7 +37,7 @@ xcodebuild -project OverAndOut.xcodeproj -scheme OverAndOut -destination 'generi
 
 Building the `OverAndOut` scheme also builds the watch app and embeds it. To run on the watch simulator, install `OverAndOutWatch.app` from `Debug-watchsimulator` with `xcrun simctl install`.
 
-To test the whole ring → tap → join path in the watch simulator without an APNs key, run a local relay with `SIMULATOR_PUSH=1` (see "Simulator" in [HANDOFF.md](../HANDOFF.md)). Build with `OAO_SERVER_HOST=localhost:8080 OAO_SERVER_TOKEN=<the local relay's token>`.
+To test in simulators without Apple or an APNs key, run a local relay that also serves the API and accepts dev sign-ins (see "Simulator" in [HANDOFF.md](../HANDOFF.md)), and build with `OAO_SERVER_HOST=localhost:8080 OAO_API_HOST=localhost:8080`. Debug builds against a local API show a "Test user" sign-in on the iPhone, and the watch signs in as a dev user when launched with `SIMCTL_CHILD_OAO_DEV_USER=<name>`, since WatchConnectivity doesn't work in the Xcode 27 simulators here.
 
 The shared package's tests run on the Mac:
 

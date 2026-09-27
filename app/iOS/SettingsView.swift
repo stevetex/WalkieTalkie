@@ -1,0 +1,136 @@
+import AuthenticationServices
+import OverAndOutKit
+import SwiftUI
+
+struct SettingsView: View {
+    @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var watch: PhoneWatchLink
+    @State private var name = ""
+    @State private var confirmingSignOut = false
+    @State private var confirmingDelete = false
+    @State private var deleting = false
+    @State private var reauthorizer = AppleReauthorizer()
+
+    var body: some View {
+        Form {
+            Section {
+                TextField("Your name", text: $name)
+                    .submitLabel(.done)
+                    .onSubmit(saveName)
+                if nameChanged {
+                    Button("Save Name", action: saveName)
+                }
+            } header: {
+                Text("Your name")
+            } footer: {
+                Text("Friends see this when you ring them.")
+            }
+
+            Section("Apple Watch") {
+                LabeledContent("Status", value: watchStatus)
+                if watch.isWatchAppInstalled {
+                    Button("Sign In on Watch Again") { watch.resendSession() }
+                }
+            }
+
+            Section {
+                NavigationLink("Let Rings Through Focus") {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 16) {
+                            Text("When Do Not Disturb or another Focus is on, your watch stays silent unless Over&Out is on that Focus's list of allowed apps.")
+                                .foregroundStyle(.secondary)
+                            FocusSteps()
+                        }
+                        .padding()
+                    }
+                    .navigationTitle("Rings and Focus")
+                }
+                NavigationLink("Blocked People") { BlockedView() }
+            }
+
+            Section {
+                Link("Privacy Policy", destination: URL(string: "https://\(model.linkDomain)/privacy")!)
+                Link("Help and Support", destination: URL(string: "https://\(model.linkDomain)/support")!)
+            }
+
+            Section {
+                Button("Sign Out") { confirmingSignOut = true }
+            }
+
+            Section {
+                Button(deleting ? "Deleting Account…" : "Delete Account", role: .destructive) { confirmingDelete = true }
+                    .disabled(deleting)
+            } footer: {
+                Text("Deletes your account, friends, invites and blocks, and removes you from your friends' lists.")
+            }
+        }
+        .navigationTitle("Settings")
+        .onAppear { name = model.displayName }
+        .confirmationDialog("Sign out of Over&Out?", isPresented: $confirmingSignOut, titleVisibility: .visible) {
+            Button("Sign Out", role: .destructive) { Task { await model.signOut() } }
+        } message: {
+            Text("Your watch is signed out too. Your friends stay.")
+        }
+        .confirmationDialog("Delete your account?", isPresented: $confirmingDelete, titleVisibility: .visible) {
+            Button("Delete Account", role: .destructive, action: deleteAccount)
+        } message: {
+            Text("This can't be undone. You'll confirm with Sign in with Apple, and Over&Out's access to your Apple ID is revoked.")
+        }
+    }
+
+    private var nameChanged: Bool {
+        let clean = name.trimmingCharacters(in: .whitespaces)
+        return !clean.isEmpty && clean != model.displayName
+    }
+
+    private var watchStatus: String {
+        if !watch.isPaired { return "No watch paired" }
+        if !watch.isWatchAppInstalled { return "Over&Out isn't installed" }
+        if let sent = watch.lastSentAt { return "Signed in \(sent.formatted(.relative(presentation: .named)))" }
+        return "Installed"
+    }
+
+    private func saveName() {
+        guard nameChanged else { return }
+        Task {
+            if await model.rename(name.trimmingCharacters(in: .whitespaces)) { name = model.displayName }
+        }
+    }
+
+    private func deleteAccount() {
+        deleting = true
+        Task {
+            defer { deleting = false }
+            do {
+                let code = try await reauthorizer.authorizationCode()
+                try await model.deleteAccount(authorizationCode: code)
+            } catch {
+                if !ASAuthorizationError.isCancel(error) { model.errorMessage = model.describe(error) }
+            }
+        }
+    }
+}
+
+struct BlockedView: View {
+    @EnvironmentObject private var model: AppModel
+
+    var body: some View {
+        List {
+            if model.blocks.isEmpty {
+                Text("You haven't blocked anyone.")
+                    .foregroundStyle(.secondary)
+            }
+            ForEach(model.blocks) { blocked in
+                HStack {
+                    Text(blocked.name ?? "Deleted account")
+                        .foregroundStyle(blocked.name == nil ? .secondary : .primary)
+                    Spacer()
+                    Button("Unblock") { Task { await model.unblock(blocked.id) } }
+                        .buttonStyle(.bordered)
+                }
+            }
+        }
+        .navigationTitle("Blocked People")
+        .refreshable { await model.refresh() }
+    }
+}

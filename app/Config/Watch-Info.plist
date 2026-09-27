@@ -10,8 +10,8 @@
 	</dict>
 	<key>OAOServerHost</key>
 	<string>$(OAO_SERVER_HOST)</string>
-	<key>OAOServerToken</key>
-	<string>$(OAO_SERVER_TOKEN)</string>
+	<key>OAOApiHost</key>
+	<string>$(OAO_API_HOST)</string>
 	<key>OAOAppGroup</key>
 	<string>$(OAO_APP_GROUP)</string>
 </dict>

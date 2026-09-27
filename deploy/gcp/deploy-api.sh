@@ -36,7 +36,7 @@ echo "Deploying $image to Cloud Run (api, $REGION)…"
 # Scale to zero; a cold start (~1–2 s) only delays sign-in, invites and friend lists, never
 # a ring. Anyone can call it: every route checks its own token.
 gc run deploy api --image="$image" --region="$REGION" \
-  --service-account="api@$PROJECT_ID.iam.gserviceaccount.com" \
+  --service-account="account-api@$PROJECT_ID.iam.gserviceaccount.com" \
   --allow-unauthenticated --ingress=all \
   --min-instances=0 --max-instances=4 --cpu=1 --memory=512Mi --concurrency=80 --timeout=30s \
   --env-vars-file="$stage/env.yaml"
