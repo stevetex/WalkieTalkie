@@ -2,6 +2,8 @@
 
 Approved direction: **09 — Chrome Tomorrow**, with rotary knob eyes and an oversized circular speaker mouth. September 27, 2026.
 
+The [17-character collection](characters/README.md) adds individual transparent masters, app image catalogs, full-color merch exports, and iPhone/Watch icon catalogs. Browse its [preview gallery](characters/preview.html).
+
 Open [preview.html](preview.html) to browse the artwork, see approximate iPhone and circular Watch masks, and compare small sizes. All assets and documentation are contained in this directory. The iPhone and Watch apps now embed copies of the icon and stacked-wordmark assets. Their semantic light/dark palettes are in each app’s `Assets.xcassets`, and shared color accessors are in `OverAndOutKit/Brand.swift`.
 
 ## Choose the right file

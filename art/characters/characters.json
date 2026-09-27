@@ -1,0 +1,172 @@
+[
+  {
+    "id": "01-porcelain",
+    "name": "Porcelain",
+    "detail": "warm light ivory housing, plain original knob eyes",
+    "assetName": "OAOPorcelain",
+    "nativeSize": [
+      1254,
+      1254
+    ]
+  },
+  {
+    "id": "02-honey",
+    "name": "Honey",
+    "detail": "warm golden honey tan housing, plain original knob eyes",
+    "assetName": "OAOHoney",
+    "nativeSize": [
+      1254,
+      1254
+    ]
+  },
+  {
+    "id": "03-cocoa",
+    "name": "Cocoa",
+    "detail": "rich deep warm cocoa brown housing, plain original knob eyes",
+    "assetName": "OAOCocoa",
+    "nativeSize": [
+      1254,
+      1254
+    ]
+  },
+  {
+    "id": "04-bow-lashes",
+    "name": "Bow & lashes",
+    "detail": "porcelain ivory housing, muted rose pink bow on antenna and long eyelashes",
+    "assetName": "OAOBowLashes",
+    "nativeSize": [
+      1254,
+      1254
+    ]
+  },
+  {
+    "id": "05-bunny",
+    "name": "Bunny",
+    "detail": "porcelain ivory housing, two rabbit-ear antennas with muted rose pink interiors, two ivory buck teeth descending into round speaker mouth",
+    "assetName": "OAOBunny",
+    "nativeSize": [
+      1254,
+      1254
+    ]
+  },
+  {
+    "id": "06-bookworm",
+    "name": "Bookworm",
+    "detail": "COCOA dark brown housing, round indigo eyeglasses and small orange bowtie centered at bottom of speaker",
+    "assetName": "OAOBookworm",
+    "nativeSize": [
+      1254,
+      1254
+    ]
+  },
+  {
+    "id": "07-mustachio",
+    "name": "Mustachio",
+    "detail": "porcelain ivory housing, bold curled black mustache above speaker",
+    "assetName": "OAOMustachio",
+    "nativeSize": [
+      1254,
+      1254
+    ]
+  },
+  {
+    "id": "08-tough-guy",
+    "name": "Tough guy",
+    "detail": "HONEY golden tan housing, thick comically angry angled eyebrows",
+    "assetName": "OAOToughGuy",
+    "nativeSize": [
+      1254,
+      1254
+    ]
+  },
+  {
+    "id": "09-manga",
+    "name": "Manga",
+    "detail": "porcelain ivory housing, very large tall oval manga eyes with several bright ivory highlights and stars, filling upper face, as large as approved sheet",
+    "assetName": "OAOManga",
+    "nativeSize": [
+      1254,
+      1254
+    ]
+  },
+  {
+    "id": "10-cool-cat",
+    "name": "Cool cat",
+    "detail": "COCOA dark brown housing, chunky dark indigo sunglasses; no cat ears",
+    "assetName": "OAOCoolCat",
+    "nativeSize": [
+      1254,
+      1254
+    ]
+  },
+  {
+    "id": "11-fox",
+    "name": "Fox",
+    "detail": "HONEY golden tan housing, tall bushy honey fox tail with ivory tip IN PLACE OF antenna at top right, pointed fox ears at top corners, small black button nose, ivory cheek tufts. Radio silhouette remains",
+    "assetName": "OAOFox",
+    "nativeSize": [
+      1254,
+      1254
+    ]
+  },
+  {
+    "id": "12-hi-fi",
+    "name": "Hi-fi",
+    "detail": "HONEY golden tan housing with orange and indigo retro headphones over top and sides, original antenna visible",
+    "assetName": "OAOHiFi",
+    "nativeSize": [
+      1254,
+      1254
+    ]
+  },
+  {
+    "id": "13-frankenstein",
+    "name": "Frankenstein",
+    "detail": "muted sage green housing, stitched line across forehead, silver bolts sticking out of lower sides. Friendly cartoon",
+    "assetName": "OAOFrankenstein",
+    "nativeSize": [
+      1254,
+      1254
+    ]
+  },
+  {
+    "id": "14-dracula",
+    "name": "Dracula",
+    "detail": "PORCELAIN ivory housing, dark indigo eyeshadow and angled brows, two pointed ivory vampire fangs descending into round speaker mouth",
+    "assetName": "OAODracula",
+    "nativeSize": [
+      1254,
+      1254
+    ]
+  },
+  {
+    "id": "15-morticia",
+    "name": "Morticia",
+    "detail": "PORCELAIN ivory housing, lots of long center-parted flowing dark black hair wrapping both sides and trailing at base, eyelashes and subtle indigo eyeshadow, antenna peeking out above hair",
+    "assetName": "OAOMorticia",
+    "nativeSize": [
+      1254,
+      1254
+    ]
+  },
+  {
+    "id": "16-bow-lashes-honey",
+    "name": "Bow & lashes \u00b7 Honey",
+    "detail": "honey golden tan housing, muted rose pink bow on antenna and long eyelashes",
+    "assetName": "OAOBowLashesHoney",
+    "nativeSize": [
+      1254,
+      1254
+    ]
+  },
+  {
+    "id": "17-bow-lashes-cocoa",
+    "name": "Bow & lashes \u00b7 Cocoa",
+    "detail": "rich cocoa brown housing, muted rose pink bow on antenna and long eyelashes",
+    "assetName": "OAOBowLashesCocoa",
+    "nativeSize": [
+      1254,
+      1254
+    ]
+  }
+]

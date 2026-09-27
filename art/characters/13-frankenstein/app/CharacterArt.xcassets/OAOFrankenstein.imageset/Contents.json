@@ -1,0 +1,23 @@
+{
+  "info": {
+    "author": "xcode",
+    "version": 1
+  },
+  "images": [
+    {
+      "filename": "OAOFrankenstein@1x.png",
+      "idiom": "universal",
+      "scale": "1x"
+    },
+    {
+      "filename": "OAOFrankenstein@2x.png",
+      "idiom": "universal",
+      "scale": "2x"
+    },
+    {
+      "filename": "OAOFrankenstein@3x.png",
+      "idiom": "universal",
+      "scale": "3x"
+    }
+  ]
+}

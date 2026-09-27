@@ -1,0 +1,7 @@
+{
+  "description": "Additional character palette targets. Generated shading varies; use the parent art/palette.json for the core brand colors.",
+  "rose_pink": "#D982A2",
+  "rose_shadow": "#B45F80",
+  "blush_highlight": "#F1B5C9",
+  "applies_to": ["04 ribbon", "05 inner ears", "16 ribbon", "17 ribbon"]
+}
