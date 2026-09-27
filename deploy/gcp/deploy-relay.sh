@@ -28,7 +28,9 @@ trap 'rm -rf "$stage"' EXIT
   echo "SPIKE_TOKEN_SECRET=relay-token"
   # Certificates from Google Trust Services (see server/container/entrypoint.sh).
   echo "ACME_EAB_SECRET=acme-eab"
-  if [ -n "$ACME_EMAIL" ]; then echo "ACME_EMAIL=$ACME_EMAIL"; fi
+  # Public CA refuses ACME accounts without a contact address.
+  acme_email=${ACME_EMAIL:-${ALERT_EMAIL:-}}
+  if [ -n "$acme_email" ]; then echo "ACME_EMAIL=$acme_email"; fi
   if [ -n "$APNS_KEY_FILE" ]; then
     echo "APNS_KEY_SECRET=apns-key"
     echo "APNS_KEY_ID=$APNS_KEY_ID"

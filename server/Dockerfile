@@ -30,7 +30,7 @@ USER node
 RUN export XDG_DATA_HOME=/tmp/validate XDG_CONFIG_HOME=/tmp/validate \
   && RELAY_HOSTNAMES="relay-1.example.com relay.example.org" ACME_EMAIL=ops@example.com container/entrypoint.sh --validate \
   && container/entrypoint.sh --validate \
-  && ACME_EAB_KEY_ID=kid-test ACME_EAB_MAC_KEY=bWFjLXRlc3Q RELAY_HOSTNAMES=relay-1.example.com container/entrypoint.sh --validate \
+  && ACME_EAB_KEY_ID=kid-test ACME_EAB_MAC_KEY=bWFjLXRlc3Q ACME_EMAIL=ops@example.com RELAY_HOSTNAMES=relay-1.example.com container/entrypoint.sh --validate \
   && rm -rf /tmp/validate /tmp/Caddyfile
 
 # /data is the node's persistent disk: Caddy's certificates and ACME account.

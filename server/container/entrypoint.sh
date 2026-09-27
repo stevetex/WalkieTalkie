@@ -23,6 +23,10 @@ if [ -z "$eab_key_id" ] && [ -n "${ACME_EAB_SECRET:-}" ]; then
   read -r eab_key_id eab_mac_key <<<"$eab"
   [ -n "$eab_mac_key" ] || { echo "[entrypoint] $ACME_EAB_SECRET has no keyId/b64MacKey" >&2; exit 1; }
 fi
+if [ -n "$eab_key_id" ] && [ -z "${ACME_EMAIL:-}" ]; then
+  echo "[entrypoint] Google Trust Services needs ACME_EMAIL (its accounts must have a contact)" >&2
+  exit 1
+fi
 
 # The Caddyfile holds the account key, so only this user can read it.
 umask 077
