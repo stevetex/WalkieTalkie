@@ -13,57 +13,64 @@ struct SettingsView: View {
 
     var body: some View {
         Form {
-            Section {
-                TextField("Your name", text: $name)
-                    .submitLabel(.done)
-                    .onSubmit(saveName)
-                if nameChanged {
-                    Button("Save Name", action: saveName)
-                }
-            } header: {
-                Text("Your name")
-            } footer: {
-                Text("Friends see this when you ring them.")
-            }
-
-            Section("Apple Watch") {
-                LabeledContent("Status", value: watchStatus)
-                if watch.isWatchAppInstalled {
-                    Button("Sign In on Watch Again") { watch.resendSession() }
-                }
-            }
-
-            Section {
-                NavigationLink("Let Rings Through Focus") {
-                    ScrollView {
-                        VStack(alignment: .leading, spacing: 16) {
-                            Text("When Do Not Disturb or another Focus is on, your watch stays silent unless Over&Out is on that Focus's list of allowed apps.")
-                                .foregroundStyle(.secondary)
-                            FocusSteps()
-                        }
-                        .padding()
+            Group {
+                Section {
+                    TextField("Your name", text: $name)
+                        .submitLabel(.done)
+                        .onSubmit(saveName)
+                    if nameChanged {
+                        Button("Save Name", action: saveName)
                     }
-                    .navigationTitle("Rings and Focus")
+                } header: {
+                    Text("Your name")
+                } footer: {
+                    Text("Friends see this when you ring them.")
                 }
-                NavigationLink("Blocked People") { BlockedView() }
-            }
 
-            Section {
-                Link("Privacy Policy", destination: URL(string: "https://\(model.linkDomain)/privacy")!)
-                Link("Help and Support", destination: URL(string: "https://\(model.linkDomain)/support")!)
-            }
+                Section("Apple Watch") {
+                    LabeledContent("Status", value: watchStatus)
+                    if watch.isWatchAppInstalled {
+                        Button("Sign In on Watch Again") { watch.resendSession() }
+                    }
+                }
 
-            Section {
-                Button("Sign Out") { confirmingSignOut = true }
-            }
+                Section {
+                    NavigationLink("Let Rings Through Focus") {
+                        ScrollView {
+                            VStack(alignment: .leading, spacing: 16) {
+                                Text(
+                                    "When Do Not Disturb or another Focus is on, your watch stays silent unless Over&Out is on that Focus's list of allowed apps."
+                                )
+                                .foregroundStyle(Brand.secondary)
+                                FocusSteps()
+                            }
+                            .padding()
+                        }
+                        .brandScreen()
+                        .navigationTitle("Rings and Focus")
+                    }
+                    NavigationLink("Blocked People") { BlockedView() }
+                }
 
-            Section {
-                Button(deleting ? "Deleting Account…" : "Delete Account", role: .destructive) { confirmingDelete = true }
-                    .disabled(deleting)
-            } footer: {
-                Text("Deletes your account, friends, invites and blocks, and removes you from your friends' lists.")
+                Section {
+                    Link("Privacy Policy", destination: URL(string: "https://\(model.linkDomain)/privacy")!)
+                    Link("Help and Support", destination: URL(string: "https://\(model.linkDomain)/support")!)
+                }
+
+                Section {
+                    Button("Sign Out") { confirmingSignOut = true }
+                }
+
+                Section {
+                    Button(deleting ? "Deleting Account…" : "Delete Account", role: .destructive) { confirmingDelete = true }
+                        .disabled(deleting)
+                } footer: {
+                    Text("Deletes your account, friends, invites and blocks, and removes you from your friends' lists.")
+                }
             }
+            .listRowBackground(Brand.surface)
         }
+        .brandScreen()
         .navigationTitle("Settings")
         .onAppear { name = model.displayName }
         .confirmationDialog("Sign out of Over&Out?", isPresented: $confirmingSignOut, titleVisibility: .visible) {
@@ -116,20 +123,24 @@ struct BlockedView: View {
 
     var body: some View {
         List {
-            if model.blocks.isEmpty {
-                Text("You haven't blocked anyone.")
-                    .foregroundStyle(.secondary)
-            }
-            ForEach(model.blocks) { blocked in
-                HStack {
-                    Text(blocked.name ?? "Deleted account")
-                        .foregroundStyle(blocked.name == nil ? .secondary : .primary)
-                    Spacer()
-                    Button("Unblock") { Task { await model.unblock(blocked.id) } }
-                        .buttonStyle(.bordered)
+            Group {
+                if model.blocks.isEmpty {
+                    Text("You haven't blocked anyone.")
+                        .foregroundStyle(Brand.secondary)
+                }
+                ForEach(model.blocks) { blocked in
+                    HStack {
+                        Text(blocked.name ?? "Deleted account")
+                            .foregroundStyle(blocked.name == nil ? Brand.secondary : Brand.primary)
+                        Spacer()
+                        Button("Unblock") { Task { await model.unblock(blocked.id) } }
+                            .buttonStyle(.bordered)
+                    }
                 }
             }
+            .listRowBackground(Brand.surface)
         }
+        .brandScreen()
         .navigationTitle("Blocked People")
         .refreshable { await model.refresh() }
     }

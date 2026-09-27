@@ -1,3 +1,4 @@
+import OverAndOutKit
 import SwiftUI
 
 struct ContentView: View {
@@ -14,13 +15,30 @@ struct ContentView: View {
     }
 
     var body: some View {
-        if account.session == nil {
-            SignInPrompt(phoneSignedIn: account.phoneSignedIn)
-        } else if account.friends.isEmpty && controller.phase == .idle && controller.incomingRing == nil {
-            NoFriendsYet(loaded: account.friendsLoaded)
-        } else {
-            main
+        Group {
+            if account.session == nil {
+                SignInPrompt(phoneSignedIn: account.phoneSignedIn)
+            } else if account.friends.isEmpty && controller.phase == .idle && controller.incomingRing == nil {
+                NoFriendsYet(loaded: account.friendsLoaded)
+            } else {
+                main
+            }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .safeAreaInset(edge: .bottom, spacing: 2) {
+            HStack {
+                Spacer()
+                Image("OverAndOutBrand")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 28, height: 28)
+                    .clipShape(RoundedRectangle(cornerRadius: 5))
+                    .accessibilityHidden(true)
+                    .allowsHitTesting(false)
+            }
+            .padding(.trailing, 6)
+        }
+        .brandScreen()
     }
 
     private var main: some View {
@@ -46,13 +64,13 @@ struct ContentView: View {
                         .font(.footnote)
                     }
                     .buttonStyle(.plain)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Brand.secondary)
                 } else {
                     Text(status)
                         .font(.footnote)
                         .multilineTextAlignment(.center)
                         .lineLimit(2)
-                        .foregroundStyle(controller.remoteTalking ? .green : .secondary)
+                        .foregroundStyle(controller.remoteTalking ? Color.green : Brand.secondary)
                 }
 
                 TalkButton(
@@ -105,7 +123,7 @@ struct TalkButton: View {
     var body: some View {
         ZStack {
             Circle()
-                .fill(isWaiting ? Color.gray : isTalking ? Color.red : Color.yellow)
+                .fill(isWaiting ? Brand.silver : isTalking ? Brand.ivory : Brand.orange)
                 .opacity(isDisabled ? 0.3 : 1)
             VStack(spacing: 2) {
                 Image(systemName: isWaiting ? "hourglass" : isTalking ? "waveform" : "mic.fill")
@@ -115,7 +133,7 @@ struct TalkButton: View {
                     .lineLimit(1)
                     .minimumScaleFactor(0.6)
             }
-            .foregroundStyle(.black)
+            .foregroundStyle(Brand.ink)
             .padding(8)
         }
         .frame(maxWidth: 120, maxHeight: 120)
@@ -147,7 +165,7 @@ struct SignInPrompt: View {
         VStack(spacing: 8) {
             Image(systemName: "iphone")
                 .font(.title2)
-                .foregroundStyle(.orange)
+                .foregroundStyle(Brand.accent)
             if phoneSignedIn == true {
                 ProgressView()
                 Text("Signing in from your iPhone…")
@@ -170,7 +188,7 @@ struct NoFriendsYet: View {
         VStack(spacing: 8) {
             Image(systemName: "person.2")
                 .font(.title2)
-                .foregroundStyle(.orange)
+                .foregroundStyle(Brand.accent)
             Text(loaded ? "Invite a friend from Over&Out on your iPhone" : "Loading friends…")
                 .font(.footnote)
                 .multilineTextAlignment(.center)
@@ -193,11 +211,13 @@ struct FriendPicker: View {
                     Text(friend.name)
                     Spacer()
                     if friend.id == account.selectedFriend?.id {
-                        Image(systemName: "checkmark").foregroundStyle(.orange)
+                        Image(systemName: "checkmark").foregroundStyle(Brand.accent)
                     }
                 }
             }
+            .listRowBackground(Brand.surface)
         }
+        .brandScreen()
         .navigationTitle("Friends")
     }
 }

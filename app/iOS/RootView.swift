@@ -18,6 +18,18 @@ struct RootView: View {
                 }
             }
         }
+        .safeAreaInset(edge: .top, spacing: 0) {
+            Image("OverAndOutBrand")
+                .resizable()
+                .scaledToFit()
+                .frame(height: 112)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 4)
+                .background(Brand.indigo)
+                .accessibilityLabel("Over&Out")
+                .accessibilityAddTraits(.isHeader)
+        }
+        .brandScreen()
         .sheet(item: inviteBinding) { _ in
             InviteAcceptView()
                 .environmentObject(model)
@@ -52,65 +64,60 @@ struct SignInView: View {
     #endif
 
     var body: some View {
-        VStack(spacing: 0) {
-            Spacer()
-            Image(systemName: "applewatch.radiowaves.left.and.right")
-                .font(.system(size: 64, weight: .medium))
-                .foregroundStyle(.orange)
-                .padding(.bottom, 24)
-            Text("Over&Out")
-                .font(.largeTitle.bold())
-            Text("A walkie-talkie for Apple Watch")
-                .font(.title3)
-                .foregroundStyle(.secondary)
-                .padding(.top, 4)
-            VStack(alignment: .leading, spacing: 14) {
-                Label("Hold Talk on your watch, and your friend hears you", systemImage: "mic.fill")
-                Label("They tap the ring to listen and talk back", systemImage: "bell.and.waves.left.and.right")
-                Label("Only friends you invite can ring you", systemImage: "person.2.fill")
-            }
-            .font(.callout)
-            .padding(.top, 36)
-            .padding(.horizontal, 8)
-            Spacer()
-            if model.pendingInvite != nil {
-                Text("Sign in to accept your invite.")
-                    .font(.callout.weight(.semibold))
-                    .padding(.bottom, 12)
-            }
-            SignInWithAppleButton(.signIn) { request in
-                nonce = AppleNonce.make()
-                request.requestedScopes = [.fullName]
-                request.nonce = AppleNonce.sha256(nonce)
-            } onCompletion: { result in
-                handle(result)
-            }
-            .signInWithAppleButtonStyle(colorScheme == .dark ? .white : .black)
-            .frame(height: 52)
-            .disabled(signingIn)
-            #if DEBUG
-            if model.isLocalServer {
-                HStack {
-                    TextField("Test user", text: $devName)
-                        .textFieldStyle(.roundedBorder)
-                        .autocorrectionDisabled()
-                        .textInputAutocapitalization(.never)
-                    Button("Sign in") {
-                        let name = devName.trimmingCharacters(in: .whitespaces)
-                        Task { await model.signIn(identityToken: "dev:\(name.lowercased())", nonce: "dev", name: name) }
-                    }
-                    .disabled(devName.trimmingCharacters(in: .whitespaces).isEmpty)
+        ScrollView {
+            VStack(spacing: 0) {
+                Text("A walkie-talkie for Apple Watch")
+                    .font(.title3)
+                    .foregroundStyle(Brand.secondary)
+                    .padding(.top, 4)
+                VStack(alignment: .leading, spacing: 14) {
+                    Label("Hold Talk on your watch, and your friend hears you", systemImage: "mic.fill")
+                    Label("They tap the ring to listen and talk back", systemImage: "bell.and.waves.left.and.right")
+                    Label("Only friends you invite can ring you", systemImage: "person.2.fill")
                 }
-                .padding(.top, 12)
+                .font(.callout)
+                .padding(.top, 36)
+                .padding(.horizontal, 8)
+                Spacer(minLength: 32)
+                if model.pendingInvite != nil {
+                    Text("Sign in to accept your invite.")
+                        .font(.callout.weight(.semibold))
+                        .padding(.bottom, 12)
+                }
+                SignInWithAppleButton(.signIn) { request in
+                    nonce = AppleNonce.make()
+                    request.requestedScopes = [.fullName]
+                    request.nonce = AppleNonce.sha256(nonce)
+                } onCompletion: { result in
+                    handle(result)
+                }
+                .signInWithAppleButtonStyle(colorScheme == .dark ? .white : .black)
+                .frame(height: 52)
+                .disabled(signingIn)
+                #if DEBUG
+                if model.isLocalServer {
+                    HStack {
+                        TextField("Test user", text: $devName)
+                            .textFieldStyle(.roundedBorder)
+                            .autocorrectionDisabled()
+                            .textInputAutocapitalization(.never)
+                        Button("Sign in") {
+                            let name = devName.trimmingCharacters(in: .whitespaces)
+                            Task { await model.signIn(identityToken: "dev:\(name.lowercased())", nonce: "dev", name: name) }
+                        }
+                        .disabled(devName.trimmingCharacters(in: .whitespaces).isEmpty)
+                    }
+                    .padding(.top, 12)
+                }
+                #endif
+                Text("Your name is shown to the friends you invite. We never see your email.")
+                    .font(.footnote)
+                    .foregroundStyle(Brand.secondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.top, 12)
             }
-            #endif
-            Text("Your name is shown to the friends you invite. We never see your email.")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-                .padding(.top, 12)
+            .padding(24)
         }
-        .padding(24)
         .overlay {
             if signingIn { ProgressView().controlSize(.large) }
         }

@@ -11,17 +11,22 @@ struct OnboardingView: View {
     @State private var saving = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            ProgressView(value: Double(step + 1), total: 3)
-                .tint(.orange)
-                .padding(.bottom, 32)
-            switch step {
-            case 0: nameStep
-            case 1: focusStep
-            default: watchStep
+        GeometryReader { geometry in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    ProgressView(value: Double(step + 1), total: 3)
+                        .tint(Brand.orange)
+                        .padding(.bottom, 32)
+                    switch step {
+                    case 0: nameStep
+                    case 1: focusStep
+                    default: watchStep
+                    }
+                }
+                .frame(minHeight: max(0, geometry.size.height - 48), alignment: .topLeading)
+                .padding(24)
             }
         }
-        .padding(24)
         .onAppear {
             // "Friend" is the server's stand-in when Apple didn't share a name.
             if name.isEmpty, model.displayName != "Friend" { name = model.displayName }
@@ -33,7 +38,7 @@ struct OnboardingView: View {
             Text("What should friends call you?")
                 .font(.title.bold())
             Text("Your name appears on their watch when you ring them.")
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Brand.secondary)
             TextField("Your name", text: $name)
                 .font(.title3)
                 .textContentType(.givenName)
@@ -46,8 +51,9 @@ struct OnboardingView: View {
                 Text("Continue").frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
+            .foregroundStyle(Brand.ink)
             .controlSize(.large)
-            .tint(.orange)
+            .tint(Brand.orange)
             .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty || saving)
         }
     }
@@ -57,7 +63,7 @@ struct OnboardingView: View {
             Text("Let rings through Focus")
                 .font(.title.bold())
             Text("When Do Not Disturb or another Focus is on, your watch stays silent unless Over&Out is on that Focus's list of allowed apps.")
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Brand.secondary)
             FocusSteps()
             Spacer()
             Button {
@@ -66,8 +72,9 @@ struct OnboardingView: View {
                 Text("I've Added It").frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
+            .foregroundStyle(Brand.ink)
             .controlSize(.large)
-            .tint(.orange)
+            .tint(Brand.orange)
             Button("Skip for Now") { step = 2 }
                 .frame(maxWidth: .infinity)
         }
@@ -79,13 +86,13 @@ struct OnboardingView: View {
                 .font(.title.bold())
             if !watch.isPaired {
                 Text("Over&Out needs an Apple Watch paired with this iPhone. You can still invite friends now.")
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Brand.secondary)
             } else if !watch.isWatchAppInstalled {
                 Text("Install Over&Out on your watch: open the Watch app on this iPhone, scroll to Available Apps, and tap Install next to Over&Out.")
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Brand.secondary)
             } else {
                 Text("Open Over&Out on your watch. It signs in with this account by itself.")
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Brand.secondary)
             }
             Spacer()
             Button {
@@ -94,8 +101,9 @@ struct OnboardingView: View {
                 Text("Done").frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
+            .foregroundStyle(Brand.ink)
             .controlSize(.large)
-            .tint(.orange)
+            .tint(Brand.orange)
         }
     }
 
@@ -138,7 +146,7 @@ struct FocusSteps: View {
             Text("\(number)")
                 .font(.callout.bold())
                 .frame(width: 26, height: 26)
-                .background(Circle().fill(.orange.opacity(0.18)))
+                .background(Circle().fill(Brand.orange.opacity(0.18)))
             Text(text)
         }
     }

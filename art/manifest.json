@@ -1,0 +1,386 @@
+{
+  "brand": "Over&Out",
+  "direction": "09 Chrome Tomorrow",
+  "created": "2026-09-27",
+  "asset_count": 41,
+  "assets": [
+    {
+      "path": "documentation/over-and-out-avatar-512.png",
+      "width": 512,
+      "height": 512,
+      "mode": "RGB",
+      "alpha": false,
+      "dpi": null,
+      "sha256": "90b8367af55ddb3693fdb94e615a51bf4be6c81a561acce17201b94cfe6817bf"
+    },
+    {
+      "path": "documentation/over-and-out-horizontal-1200.png",
+      "width": 1200,
+      "height": 400,
+      "mode": "RGBA",
+      "alpha": true,
+      "dpi": null,
+      "sha256": "23fd27fc1e7a13a65320d32310edc54535c3f00a326235433ec580e3bdf831f4"
+    },
+    {
+      "path": "documentation/over-and-out-horizontal-1800.png",
+      "width": 1800,
+      "height": 600,
+      "mode": "RGBA",
+      "alpha": true,
+      "dpi": null,
+      "sha256": "b789bdd483c86a73e191dc29d0fc5740ea622a63649238981d5235d071b16597"
+    },
+    {
+      "path": "documentation/over-and-out-horizontal-600.png",
+      "width": 600,
+      "height": 200,
+      "mode": "RGBA",
+      "alpha": true,
+      "dpi": null,
+      "sha256": "d46f91065942903827e650aa618be6eab40ede2e9ac726339924ba1f90958859"
+    },
+    {
+      "path": "icons/Watch.xcassets/AppIcon.appiconset/OverAndOut-1024.png",
+      "width": 1024,
+      "height": 1024,
+      "mode": "RGB",
+      "alpha": false,
+      "dpi": null,
+      "sha256": "e6a7107524112c1e9a40fc3b0f2b939bf1a0d75dec49042feb39954e36a30a05"
+    },
+    {
+      "path": "icons/exports/iphone-120.png",
+      "width": 120,
+      "height": 120,
+      "mode": "RGB",
+      "alpha": false,
+      "dpi": null,
+      "sha256": "2c19b48261df6e79865ea31e9f9136a5b87d9d35ddcb01cc015ffad6ef930457"
+    },
+    {
+      "path": "icons/exports/iphone-180.png",
+      "width": 180,
+      "height": 180,
+      "mode": "RGB",
+      "alpha": false,
+      "dpi": null,
+      "sha256": "922ecca410597874b0bc88f3be761eb5d6f1fa3e6f58a93a6b64f8d4096aa2bd"
+    },
+    {
+      "path": "icons/exports/iphone-40.png",
+      "width": 40,
+      "height": 40,
+      "mode": "RGB",
+      "alpha": false,
+      "dpi": null,
+      "sha256": "8a3bd3efbbc0420ac582f5e56e9267eec22cd174c6b5a8fe9d1a4428ada805fe"
+    },
+    {
+      "path": "icons/exports/iphone-512.png",
+      "width": 512,
+      "height": 512,
+      "mode": "RGB",
+      "alpha": false,
+      "dpi": null,
+      "sha256": "90b8367af55ddb3693fdb94e615a51bf4be6c81a561acce17201b94cfe6817bf"
+    },
+    {
+      "path": "icons/exports/iphone-58.png",
+      "width": 58,
+      "height": 58,
+      "mode": "RGB",
+      "alpha": false,
+      "dpi": null,
+      "sha256": "cf8d89e953870cb3935a123ae1b8fc011b244e75173046c32e9d322b8f707302"
+    },
+    {
+      "path": "icons/exports/iphone-60.png",
+      "width": 60,
+      "height": 60,
+      "mode": "RGB",
+      "alpha": false,
+      "dpi": null,
+      "sha256": "68ce9e92987171a8bd6d313d8bd7026464a41cad396b1ff1fae4a9ae7ba0abdc"
+    },
+    {
+      "path": "icons/exports/iphone-80.png",
+      "width": 80,
+      "height": 80,
+      "mode": "RGB",
+      "alpha": false,
+      "dpi": null,
+      "sha256": "8e4e3e99164afe25748f721a74e012bd66a24779f0bcdd1136f56865ae1d577e"
+    },
+    {
+      "path": "icons/exports/iphone-87.png",
+      "width": 87,
+      "height": 87,
+      "mode": "RGB",
+      "alpha": false,
+      "dpi": null,
+      "sha256": "41c9a1053b208a0d558ff2122313ae01ac4948a42743a62aa3d14460f5c428e1"
+    },
+    {
+      "path": "icons/exports/watch-108.png",
+      "width": 108,
+      "height": 108,
+      "mode": "RGB",
+      "alpha": false,
+      "dpi": null,
+      "sha256": "43cad8dc4d7f149db245416324140e2470200e9850694d9d3c46f17224681648"
+    },
+    {
+      "path": "icons/exports/watch-128.png",
+      "width": 128,
+      "height": 128,
+      "mode": "RGB",
+      "alpha": false,
+      "dpi": null,
+      "sha256": "3dc02e98fd20a393972e15739a322204a4e45460b1c1c679c3d7f47dd85b5335"
+    },
+    {
+      "path": "icons/exports/watch-172.png",
+      "width": 172,
+      "height": 172,
+      "mode": "RGB",
+      "alpha": false,
+      "dpi": null,
+      "sha256": "059ebb4ab601a16ab543a88094add8f78d04f7939e222f7f4620ec5a07871092"
+    },
+    {
+      "path": "icons/exports/watch-196.png",
+      "width": 196,
+      "height": 196,
+      "mode": "RGB",
+      "alpha": false,
+      "dpi": null,
+      "sha256": "0079e77f68877375971df6652e7e444e5b7279266d770551c6d09208f75da167"
+    },
+    {
+      "path": "icons/exports/watch-216.png",
+      "width": 216,
+      "height": 216,
+      "mode": "RGB",
+      "alpha": false,
+      "dpi": null,
+      "sha256": "4fc417221ae677a5fe3d30819a0aa6f6b7731f9ea46b56bcd3e49ad8ca98917d"
+    },
+    {
+      "path": "icons/exports/watch-234.png",
+      "width": 234,
+      "height": 234,
+      "mode": "RGB",
+      "alpha": false,
+      "dpi": null,
+      "sha256": "3ba4c712f66b64840515192199a66ba438ad09cbd6278e29c76baa743949e56e"
+    },
+    {
+      "path": "icons/exports/watch-258.png",
+      "width": 258,
+      "height": 258,
+      "mode": "RGB",
+      "alpha": false,
+      "dpi": null,
+      "sha256": "27c27c1cc1fcb8128d28eafdfac8429bf03c9e8410b700893b2e989537a8d862"
+    },
+    {
+      "path": "icons/exports/watch-48.png",
+      "width": 48,
+      "height": 48,
+      "mode": "RGB",
+      "alpha": false,
+      "dpi": null,
+      "sha256": "20ca8e90249a6d65c5d428bd847c50bdd40a745002eb16dfdcb6c2b3248feea1"
+    },
+    {
+      "path": "icons/exports/watch-80.png",
+      "width": 80,
+      "height": 80,
+      "mode": "RGB",
+      "alpha": false,
+      "dpi": null,
+      "sha256": "8e4e3e99164afe25748f721a74e012bd66a24779f0bcdd1136f56865ae1d577e"
+    },
+    {
+      "path": "icons/exports/watch-92.png",
+      "width": 92,
+      "height": 92,
+      "mode": "RGB",
+      "alpha": false,
+      "dpi": null,
+      "sha256": "e7592bedeb8a3e8b9c537b5fe4e3102738abb0680ba9a70dc1ab8dd95c463728"
+    },
+    {
+      "path": "icons/iPhone.xcassets/AppIcon.appiconset/OverAndOut-1024.png",
+      "width": 1024,
+      "height": 1024,
+      "mode": "RGB",
+      "alpha": false,
+      "dpi": null,
+      "sha256": "e6a7107524112c1e9a40fc3b0f2b939bf1a0d75dec49042feb39954e36a30a05"
+    },
+    {
+      "path": "masters/brand-stacked-indigo.png",
+      "width": 1254,
+      "height": 1254,
+      "mode": "RGB",
+      "alpha": false,
+      "dpi": null,
+      "sha256": "20d6bd2997fb05878dd4434c7aa3de712a813630fd7ddcbea15941d6fbc2d579"
+    },
+    {
+      "path": "masters/icon-indigo.png",
+      "width": 1254,
+      "height": 1254,
+      "mode": "RGB",
+      "alpha": false,
+      "dpi": null,
+      "sha256": "834714bceb3e3fa3759103fdb9b9eba3ec76e3c49733e82c7e668d29a94df80a"
+    },
+    {
+      "path": "masters/lockup-horizontal-dark.png",
+      "width": 2172,
+      "height": 724,
+      "mode": "RGBA",
+      "alpha": true,
+      "dpi": null,
+      "sha256": "e65298795b6474845564dc4b0dcd22c0c1e648153703177d0fb899e66cee0d0e"
+    },
+    {
+      "path": "masters/mascot-color.png",
+      "width": 1254,
+      "height": 1254,
+      "mode": "RGBA",
+      "alpha": true,
+      "dpi": null,
+      "sha256": "bfac653a3b858f1ebd78fd3dd43f0ea655b71c2a7543dd0cbbed7c60c49ca6ad"
+    },
+    {
+      "path": "masters/mascot-ink-black.png",
+      "width": 1254,
+      "height": 1254,
+      "mode": "RGBA",
+      "alpha": true,
+      "dpi": null,
+      "sha256": "dc75fdb74e083cfd35c4285308f8d8e7c41dfd2cb9c303b680e4597d631123c3"
+    },
+    {
+      "path": "merch/lockup-horizontal-dark-300dpi.png",
+      "width": 2172,
+      "height": 724,
+      "mode": "RGBA",
+      "alpha": true,
+      "dpi": [
+        299.9994,
+        299.9994
+      ],
+      "sha256": "072f50d7a6e450aa4fd272bfd249b38ba152910bd4a56e23c46cac38e903338f"
+    },
+    {
+      "path": "merch/mascot-color-300dpi.png",
+      "width": 1254,
+      "height": 1254,
+      "mode": "RGBA",
+      "alpha": true,
+      "dpi": [
+        299.9994,
+        299.9994
+      ],
+      "sha256": "f26990ec67a84f32483632de2a2ec8eca6f5c8f8d2d908a11f49a98de4c17972"
+    },
+    {
+      "path": "merch/mascot-ink-black-300dpi.png",
+      "width": 1254,
+      "height": 1254,
+      "mode": "RGBA",
+      "alpha": true,
+      "dpi": [
+        299.9994,
+        299.9994
+      ],
+      "sha256": "bbe7a19adc647a6c5a189ea9cbc3317d3c47dd6908b4d8cde38c38a857b6ee14"
+    },
+    {
+      "path": "reference/approved-direction-09-board.png",
+      "width": 1536,
+      "height": 1024,
+      "mode": "RGB",
+      "alpha": false,
+      "dpi": null,
+      "sha256": "3775d17005b7cdf04b1df788567c359fbc6f1adc2fcddeb2bea10b715da43267"
+    },
+    {
+      "path": "screens/ScreenArt.xcassets/OverAndOutBrand.imageset/OverAndOutBrand@1x.png",
+      "width": 256,
+      "height": 256,
+      "mode": "RGB",
+      "alpha": false,
+      "dpi": null,
+      "sha256": "894c4db9896cacf7dc2d02142f9d33938a6b59340485db2a46e932f4a6d8e8c9"
+    },
+    {
+      "path": "screens/ScreenArt.xcassets/OverAndOutBrand.imageset/OverAndOutBrand@2x.png",
+      "width": 512,
+      "height": 512,
+      "mode": "RGB",
+      "alpha": false,
+      "dpi": null,
+      "sha256": "79a1fb978d8a04a32a41b196ce77cf768ee35123cc48d80cca68a432b13a090a"
+    },
+    {
+      "path": "screens/ScreenArt.xcassets/OverAndOutBrand.imageset/OverAndOutBrand@3x.png",
+      "width": 768,
+      "height": 768,
+      "mode": "RGB",
+      "alpha": false,
+      "dpi": null,
+      "sha256": "bbc608d75a96755dc3b4ce77e9199cb865e885a3cda2aee215028fe0a62e492e"
+    },
+    {
+      "path": "screens/ScreenArt.xcassets/OverAndOutMascot.imageset/OverAndOutMascot@1x.png",
+      "width": 256,
+      "height": 256,
+      "mode": "RGBA",
+      "alpha": true,
+      "dpi": null,
+      "sha256": "558a7999b9958b748ab89d78365df222ac0925dc05dabb596adccad5f0029019"
+    },
+    {
+      "path": "screens/ScreenArt.xcassets/OverAndOutMascot.imageset/OverAndOutMascot@2x.png",
+      "width": 512,
+      "height": 512,
+      "mode": "RGBA",
+      "alpha": true,
+      "dpi": null,
+      "sha256": "59a6348f18032730c14a1e6ce8111373d9d0aaa4748f453c38f6a63607cb3b37"
+    },
+    {
+      "path": "screens/ScreenArt.xcassets/OverAndOutMascot.imageset/OverAndOutMascot@3x.png",
+      "width": 768,
+      "height": 768,
+      "mode": "RGBA",
+      "alpha": true,
+      "dpi": null,
+      "sha256": "01a18dcc4de10d994d90f6fd429422bdfe46bab2595ab3665335fa0e6bde14cf"
+    },
+    {
+      "path": "screens/about-welcome-1024.png",
+      "width": 1024,
+      "height": 1024,
+      "mode": "RGB",
+      "alpha": false,
+      "dpi": null,
+      "sha256": "def21a15a67a563ac826daab7a3898020e01b89449dc900581a1959445b8230c"
+    },
+    {
+      "path": "screens/mascot-transparent-1024.png",
+      "width": 1024,
+      "height": 1024,
+      "mode": "RGBA",
+      "alpha": true,
+      "dpi": null,
+      "sha256": "0c191012e6505af267796a1610635786a430105dd01c160f66d948110e1913fd"
+    }
+  ]
+}

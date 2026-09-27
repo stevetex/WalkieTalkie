@@ -13,31 +13,38 @@ struct FriendDetailView: View {
 
     var body: some View {
         List {
-            Section {
-                VStack(spacing: 10) {
-                    Text(String(friend.name.prefix(1)).uppercased())
-                        .font(.largeTitle.bold())
-                        .foregroundStyle(.white)
-                        .frame(width: 80, height: 80)
-                        .background(Circle().fill(.orange.gradient))
-                    Text(friend.name)
-                        .font(.title2.bold())
-                    Text("Friends since \(Date(timeIntervalSince1970: friend.since / 1000).formatted(date: .abbreviated, time: .omitted))")
+            Group {
+                Section {
+                    VStack(spacing: 10) {
+                        Text(String(friend.name.prefix(1)).uppercased())
+                            .font(.largeTitle.bold())
+                            .foregroundStyle(Brand.ink)
+                            .frame(width: 80, height: 80)
+                            .background(Circle().fill(Brand.orange.gradient))
+                        Text(friend.name)
+                            .font(.title2.bold())
+                        Text(
+                            "Friends since \(Date(timeIntervalSince1970: friend.since / 1000).formatted(date: .abbreviated, time: .omitted))"
+                        )
                         .font(.footnote)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Brand.secondary)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .listRowBackground(Color.clear)
                 }
-                .frame(maxWidth: .infinity)
-                .listRowBackground(Color.clear)
+                Section {
+                    Button("Report \(friend.name)…") { reporting = true }
+                    Button("Block \(friend.name)", role: .destructive) { confirmingBlock = true }
+                    Button("Remove Friend", role: .destructive) { confirmingRemove = true }
+                } footer: {
+                    Text(
+                        "Blocking removes \(friend.name) from your friends. They can't ring you or invite you again, and they aren't told.")
+                }
             }
-            Section {
-                Button("Report \(friend.name)…") { reporting = true }
-                Button("Block \(friend.name)", role: .destructive) { confirmingBlock = true }
-                Button("Remove Friend", role: .destructive) { confirmingRemove = true }
-            } footer: {
-                Text("Blocking removes \(friend.name) from your friends. They can't ring you or invite you again, and they aren't told.")
-            }
+            .listRowBackground(Brand.surface)
         }
         .disabled(working)
+        .brandScreen()
         .navigationTitle(friend.name)
         .navigationBarTitleDisplayMode(.inline)
         .confirmationDialog("Block \(friend.name)?", isPresented: $confirmingBlock, titleVisibility: .visible) {
@@ -81,23 +88,27 @@ struct ReportView: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("What's wrong?") {
-                    Picker("Reason", selection: $reason) {
-                        ForEach(ReportReason.allCases) { Text($0.title).tag($0) }
+                Group {
+                    Section("What's wrong?") {
+                        Picker("Reason", selection: $reason) {
+                            ForEach(ReportReason.allCases) { Text($0.title).tag($0) }
+                        }
+                        .pickerStyle(.inline)
+                        .labelsHidden()
                     }
-                    .pickerStyle(.inline)
-                    .labelsHidden()
+                    Section {
+                        TextField("Anything else we should know (optional)", text: $note, axis: .vertical)
+                            .lineLimit(3...6)
+                    }
+                    Section {
+                        Toggle("Also block \(friend.name)", isOn: $alsoBlock)
+                    } footer: {
+                        Text("We review every report. Over&Out doesn't record conversations, so describe what happened.")
+                    }
                 }
-                Section {
-                    TextField("Anything else we should know (optional)", text: $note, axis: .vertical)
-                        .lineLimit(3...6)
-                }
-                Section {
-                    Toggle("Also block \(friend.name)", isOn: $alsoBlock)
-                } footer: {
-                    Text("We review every report. Over&Out doesn't record conversations, so describe what happened.")
-                }
+                .listRowBackground(Brand.surface)
             }
+            .brandScreen()
             .navigationTitle("Report \(friend.name)")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

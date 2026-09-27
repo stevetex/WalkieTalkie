@@ -9,42 +9,46 @@ struct FriendsView: View {
 
     var body: some View {
         List {
-            if model.friends.isEmpty {
-                Section {
-                    VStack(spacing: 12) {
-                        Image(systemName: "person.2.wave.2")
-                            .font(.system(size: 44))
-                            .foregroundStyle(.orange)
-                        Text(model.friendsLoaded ? "No friends yet" : "Loading…")
-                            .font(.headline)
-                        Text("Invite a friend over Messages. When they tap the link, you can ring each other from your watches.")
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
-                            .multilineTextAlignment(.center)
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 24)
-                }
-            } else {
-                Section {
-                    ForEach(model.friends) { friend in
-                        NavigationLink(value: friend) {
-                            FriendRow(friend: friend)
+            Group {
+                if model.friends.isEmpty {
+                    Section {
+                        VStack(spacing: 12) {
+                            Image(systemName: "person.2.wave.2")
+                                .font(.system(size: 44))
+                                .foregroundStyle(Brand.accent)
+                            Text(model.friendsLoaded ? "No friends yet" : "Loading…")
+                                .font(.headline)
+                            Text("Invite a friend over Messages. When they tap the link, you can ring each other from your watches.")
+                                .font(.callout)
+                                .foregroundStyle(Brand.secondary)
+                                .multilineTextAlignment(.center)
                         }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 24)
                     }
+                } else {
+                    Section {
+                        ForEach(model.friends) { friend in
+                            NavigationLink(value: friend) {
+                                FriendRow(friend: friend)
+                            }
+                        }
+                    } footer: {
+                        Text("Ring a friend from Over&Out on your watch.")
+                    }
+                }
+                Section {
+                    Button(action: invite) {
+                        Label(creatingInvite ? "Creating Invite…" : "Invite a Friend", systemImage: "message.fill")
+                    }
+                    .disabled(creatingInvite)
                 } footer: {
-                    Text("Ring a friend from Over&Out on your watch.")
+                    Text("Each invite link works once and expires after 7 days.")
                 }
             }
-            Section {
-                Button(action: invite) {
-                    Label(creatingInvite ? "Creating Invite…" : "Invite a Friend", systemImage: "message.fill")
-                }
-                .disabled(creatingInvite)
-            } footer: {
-                Text("Each invite link works once and expires after 7 days.")
-            }
+            .listRowBackground(Brand.surface)
         }
+        .brandScreen()
         .navigationTitle("Friends")
         .navigationDestination(for: Friend.self) { friend in
             FriendDetailView(friend: friend)
@@ -86,9 +90,9 @@ struct FriendRow: View {
         HStack(spacing: 12) {
             Text(String(friend.name.prefix(1)).uppercased())
                 .font(.headline)
-                .foregroundStyle(.white)
+                .foregroundStyle(Brand.ink)
                 .frame(width: 36, height: 36)
-                .background(Circle().fill(.orange.gradient))
+                .background(Circle().fill(Brand.orange.gradient))
             Text(friend.name)
         }
         .padding(.vertical, 2)
