@@ -19,10 +19,11 @@
 //                                   tells the apps when to download it again
 //
 // A ring is allowed only if users/{from}/friends/{to} exists, so deleting an account or
-// blocking someone takes effect on the next ring, whatever tokens are still out there.
+// blocking someone takes effect on the next ring, whatever tokens are still out there. The
+// relay checks again while they talk (canTalk), so it also ends a conversation under way.
 
 import { randomBytes } from "node:crypto";
-import { PreconditionFailed, type FirestoreData, type Write } from "./firestore.ts";
+import { PreconditionFailed, type FirestoreData, type TransactionGet, type Write } from "./firestore.ts";
 import type { ApnsEnvironment } from "./apns.ts";
 import type { Docs } from "./docs.ts";
 
@@ -223,6 +224,20 @@ export class Accounts {
     return sid;
   }
 
+  // Every API call: the token's session is still its device's current one, on an account that
+  // still exists. Signing out, signing in again on the device and deleting the account end it,
+  // whatever the token's expiry says.
+  async sessionActive(userId: string, sid: string, deviceId: string): Promise<boolean> {
+    if (!isUserId(userId) || !isId(sid) || !isId(deviceId)) return false;
+    const [user, current, legacy] = await this.docs.getAll([
+      `users/${userId}`,
+      `users/${userId}/sessions/${deviceId}`,
+      `users/${userId}/sessions/${sid}`,
+    ]);
+    if (!user) return false;
+    return current ? current.sid === sid : legacy?.deviceId === deviceId;
+  }
+
   // Refreshing: true (and the session's refreshedAt updated) if this is still the device's
   // session.
   async touchSession(userId: string, sid: string, deviceId: string): Promise<boolean> {
@@ -291,6 +306,18 @@ export class Accounts {
       },
       ...(pin ? [{ set: `users/${userId}`, data: { ringOn: pin }, fields: ["ringOn"], exists: true }] : []),
     ]);
+  }
+
+  // The relay, when APNs says a device's push token is no longer valid. Only that token goes:
+  // if the device has registered a new one since, it stays. True if it was removed.
+  async removeDevice(userId: string, deviceId: string, pushToken: string): Promise<boolean> {
+    if (!isUserId(userId) || !isId(deviceId)) return false;
+    const path = `users/${userId}/devices/${deviceId}`;
+    return this.docs.transaction(async (get) => {
+      const [device] = await get([path]);
+      const stale = device !== undefined && device.pushToken === pushToken;
+      return { writes: stale ? [{ delete: path, exists: true }] : [], result: stale };
+    });
   }
 
   // The kinds of device registered for rings, for the iPhone's Ring Me On.
@@ -416,39 +443,54 @@ export class Accounts {
   // What the app shows before accepting. Expired, used, blocked (either way) and unknown
   // invites all look the same: not found.
   async invite(code: string, viewerId: string): Promise<InviteInfo> {
-    requireUserId(viewerId);
-    const { from, expiresAt } = await this.liveInvite(code);
-    if (from === viewerId) throw new AccountError(409, "own-invite");
-    const [inviter, alreadyFriends, blocked, blockedBy] = await this.docs.getAll([
-      `users/${from}`,
-      `users/${viewerId}/friends/${from}`,
-      `users/${viewerId}/blocks/${from}`,
-      `users/${from}/blocks/${viewerId}`,
-    ]);
-    if (!inviter || blocked || blockedBy) throw new AccountError(404, "invite-not-found");
-    return { code, from: { id: from, name: String(inviter.name) }, expiresAt, alreadyFriends: alreadyFriends !== undefined };
+    return this.readInvite((paths) => this.docs.getAll(paths), code, requireUserId(viewerId));
   }
 
-  // Makes the viewer and the inviter friends, and uses up the invite.
+  // Makes the viewer and the inviter friends, and uses up the invite. The checks and the
+  // friendship are one transaction, so a block or an account deletion that lands in between
+  // makes it run again and fail, rather than being undone by the new friendship.
   async acceptInvite(code: string, userId: string): Promise<Friend> {
-    const info = await this.invite(code, requireUserId(userId));
+    requireUserId(userId);
     const since = new Date(this.opts.now());
     try {
-      await this.docs.commit([
-        { delete: `invites/${code}`, exists: true },
-        ...(info.alreadyFriends
-          ? []
-          : [
-              { set: `users/${userId}/friends/${info.from.id}`, data: { since } },
-              { set: `users/${info.from.id}/friends/${userId}`, data: { since } },
-            ]),
-      ]);
+      return await this.docs.transaction(async (get) => {
+        const info = await this.readInvite(get, code, userId);
+        const writes: Write[] = [
+          { delete: `invites/${code}`, exists: true },
+          ...(info.alreadyFriends
+            ? []
+            : [
+                { set: `users/${userId}/friends/${info.from.id}`, data: { since } },
+                { set: `users/${info.from.id}/friends/${userId}`, data: { since } },
+              ]),
+        ];
+        return { writes, result: { id: info.from.id, name: info.from.name, since: since.getTime() } };
+      });
     } catch (err) {
       // Someone else accepted it first.
       if (err instanceof PreconditionFailed) throw new AccountError(404, "invite-not-found");
       throw err;
     }
-    return { id: info.from.id, name: info.from.name, since: since.getTime() };
+  }
+
+  private async readInvite(get: TransactionGet, code: string, viewerId: string): Promise<InviteInfo> {
+    if (!isId(code)) throw new AccountError(404, "invite-not-found");
+    const [invite] = await get([`invites/${code}`]);
+    // Firestore's TTL deletes expired invites within a day or so; until then, check here.
+    if (!invite || millis(invite.expireAt) <= this.opts.now() || !isUserId(invite.from)) {
+      throw new AccountError(404, "invite-not-found");
+    }
+    const from = invite.from;
+    if (from === viewerId) throw new AccountError(409, "own-invite");
+    const [inviter, viewer, alreadyFriends, blocked, blockedBy] = await get([
+      `users/${from}`,
+      `users/${viewerId}`,
+      `users/${viewerId}/friends/${from}`,
+      `users/${viewerId}/blocks/${from}`,
+      `users/${from}/blocks/${viewerId}`,
+    ]);
+    if (!inviter || !viewer || blocked || blockedBy) throw new AccountError(404, "invite-not-found");
+    return { code, from: { id: from, name: String(inviter.name) }, expiresAt: millis(invite.expireAt), alreadyFriends: alreadyFriends !== undefined };
   }
 
   async cancelInvite(code: string, userId: string): Promise<void> {
@@ -518,6 +560,14 @@ export class Accounts {
       devices: devices.map((d) => toDevice(d.id, d.data)),
       ...(isPlatform(recipient?.ringOn) ? { ringOn: recipient.ringOn } : {}),
     };
+  }
+
+  // For the relay, while two talk: still friends (a block or an unfriending removes both
+  // sides), and both accounts still there.
+  async canTalk(from: string, to: string): Promise<boolean> {
+    if (!isUserId(from) || !isUserId(to) || from === to) return false;
+    const [sender, friendship, recipient] = await this.docs.getAll([`users/${from}`, `users/${from}/friends/${to}`, `users/${to}`]);
+    return sender !== undefined && friendship !== undefined && recipient !== undefined;
   }
 
   // Everything under the user, the friend entries on the other side, their open invites and

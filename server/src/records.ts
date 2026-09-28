@@ -21,7 +21,8 @@ export interface WireRecord {
 }
 
 const HEADER_BYTES = 5;
-const MAX_PAYLOAD_BYTES = 1 << 20;
+// Control messages are small and audio frames at most 1280 bytes (protocol.ts).
+const MAX_PAYLOAD_BYTES = 64 * 1024;
 
 export function encodeRecord(type: RecordTypeValue, payload: Buffer): Buffer {
   const header = Buffer.alloc(HEADER_BYTES);

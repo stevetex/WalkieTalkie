@@ -4,11 +4,11 @@ import { startServer, type RunningServer, type ServerOptions } from "../src/main
 import { JsonDeviceStore, type Device, type DeviceStore } from "../src/store.ts";
 import { DryRunPusher } from "../src/apns.ts";
 import { SpikeClient } from "../tools/client.ts";
-import { RecordParser } from "../src/records.ts";
+import { RecordParser, encodeJSONRecord } from "../src/records.ts";
 
 async function withServer(
   fn: (s: RunningServer, pusher: DryRunPusher) => Promise<void>,
-  options: Partial<Pick<ServerOptions, "ringTimeoutMs" | "answerJoinTimeoutMs" | "devices" | "prefetchPushAfterMs">> = {},
+  options: Partial<Pick<ServerOptions, "ringTimeoutMs" | "answerJoinTimeoutMs" | "devices" | "prefetchPushAfterMs" | "maxBurstMs" | "maxBufferedBytes">> = {},
 ): Promise<void> {
   const pusher = new DryRunPusher();
   const running = await startServer({ port: 0, dataDir: null, token: "secret", pusher, ...options });
@@ -512,4 +512,110 @@ test("prefetch: other users can't download a conversation's audio", async () => 
     });
     assert.equal(res.status, 404);
   });
+});
+
+test("malformed messages get an error, and the relay keeps going", async () => {
+  await withServer(async (s) => {
+    const bob = client(s, "bob");
+    await bob.connect();
+    // null is valid JSON; so are messages missing their fields.
+    for (const bad of [null, 42, [], {}, { type: "talk-start" }, { type: "join", conversationId: 7 }, { type: "nope" }]) {
+      bob.send(bad as never);
+    }
+    for (let i = 0; i < 7; i++) await bob.waitFor("error", (m) => m.message === "invalid message");
+
+    // The HTTP transport: the POST is refused.
+    const watch = new SpikeClient({ server: `http://localhost:${s.port}`, userId: "watch", token: "secret", transport: "http" });
+    await watch.connect();
+    const res = await fetch(`http://localhost:${s.port}/v1/relay/send?userId=watch`, {
+      method: "POST",
+      headers: { authorization: "Bearer secret" },
+      body: encodeJSONRecord(null),
+    });
+    assert.equal(res.status, 400);
+
+    bob.send({ type: "hello", clientTime: 1 });
+    assert.equal((await bob.waitFor("hello-ack")).clientTime, 1);
+    watch.close();
+    bob.close();
+  });
+});
+
+test("frames the apps can't decode aren't relayed", async () => {
+  await withServer(async (s) => {
+    const alice = client(s, "alice");
+    const bob = client(s, "bob");
+    await bob.register("Bob");
+    await alice.connect();
+    await bob.connect();
+    alice.send({ type: "talk-start", to: "bob", burstId: "b1" });
+    const ring = await bob.waitFor("ring");
+    bob.send({ type: "join", conversationId: ring.conversationId });
+    await bob.waitFor("burst-start");
+    alice.sendFrame(2, 0, Buffer.alloc(1282)); // PCM that isn't 320 samples
+    alice.sendFrame(2, 1, Buffer.alloc(0));
+    alice.sendFrame(1, 2, Buffer.alloc(2000)); // bigger than any Opus packet
+    alice.sendFrame(9, 3, Buffer.alloc(640)); // no such codec
+    alice.sendFrame(2, 4, Buffer.alloc(640));
+    alice.sendFrame(1, 5, Buffer.alloc(60));
+    alice.send({ type: "talk-end", burstId: "b1" });
+    await bob.waitFor("burst-end");
+    assert.deepEqual(bob.frames.map((f) => f.readUInt32BE(1)), [4, 5]);
+    alice.close();
+    bob.close();
+  });
+});
+
+test("audio heard live isn't kept, and a burst that never ends is ended", async () => {
+  await withServer(async (s) => {
+    const alice = client(s, "alice");
+    const bob = client(s, "bob");
+    await bob.register("Bob");
+    await alice.connect();
+    await bob.connect();
+    alice.send({ type: "talk-start", to: "bob", burstId: "b1" });
+    const ring = await bob.waitFor("ring");
+    bob.send({ type: "join", conversationId: ring.conversationId });
+    await bob.waitFor("burst-start");
+    for (let seq = 0; seq < 5; seq++) alice.sendFrame(2, seq, Buffer.alloc(640));
+    while (bob.frames.length < 5) await new Promise((r) => setTimeout(r, 5));
+    assert.equal(s.relay.snapshot()[0].floor, "alice");
+    assert.equal(s.relay.snapshot()[0].bufferedBytes, 0);
+
+    // No talk-end: the relay ends the burst at maxBurstMs, frees the floor and says why.
+    assert.equal((await alice.waitFor("error")).message, "burst too long");
+    await bob.waitFor("burst-end");
+    assert.equal(s.relay.snapshot()[0].floor, null);
+    alice.close();
+    bob.close();
+  }, { maxBurstMs: 300 });
+});
+
+test("a conversation holds only so much audio for someone who hasn't heard it", async () => {
+  await withServer(async (s) => {
+    const alice = client(s, "alice");
+    await alice.connect();
+    // Nobody to ring, so it buffers: room for 5 frames.
+    alice.send({ type: "talk-start", to: "bob", burstId: "b1" });
+    await alice.waitFor("floor-granted");
+    for (let seq = 0; seq < 8; seq++) alice.sendFrame(2, seq, Buffer.alloc(640));
+    assert.equal((await alice.waitFor("error")).message, "too much audio waiting");
+    assert.equal(s.relay.snapshot()[0].bufferedBytes, 5 * 645);
+    assert.equal(s.relay.snapshot()[0].floor, null);
+    alice.close();
+  }, { maxBufferedBytes: 5 * 645 + 100 });
+});
+
+test("a burst sent faster than real time is cut off at the longest burst's worth of frames", async () => {
+  await withServer(async (s) => {
+    const alice = client(s, "alice");
+    await alice.connect();
+    alice.send({ type: "talk-start", to: "bob", burstId: "b1" });
+    await alice.waitFor("floor-granted");
+    // 10 frames = 200 ms; the 11th ends the burst long before its timer would.
+    for (let seq = 0; seq < 15; seq++) alice.sendFrame(2, seq, Buffer.alloc(640));
+    assert.equal((await alice.waitFor("error", () => true, 150)).message, "burst too long");
+    assert.equal(s.relay.snapshot()[0].bufferedBytes, 10 * 645);
+    alice.close();
+  }, { maxBurstMs: 200 });
 });

@@ -5,8 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { MemoryDocs } from "../src/docs.ts";
 import { PreconditionFailed } from "../src/firestore.ts";
-import { cleanName } from "../src/accounts.ts";
-import { accountsSuite } from "./accounts-suite.ts";
+import { Accounts, AccountError, cleanName } from "../src/accounts.ts";
+import { accountsSuite, interleaved } from "./accounts-suite.ts";
 
 accountsSuite("memory", () => new MemoryDocs());
 
@@ -50,4 +50,34 @@ test("names are trimmed, single-spaced and at most 40 characters", () => {
   assert.equal(cleanName("x".repeat(50))?.length, 40);
   assert.equal(cleanName("   "), undefined);
   assert.equal(cleanName(3), undefined);
+});
+
+test("memory docs: a transaction runs again when something it read changes before it commits", async () => {
+  const docs = new MemoryDocs();
+  await docs.commit([{ set: "a/1", data: { n: 1 } }]);
+  let runs = 0;
+  const result = await docs.transaction(async (get) => {
+    runs++;
+    const [a] = await get(["a/1", "a/missing"]);
+    // A write lands after the first run's reads, to a document it read (and one it found missing).
+    if (runs === 1) await docs.commit([{ set: "a/1", data: { n: 5 } }, { set: "a/missing", data: {} }]);
+    return { writes: [{ set: "b/1", data: { copy: a!.n } }], result: a!.n };
+  });
+  assert.equal(runs, 2);
+  assert.equal(result, 5);
+  assert.deepEqual(await docs.getAll(["b/1"]), [{ copy: 5 }]);
+});
+
+test("a block committed between an invite's checks and its commit isn't undone by the friendship", async () => {
+  const docs = interleaved(new MemoryDocs());
+  const accounts = new Accounts(docs);
+  const alice = (await accounts.signInWithApple("001.alice.1", "Alice")).user;
+  const bob = (await accounts.signInWithApple("001.bob.1", "Bob")).user;
+  const { code } = await accounts.createInvite(alice.id);
+  // The block commits in full after the acceptance has read that there's none.
+  docs.between = () => accounts.block(alice.id, bob.id);
+  await assert.rejects(accounts.acceptInvite(code, bob.id), (err) => err instanceof AccountError && err.code === "invite-not-found");
+  assert.deepEqual(await accounts.friends(alice.id), []);
+  assert.deepEqual(await accounts.friends(bob.id), []);
+  assert.equal(await accounts.canTalk(bob.id, alice.id), false);
 });

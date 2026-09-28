@@ -13,6 +13,21 @@ export const Codec = {
 
 export const FRAME_HEADER_BYTES = 5;
 export const FRAME_MS = 20;
+// One 20 ms frame of 16 kHz mono PCM16 is 320 samples; the apps pad the last one.
+export const PCM_FRAME_BYTES = 640;
+// The largest Opus packet (RFC 6716).
+export const MAX_OPUS_PACKET_BYTES = 1275;
+
+// A frame the apps can decode: a known codec and a payload of the right size for it. The
+// relay drops anything else rather than forward it to a decoder.
+export function isValidFrame(frame: Buffer): boolean {
+  const payload = frame.length - FRAME_HEADER_BYTES;
+  switch (frame[0]) {
+    case Codec.pcm16le16k: return payload === PCM_FRAME_BYTES;
+    case Codec.opus16k: return payload > 0 && payload <= MAX_OPUS_PACKET_BYTES;
+    default: return false;
+  }
+}
 
 export type ClientMessage =
   // First message after connecting. clientTime lets the client estimate clock offset.
@@ -23,6 +38,28 @@ export type ClientMessage =
   // Receiver answered the ring: replay anything buffered, then go live.
   | { type: "join"; conversationId: string }
   | { type: "leave"; conversationId: string };
+
+const MAX_ID_LENGTH = 128;
+
+// A client message checked field by field (clients are untrusted), or null.
+export function parseClientMessage(value: unknown): ClientMessage | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const m = value as Record<string, unknown>;
+  const id = (v: unknown): v is string => typeof v === "string" && v.length > 0 && v.length <= MAX_ID_LENGTH;
+  switch (m.type) {
+    case "hello":
+      return typeof m.clientTime === "number" && Number.isFinite(m.clientTime) ? { type: "hello", clientTime: m.clientTime } : null;
+    case "talk-start":
+      return id(m.to) && id(m.burstId) ? { type: "talk-start", to: m.to, burstId: m.burstId } : null;
+    case "talk-end":
+      return id(m.burstId) ? { type: "talk-end", burstId: m.burstId } : null;
+    case "join":
+    case "leave":
+      return id(m.conversationId) ? { type: m.type, conversationId: m.conversationId } : null;
+    default:
+      return null;
+  }
+}
 
 export type ServerMessage =
   | { type: "hello-ack"; clientTime: number; serverTime: number }
@@ -38,6 +75,9 @@ export type ServerMessage =
   | { type: "burst-start"; conversationId: string; burstId: string; from: string; replay: boolean }
   | { type: "burst-end"; conversationId: string; burstId: string }
   | { type: "peer-left"; conversationId: string; peer: string }
+  // The two may no longer talk (a block, an unfriending or a deleted account): the relay
+  // dropped the conversation and its audio.
+  | { type: "conversation-ended"; conversationId: string; reason: "not-friends" }
   // The ring went unanswered; the sender's unheard audio was dropped.
   | { type: "ring-timeout"; conversationId: string; peer: string; droppedBursts: number }
   // Stand-in for the ring push, used for test bots registered with a "local:" token.

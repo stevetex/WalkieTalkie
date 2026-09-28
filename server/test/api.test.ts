@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { startServer, type RunningServer } from "../src/main.ts";
-import { DryRunPusher } from "../src/apns.ts";
+import { DryRunPusher, type AlertPush, type ApnsEnvironment, type PushResult } from "../src/apns.ts";
 import { Accounts } from "../src/accounts.ts";
 import { createApi } from "../src/api.ts";
 import { MemoryDocs } from "../src/docs.ts";
@@ -22,7 +22,10 @@ interface Harness {
 
 // Apple is faked: the identity token is the Apple user ID, and an authorization code
 // "code:<sub>" revokes that user's token.
-async function withApi(fn: (h: Harness) => Promise<void>, relayOptions: { ringTimeoutMs?: number } = {}): Promise<void> {
+async function withApi(
+  fn: (h: Harness) => Promise<void>,
+  { pusher = new DryRunPusher(), ...relayOptions }: { ringTimeoutMs?: number; authTtlMs?: number; pusher?: DryRunPusher } = {},
+): Promise<void> {
   const now = { t: Date.now() };
   const { signingKey, publicKeys } = generateSigningKey("test");
   const signer = new SessionSigner(signingKey, () => now.t);
@@ -49,7 +52,6 @@ async function withApi(fn: (h: Harness) => Promise<void>, relayOptions: { ringTi
     inviteBaseUrl: "https://overandout.app/i/",
     log: () => {},
   });
-  const pusher = new DryRunPusher();
   const server = await startServer({
     port: 0,
     dataDir: null,
@@ -272,7 +274,8 @@ test("deleting an account revokes the Apple token with a fresh code and removes 
 
     assert.equal((await call(url, "DELETE", "/v1/me", alice.token, { authorizationCode: "code:apple.alice" })).status, 200);
     assert.deepEqual(revoked, ["apple.bob", "apple.alice"]);
-    assert.equal((await call(url, "GET", "/v1/me", alice.token)).status, 404);
+    const gone = await call(url, "GET", "/v1/me", alice.token);
+    assert.deepEqual([gone.status, gone.body.error], [401, "session-ended"]);
     assert.deepEqual((await call(url, "GET", "/v1/friends", bob.token)).body.friends, []);
     assert.equal((await call(url, "POST", "/v1/auth/refresh", alice.token)).status, 401);
   });
@@ -422,4 +425,129 @@ test("the device in use keeps the conversation: a reply rings the iPhone Alice t
     assert.deepEqual(pusher.sent.map((p) => [p.pushType, p.token]), [["pushtotalk", "ptt-alice"]]);
     bobClient.close();
   });
+});
+
+test("a token kept after signing out is refused, and can't make new sessions", async () => {
+  await withApi(async ({ url }) => {
+    const alice = await signIn(url, "apple.alice", "Alice", "alice-phone");
+    assert.equal((await call(url, "POST", "/v1/auth/signout", alice.token)).status, 200);
+    for (const [method, path, body] of [
+      ["GET", "/v1/me", undefined],
+      ["GET", "/v1/friends", undefined],
+      ["POST", "/v1/invites", undefined],
+      ["POST", "/v1/auth/device", { deviceId: "alice-watch", platform: "watch" }],
+    ] as const) {
+      const res = await call(url, method, path, alice.token, body);
+      assert.deepEqual([res.status, res.body.error], [401, "session-ended"], `${method} ${path}`);
+    }
+    assert.equal((await call(url, "POST", "/v1/auth/refresh", alice.token)).status, 401);
+
+    // Signing in again on the device replaces the session, so the old token stops working too.
+    const first = await signIn(url, "apple.alice", "Alice", "alice-phone");
+    const second = await signIn(url, "apple.alice", "Alice", "alice-phone");
+    assert.equal((await call(url, "GET", "/v1/me", first.token)).status, 401);
+    assert.equal((await call(url, "GET", "/v1/me", second.token)).status, 200);
+  });
+});
+
+test("blocking ends a conversation already under way, even mid-burst", async () => {
+  await withApi(async ({ url }) => {
+    const { alice, watchToken, bob } = await twoDevices(url);
+    const bobClient = new SpikeClient({ server: url, userId: "bob", token: bob.token });
+    await bobClient.connect();
+    const aliceWatch = new SpikeClient({ server: url, userId: "alice-watch", token: watchToken, transport: "http" });
+
+    // Bob rings, Alice joins, and Bob keeps talking live.
+    bobClient.send({ type: "talk-start", to: alice.user.id, burstId: "b1" });
+    const { conversationId } = await bobClient.waitFor("floor-granted");
+    await aliceWatch.connect(conversationId);
+    await aliceWatch.waitFor("burst-start");
+    bobClient.sendFrame(2, 0, Buffer.alloc(640, 1));
+    while (aliceWatch.frames.length < 1) await new Promise((r) => setTimeout(r, 5));
+
+    // Alice blocks him. His audio is checked again (every frame here, with no grace period),
+    // the conversation ends for both, and nothing more reaches her.
+    assert.equal((await call(url, "POST", "/v1/blocks", alice.token, { userId: bob.user.id })).status, 200);
+    bobClient.sendFrame(2, 1, Buffer.alloc(640, 1));
+    assert.equal((await bobClient.waitFor("talk-refused")).reason, "not-friends");
+    assert.equal((await aliceWatch.waitFor("conversation-ended")).conversationId, conversationId);
+    const heard = aliceWatch.frames.length;
+    for (let seq = 2; seq < 5; seq++) bobClient.sendFrame(2, seq, Buffer.alloc(640, 1));
+    await new Promise((r) => setTimeout(r, 50));
+    assert.equal(aliceWatch.frames.length, heard);
+
+    // And a new Talk from him is refused.
+    bobClient.send({ type: "talk-start", to: alice.user.id, burstId: "b2" });
+    assert.equal((await bobClient.waitFor("talk-refused", (m) => m.burstId === "b2")).reason, "not-friends");
+    bobClient.close();
+    aliceWatch.close();
+  }, { authTtlMs: 0 });
+});
+
+test("unfriending ends the conversation at the next Talk, whoever talks", async () => {
+  await withApi(async ({ url }) => {
+    const { alice, watchToken, bob } = await twoDevices(url);
+    const bobClient = new SpikeClient({ server: url, userId: "bob", token: bob.token });
+    await bobClient.connect();
+    const aliceWatch = new SpikeClient({ server: url, userId: "alice-watch", token: watchToken, transport: "http" });
+    const { conversationId } = await bobClient.talk(alice.user.id, pcm(2), { realtime: false });
+    await aliceWatch.connect(conversationId);
+    await aliceWatch.waitFor("burst-end");
+
+    assert.equal((await call(url, "DELETE", `/v1/friends/${bob.user.id}`, alice.token)).status, 200);
+    aliceWatch.send({ type: "talk-start", to: bob.user.id, burstId: "a1" });
+    assert.equal((await aliceWatch.waitFor("talk-refused")).reason, "not-friends");
+    assert.equal((await bobClient.waitFor("conversation-ended")).conversationId, conversationId);
+    bobClient.close();
+    aliceWatch.close();
+  }, { authTtlMs: 0 });
+});
+
+// APNs says a token is unregistered.
+class RejectingPusher extends DryRunPusher {
+  private dead: string;
+  constructor(dead: string) {
+    super();
+    this.dead = dead;
+  }
+  override async sendAlert(token: string, env: ApnsEnvironment, push: AlertPush): Promise<PushResult> {
+    const result = await super.sendAlert(token, env, push);
+    return token === this.dead ? { ok: false, status: 410, reason: "Unregistered", latencyMs: 1, dryRun: false } : result;
+  }
+}
+
+test("a watch APNs no longer knows is unregistered, and the iPhone rings instead", async () => {
+  const pusher = new RejectingPusher("dead-watch-token");
+  await withApi(async ({ url }) => {
+    const alice = await signIn(url, "apple.alice", "Alice", "alice-phone");
+    const watch = await call(url, "POST", "/v1/auth/device", alice.token, { deviceId: "alice-watch", platform: "watch" });
+    await call(url, "PUT", "/v1/me/device", watch.body.token, { platform: "watch", pushToken: "dead-watch-token" });
+    await call(url, "PUT", "/v1/me/device", alice.token, { platform: "iphone", pushToken: "ptt-alice", pushType: "pushtotalk" });
+    const bob = await signIn(url, "apple.bob", "Bob", "bob-phone");
+    await befriend(url, alice.token, bob.token);
+    const bobClient = new SpikeClient({ server: url, userId: "bob", token: bob.token });
+    await bobClient.connect();
+
+    const ring = await bobClient.talk(alice.user.id, pcm(1), { realtime: false });
+    assert.equal(ring.pushed, true);
+    assert.deepEqual(pusher.sent.map((p) => [p.pushType ?? "alert", p.token]), [["alert", "dead-watch-token"], ["pushtotalk", "ptt-alice"]]);
+    await new Promise((r) => setTimeout(r, 20));
+    assert.deepEqual((await call(url, "GET", "/v1/me", alice.token)).body.platforms, ["iphone"]);
+    bobClient.close();
+  }, { pusher });
+});
+
+test("when APNs turns away the only device, the sender hears nobody can be rung", async () => {
+  const pusher = new RejectingPusher("dead-watch-token");
+  await withApi(async ({ url }) => {
+    const alice = await signIn(url, "apple.alice", "Alice", "alice-phone");
+    await call(url, "PUT", "/v1/me/device", alice.token, { platform: "iphone", pushToken: "dead-watch-token" });
+    const bob = await signIn(url, "apple.bob", "Bob", "bob-phone");
+    await befriend(url, alice.token, bob.token);
+    const bobClient = new SpikeClient({ server: url, userId: "bob", token: bob.token });
+    await bobClient.connect();
+    bobClient.send({ type: "talk-start", to: alice.user.id, burstId: "b1" });
+    assert.equal((await bobClient.waitFor("talk-refused")).reason, "unavailable");
+    bobClient.close();
+  }, { pusher });
 });

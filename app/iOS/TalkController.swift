@@ -144,12 +144,18 @@ final class TalkController: ObservableObject {
     }
 
     /// In-app mode on screen: a stream without a conversation, so the relay can ring us.
+    /// Signed out, it does nothing (and leaves nothing set), so signing in can open it.
     func openIdleStreamIfNeeded() {
         guard inForeground, !usesPushToTalk, conversation == nil, !idleStream, !relay.isConnecting else { return }
-        guard let baseURL = relayBaseURL else { return }
+        guard let baseURL = relayBaseURL, client.session != nil else { return }
         idleStream = true
         withToken { [weak self] session in
-            guard let self, idleStream, conversation == nil, let session else { return }
+            guard let self, idleStream, conversation == nil else { return }
+            guard let session else {
+                // The refresh failed: nothing is open, so the next chance should try again.
+                idleStream = false
+                return
+            }
             relay.connect(baseURL: baseURL, token: session.token, userId: session.userId)
         }
     }
@@ -174,10 +180,11 @@ final class TalkController: ObservableObject {
 
     func talkPressed(to friend: Friend) {
         guard !talkHeld else { return }
+        // Before holding the new press: finishing clears talkHeld.
+        if let current = conversation, current.peerId != friend.id { finish() }
         talkHeld = true
         isTalking = true
         idleTimer?.invalidate()
-        if let current = conversation, current.peerId != friend.id { finish() }
         if conversation == nil {
             startOutgoingConversation(peerId: friend.id, peerName: friend.name)
         } else {
@@ -412,6 +419,11 @@ final class TalkController: ObservableObject {
         case "moved":
             // Answered or talked on the watch: the conversation is there now.
             finish(status: "Continued on your watch")
+        case "conversation-ended":
+            // A block, an unfriending or a deleted account: the relay dropped the conversation.
+            guard message.conversationId == conversation?.conversationId else { return }
+            cancelBurst()
+            finish(status: "Can't reach \(name)")
         case "joined":
             log("Joined")
             conversation?.joined = true

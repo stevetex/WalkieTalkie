@@ -63,6 +63,14 @@ export class FirestoreError extends Error {
 // A commit's precondition failed: the document existed (or didn't) when it mattered.
 export class PreconditionFailed extends Error {}
 
+// A transaction's commit lost to a concurrent write to something it read; run it again.
+export class TransactionAborted extends Error {}
+
+// Reads inside a transaction (see Firestore.transaction and Docs.transaction).
+export type TransactionGet = (paths: string[]) => Promise<Array<FirestoreData | undefined>>;
+
+const TRANSACTION_ATTEMPTS = 5;
+
 export class Firestore {
   private base: string;
   private documentsPath: string;
@@ -89,10 +97,10 @@ export class Firestore {
 
   // Several documents in one request, in the order asked for; undefined for missing ones.
   // Paths are "collection/id" (or deeper).
-  async getAll(paths: string[]): Promise<Array<FirestoreData | undefined>> {
+  async getAll(paths: string[], transaction?: string): Promise<Array<FirestoreData | undefined>> {
     if (!paths.length) return [];
     const names = paths.map((p) => this.fullName(p));
-    const res = await this.request("POST", `${this.documentsPath}:batchGet`, { documents: names });
+    const res = await this.request("POST", `${this.documentsPath}:batchGet`, { documents: names, ...(transaction ? { transaction } : {}) });
     const rows = (await res.json()) as Array<{ found?: { name: string; fields?: Record<string, FirestoreValue> }; missing?: string }>;
     const byName = new Map<string, FirestoreData>();
     for (const row of rows) if (row.found) byName.set(row.found.name, decodeFields(row.found.fields ?? {}));
@@ -146,10 +154,40 @@ export class Firestore {
     );
   }
 
+  // A read-write transaction: `fn` reads through `get` (Firestore locks what it reads) and
+  // returns the writes, which commit only if nothing it read has changed. If a concurrent
+  // write wins, `fn` runs again.
+  async transaction<T>(fn: (get: TransactionGet) => Promise<{ writes: Write[]; result: T }>): Promise<T> {
+    let retryTransaction: string | undefined;
+    for (let attempt = 1; ; attempt++) {
+      const begin = await this.request("POST", `${this.documentsPath}:beginTransaction`, {
+        options: { readWrite: retryTransaction ? { retryTransaction } : {} },
+      });
+      const { transaction } = (await begin.json()) as { transaction: string };
+      let outcome: { writes: Write[]; result: T };
+      try {
+        outcome = await fn((paths) => this.getAll(paths, transaction));
+      } catch (err) {
+        // Release the locks now rather than when the transaction times out.
+        await this.request("POST", `${this.documentsPath}:rollback`, { transaction }).catch(() => {});
+        throw err;
+      }
+      try {
+        await this.commit(outcome.writes, transaction);
+        return outcome.result;
+      } catch (err) {
+        if (!(err instanceof TransactionAborted) || attempt >= TRANSACTION_ATTEMPTS) throw err;
+        retryTransaction = transaction;
+      }
+    }
+  }
+
   // Applies all the writes or none. Throws PreconditionFailed if an `exists` check fails.
-  async commit(writes: Write[]): Promise<void> {
-    if (!writes.length) return;
+  // In a transaction, TransactionAborted if something it read changed.
+  async commit(writes: Write[], transaction?: string): Promise<void> {
+    if (!writes.length && !transaction) return;
     const body = {
+      ...(transaction ? { transaction } : {}),
       writes: writes.map((w) => {
         const precondition = w.exists === undefined ? {} : { currentDocument: { exists: w.exists } };
         if ("delete" in w) return { delete: this.fullName(w.delete), ...precondition };
@@ -165,6 +203,7 @@ export class Firestore {
     const res = await this.request("POST", `${this.documentsPath}:commit`, body, [400, 404, 409], 1);
     if (res.ok) return;
     const text = await res.text();
+    if (transaction && text.includes("ABORTED")) throw new TransactionAborted(`Firestore commit aborted: ${text.slice(0, 200)}`);
     if (res.status === 409 || res.status === 404 || text.includes("FAILED_PRECONDITION")) {
       throw new PreconditionFailed(`Firestore commit precondition failed: ${text.slice(0, 200)}`);
     }

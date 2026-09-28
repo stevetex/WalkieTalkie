@@ -2,11 +2,11 @@
 // Transport-agnostic so tests can drive it with fake peers.
 
 import { randomUUID } from "node:crypto";
-import { prefetchAlert, pushToTalkRing, ringAlert, type ApnsEnvironment, type Pusher } from "./apns.ts";
+import { prefetchAlert, pushToTalkRing, ringAlert, type AlertPush, type ApnsEnvironment, type PushResult, type Pusher } from "./apns.ts";
 import { encodeJSONRecord, encodeRecord, RecordType } from "./records.ts";
 import type { DeviceStore, MetricsStore } from "./store.ts";
 import type { AccountDevice, Platform, RingLookup } from "./accounts.ts";
-import type { ClientMessage, RingPayload, ServerMessage } from "./protocol.ts";
+import { FRAME_MS, isValidFrame, type ClientMessage, type RingPayload, type ServerMessage } from "./protocol.ts";
 
 // Devices registered with this token prefix are test bots: they are rung over their
 // relay socket instead of through APNs.
@@ -38,12 +38,19 @@ export interface Peer {
 interface Burst {
   id: string;
   from: string;
+  // Kept only until the other member hears them: frames forwarded live aren't kept, and a
+  // replay empties this once it's sent.
   frames: Buffer[];
+  bytes: number;
+  // Every frame received, kept or not, against maxBurstMs.
+  frameCount: number;
   ended: boolean;
   startedAt: number;
   // Members this burst has started playing for; later frames are forwarded live to them.
   deliveredTo: Set<string>;
   firstLiveFrameLogged: boolean;
+  // Ends the burst at maxBurstMs if the sender never does.
+  timer: NodeJS.Timeout | null;
 }
 
 interface Conversation {
@@ -62,6 +69,10 @@ interface Conversation {
   ringFrom: string | null;
   // When each member's talking was last recorded as "last messaged you" (recordMessage).
   messageRecordedAt: Map<string, number>;
+  // Accounts: when the two were last confirmed as friends (the ring's lookup, or canTalk), and
+  // the check in flight, if any. See authorize.
+  authorizedAt: number | null;
+  authorizing: Promise<boolean> | null;
   // Prototype: the second, prefetch push for the current APNs ring (see prefetchAlert).
   prefetch: {
     to: string;
@@ -86,6 +97,12 @@ export interface RelayOptions {
   // Accounts: the friend check and the account's devices, once per ring.
   accounts?: {
     ringLookup(from: string, to: string): Promise<RingLookup>;
+    // Whether two accounts may still talk, checked again while they do (see authorize).
+    // Without it, ringLookup's answer is used.
+    canTalk?(from: string, to: string): Promise<boolean>;
+    // A device APNs said can't be reached (an unregistered token): its registration goes,
+    // unless the device has registered a new token since.
+    removeDevice?(userId: string, deviceId: string, pushToken: string): Promise<boolean>;
     // "Last messaged you" on the recipient's friend page; off the audio path.
     recordMessage?(from: string, to: string, at: number): Promise<void>;
   };
@@ -105,6 +122,14 @@ export interface RelayOptions {
   // Prototype: after an APNs ring, send a prefetch push once the sender's first burst ends,
   // or this long after the ring if they're still talking. 0 = no prefetch pushes.
   prefetchPushAfterMs?: number;
+  // Accounts: how long a friendship check holds before a talk, join or live audio checks
+  // again, so a block, an unfriending or a deleted account ends a conversation under way.
+  authTtlMs?: number;
+  // A burst ends by itself after this long, whether or not the sender says so.
+  maxBurstMs?: number;
+  // Audio a conversation holds for a member who hasn't heard it yet. A burst that would go
+  // past this ends.
+  maxBufferedBytes?: number;
 }
 
 export class Relay {
@@ -124,6 +149,10 @@ export class Relay {
       ringTimeoutMs: 35_000,
       answerJoinTimeoutMs: 30_000,
       prefetchPushAfterMs: 0,
+      authTtlMs: 10_000,
+      maxBurstMs: 60_000,
+      // About two minutes of PCM, or twenty of Opus.
+      maxBufferedBytes: 4 * 1024 * 1024,
       ...options,
     };
   }
@@ -202,16 +231,39 @@ export class Relay {
   handleAudio(peer: Peer, frame: Buffer): void {
     const active = this.activeBursts.get(peer.userId);
     if (!active || active.deviceId !== peer.deviceId) return;
+    // Only frames the apps can decode are passed on.
+    if (!isValidFrame(frame)) return;
     const { conversation, burst } = active;
-    burst.frames.push(frame);
+    burst.frameCount++;
+    // Faster than real time: the timer alone wouldn't stop it in time.
+    if (burst.frameCount > this.opts.maxBurstMs / FRAME_MS) return this.cutOff(peer.userId, "burst too long");
     const other = otherMember(conversation, peer.userId);
     if (burst.deliveredTo.has(other)) {
+      // Heard live, so there's nothing to keep for a replay.
       this.memberPeer(conversation, other)?.sendBinary(frame);
       if (!burst.firstLiveFrameLogged) {
         burst.firstLiveFrameLogged = true;
         this.opts.metrics.server(conversation.id, "firstFrameForwardedLive", this.opts.now());
       }
+      if (peer.account && !this.recentlyAuthorized(conversation)) {
+        void this.authorize(conversation, peer.userId, other).then((allowed) => {
+          if (!allowed) this.revoke(conversation);
+        });
+      }
+      return;
     }
+    if (bufferedBytes(conversation) + frame.length > this.opts.maxBufferedBytes) return this.cutOff(peer.userId, "too much audio waiting");
+    burst.frames.push(frame);
+    burst.bytes += frame.length;
+  }
+
+  // Ends a sender's burst that went past a limit, and says why.
+  private cutOff(userId: string, why: string): void {
+    const active = this.activeBursts.get(userId);
+    if (!active) return;
+    this.opts.metrics.server(active.conversation.id, "burstCutOff", this.opts.now(), why);
+    this.devicePeer(userId, active.deviceId)?.sendJSON({ type: "error", message: why });
+    this.endActiveBurst(userId);
   }
 
   // Rings queued for a polling device, removed as they're collected.
@@ -241,12 +293,13 @@ export class Relay {
   }
 
   // Exposed for tests and the status endpoint.
-  snapshot(): Array<{ id: string; members: string[]; joined: string[]; bufferedBursts: number; floor: string | null }> {
+  snapshot(): Array<{ id: string; members: string[]; joined: string[]; bufferedBursts: number; bufferedBytes: number; floor: string | null }> {
     return [...this.byId.values()].map((c) => ({
       id: c.id,
       members: [...c.members],
       joined: [...c.joined.keys()],
       bufferedBursts: c.bursts.length,
+      bufferedBytes: bufferedBytes(c),
       floor: c.floor?.userId ?? null,
     }));
   }
@@ -274,30 +327,47 @@ export class Relay {
       id: burstId,
       from,
       frames: [],
+      bytes: 0,
+      frameCount: 0,
       ended: false,
       startedAt: now,
       deliveredTo: new Set(),
       firstLiveFrameLogged: false,
+      timer: null,
     };
     conversation.bursts.push(burst);
     conversation.floor = { userId: from, burstId };
     this.activeBursts.set(from, { conversation, burst, deviceId: peer.deviceId });
+    burst.timer = setTimeout(() => {
+      if (this.activeBursts.get(from)?.burst === burst) this.cutOff(from, "burst too long");
+    }, this.opts.maxBurstMs);
+    burst.timer.unref();
     this.opts.metrics.server(conversation.id, "talkStart", now, `${from} -> ${to}`);
 
-    if (this.memberPeer(conversation, to)) {
-      this.startDelivery(conversation, burst, to, false);
-      this.grantFloor(peer, conversation, burstId, false);
-    } else if (!conversation.ringTimer) {
-      // One ring per conversation start; further bursts queue behind the pending ring.
-      // The ring looks the devices up in the store, so only a Talk that rings waits for
-      // the store. Frames that arrive meanwhile are buffered in the burst as usual.
-      void this.ring(conversation, from, to, burstId, peer.account === true).then((result) => {
-        if ("refused" in result) this.refuse(peer, conversation, burstId, result.refused);
-        else this.grantFloor(peer, conversation, burstId, result.pushed);
-      });
-    } else {
-      this.grantFloor(peer, conversation, burstId, false);
-    }
+    const deliver = (): void => {
+      if (this.memberPeer(conversation, to)) {
+        this.startDelivery(conversation, burst, to, false);
+        this.grantFloor(peer, conversation, burstId, false);
+      } else if (!conversation.ringTimer) {
+        // One ring per conversation start; further bursts queue behind the pending ring.
+        // The ring looks the devices up in the store, so only a Talk that rings waits for
+        // the store. Frames that arrive meanwhile are buffered in the burst as usual.
+        void this.ring(conversation, from, to, burstId, peer.account === true).then((result) => {
+          if ("refused" in result) this.refuse(peer, conversation, burstId, result.refused);
+          else this.grantFloor(peer, conversation, burstId, result.pushed);
+        });
+      } else {
+        this.grantFloor(peer, conversation, burstId, false);
+      }
+    };
+    // Talking to someone already listening: check they're still friends first, unless that was
+    // just checked (a ring checks for itself). Frames buffer in the burst meanwhile.
+    if (!peer.account || this.recentlyAuthorized(conversation) || !this.memberPeer(conversation, to)) return deliver();
+    void this.authorize(conversation, from, to).then((allowed) => {
+      if (this.byId.get(conversation.id) !== conversation || !conversation.bursts.includes(burst)) return;
+      if (allowed) deliver();
+      else this.revoke(conversation);
+    });
   }
 
   // At most once a minute per sender and conversation, and never waited for.
@@ -321,7 +391,7 @@ export class Relay {
   // this conversation, unring, and say why. Frames still arriving for the burst are ignored.
   private refuse(peer: Peer, conversation: Conversation, burstId: string, reason: "not-friends" | "unavailable"): void {
     const from = peer.userId;
-    if (this.activeBursts.get(from)?.conversation === conversation) this.activeBursts.delete(from);
+    if (this.activeBursts.get(from)?.conversation === conversation) this.dropActiveBurst(from);
     conversation.bursts = conversation.bursts.filter((b) => b.from !== from);
     if (conversation.floor?.userId === from) conversation.floor = null;
     conversation.joined.delete(from);
@@ -335,10 +405,19 @@ export class Relay {
     this.endActiveBurst(userId);
   }
 
-  private endActiveBurst(userId: string): void {
+  // Forgets a sender's burst in progress without ending it for the listener.
+  private dropActiveBurst(userId: string): void {
     const active = this.activeBursts.get(userId);
     if (!active) return;
     this.activeBursts.delete(userId);
+    if (active.burst.timer) clearTimeout(active.burst.timer);
+    active.burst.timer = null;
+  }
+
+  private endActiveBurst(userId: string): void {
+    const active = this.activeBursts.get(userId);
+    if (!active) return;
+    this.dropActiveBurst(userId);
     const { conversation, burst } = active;
     burst.ended = true;
     if (conversation.floor?.burstId === burst.id) conversation.floor = null;
@@ -384,6 +463,21 @@ export class Relay {
       peer.sendJSON({ type: "error", message: "unknown conversation" });
       return;
     }
+    // Replay only to a friend: check again unless that was just checked (by the ring, usually).
+    if (!peer.account || this.recentlyAuthorized(conversation)) return this.completeJoin(peer, conversation);
+    void this.authorize(conversation, peer.userId, otherMember(conversation, peer.userId)).then((allowed) => {
+      // Disconnected meanwhile.
+      if (this.devicePeer(peer.userId, peer.deviceId) !== peer) return;
+      if (!allowed) this.revoke(conversation);
+      if (!allowed || this.byId.get(conversation.id) !== conversation) {
+        return peer.sendJSON({ type: "error", message: "unknown conversation" });
+      }
+      this.completeJoin(peer, conversation);
+    });
+  }
+
+  private completeJoin(peer: Peer, conversation: Conversation): void {
+    const conversationId = conversation.id;
     const now = this.opts.now();
     this.pruneBursts(conversation);
     this.enter(conversation, peer);
@@ -412,6 +506,9 @@ export class Relay {
       this.opts.metrics.server(conversation.id, "replayStarted", this.opts.now(), `${burst.frames.length} frames`);
     }
     for (const frame of burst.frames) peer.sendBinary(frame);
+    // Heard: nothing left to replay (the sender never gets their own bursts).
+    burst.frames = [];
+    burst.bytes = 0;
     if (burst.ended) peer.sendJSON({ type: "burst-end", conversationId: conversation.id, burstId: burst.id });
   }
 
@@ -433,27 +530,58 @@ export class Relay {
       this.opts.metrics.server(conversation.id, "ringRefused", this.opts.now(), "not friends");
       return { refused: "not-friends" };
     }
-    // Answered, or the relay is shutting down, during the lookup.
-    if (!conversation.ringTimer) return { pushed: false };
-    const targets = this.ringTargets(conversation, to, lookup.devices, lookup.ringOn);
-    if (!targets.length) {
-      this.clearRing(conversation);
-      this.opts.metrics.server(conversation.id, "pushSkipped", this.opts.now(), `no device for ${to}`);
-      // An account learns at once that nobody will hear it; shared-token clients never did.
-      return account ? { refused: "unavailable" } : { pushed: false };
+    if (account) conversation.authorizedAt = this.opts.now();
+    let devices = lookup.devices;
+    // One kind of device rings. If APNs turns every one of them away for good (an
+    // unregistered token), their registrations go and the other kind rings instead.
+    for (;;) {
+      // Answered, or the relay is shutting down, meanwhile.
+      if (!conversation.ringTimer) return { pushed: false };
+      const targets = this.ringTargets(conversation, to, devices, lookup.ringOn);
+      if (!targets.length) {
+        this.clearRing(conversation);
+        this.opts.metrics.server(conversation.id, "pushSkipped", this.opts.now(), `no device for ${to}`);
+        // An account learns at once that nobody will hear it; shared-token clients never did.
+        return account ? { refused: "unavailable" } : { pushed: false };
+      }
+      const { pushed, rejected } = await this.ringDevices(conversation, from, to, burstId, lookup.fromName, targets);
+      if (pushed || !rejected.length) return { pushed };
+      if (account) {
+        for (const device of rejected) {
+          this.opts.accounts.removeDevice?.(to, device.id, device.pushToken).then(
+            (removed) => removed && console.log(`[relay] removed ${to}'s unregistered ${device.platform} (${device.id})`),
+            (err: Error) => console.error(`[relay] removing ${to}'s device ${device.id} failed: ${err.message}`),
+          );
+        }
+      }
+      devices = devices.filter((d) => !rejected.includes(d));
     }
+  }
+
+  // Rings these devices (all of one kind) and waits for APNs' answers. `pushed` if any ring
+  // went out, or may have; `rejected`, the devices APNs refused for good.
+  private async ringDevices(
+    conversation: Conversation,
+    from: string,
+    to: string,
+    burstId: string,
+    fromName: string,
+    targets: AccountDevice[],
+  ): Promise<{ pushed: boolean; rejected: AccountDevice[] }> {
     conversation.lastRingAt = this.opts.now();
     this.armRingTimer(conversation, to, this.opts.ringTimeoutMs);
     const payload: RingPayload = {
       conversationId: conversation.id,
       from,
-      fromName: lookup.fromName,
+      fromName,
       burstId,
       pushSentAt: conversation.lastRingAt,
     };
     const platform = targets[0].platform;
     this.opts.metrics.server(conversation.id, "pushSent", conversation.lastRingAt, `${platform}${targets.length > 1 ? `, ${targets.length} devices` : ""}`);
+    const alert = ringAlert(payload, conversation.lastRingAt + this.opts.ringTimeoutMs);
     const apnsTargets: RingTarget[] = [];
+    const pushes: Array<Promise<{ target: AccountDevice; result: PushResult }>> = [];
     let pushed = false;
     for (const target of targets) {
       if (target.pushToken.startsWith(LOCAL_TOKEN_PREFIX) || target.pushToken.startsWith(IN_APP_TOKEN_PREFIX)) {
@@ -463,33 +591,44 @@ export class Relay {
         this.opts.metrics.server(conversation.id, peer ? "pushAccepted" : "pushFailed", this.opts.now(), target.pushToken.startsWith(LOCAL_TOKEN_PREFIX) ? "local ring" : "in-app ring");
         pushed ||= peer !== undefined;
       } else if (target.pushType === "pushtotalk") {
-        this.sendPush(conversation, to, target, pushToTalkRing(payload), "pushtotalk");
-        pushed = true;
+        pushes.push(this.sendPush(conversation, to, target, pushToTalkRing(payload), "pushtotalk").then((result) => ({ target, result })));
       } else if (target.pushToken.startsWith(POLL_TOKEN_PREFIX)) {
         this.polledRings.set(to, [...(this.polledRings.get(to) ?? []), payload]);
         this.opts.metrics.server(conversation.id, "pushAccepted", this.opts.now(), "queued for polling");
         pushed = true;
       } else {
         apnsTargets.push({ deviceId: target.id, pushToken: target.pushToken, apnsEnvironment: target.apnsEnvironment });
+        pushes.push(this.sendPush(conversation, to, target, alert, "alert").then((result) => ({ target, result })));
       }
     }
-    if (!apnsTargets.length) return { pushed };
-    const push = ringAlert(payload, conversation.lastRingAt + this.opts.ringTimeoutMs);
-    if (this.opts.prefetchPushAfterMs > 0) {
+    if (apnsTargets.length && this.opts.prefetchPushAfterMs > 0) {
       this.clearPrefetch(conversation);
-      conversation.prefetch = { to, targets: apnsTargets, payload, timer: null };
-      conversation.prefetch.timer = setTimeout(() => this.sendPrefetchPush(conversation), this.opts.prefetchPushAfterMs);
-      conversation.prefetch.timer.unref();
+      const prefetch = { to, targets: apnsTargets, payload, timer: null as NodeJS.Timeout | null };
+      conversation.prefetch = prefetch;
+      prefetch.timer = setTimeout(() => this.sendPrefetchPush(conversation), this.opts.prefetchPushAfterMs);
+      prefetch.timer.unref();
     }
-    for (const target of apnsTargets) this.sendPush(conversation, to, target, push, "alert");
-    return { pushed: true };
+    const rejected: AccountDevice[] = [];
+    for (const { target, result } of await Promise.all(pushes)) {
+      if (isUnreachable(result)) rejected.push(target);
+      // Other failures (a timeout, APNs having trouble) may still have rung.
+      else pushed = true;
+    }
+    if (conversation.prefetch && rejected.length) {
+      conversation.prefetch.targets = conversation.prefetch.targets.filter((t) => !rejected.some((d) => d.id === t.deviceId));
+      if (!conversation.prefetch.targets.length) this.clearPrefetch(conversation);
+    }
+    return { pushed, rejected };
   }
 
-  private sendPush(conversation: Conversation, to: string, target: { pushToken: string; apnsEnvironment: ApnsEnvironment }, push: ReturnType<typeof ringAlert>, kind: string): void {
-    void this.opts.pusher.sendAlert(target.pushToken, target.apnsEnvironment, push).then((result) => {
+  private sendPush(conversation: Conversation, to: string, target: { pushToken: string; apnsEnvironment: ApnsEnvironment }, push: AlertPush, kind: string): Promise<PushResult> {
+    const sent = this.opts.pusher.sendAlert(target.pushToken, target.apnsEnvironment, push)
+      .catch((err: Error): PushResult => ({ ok: false, status: 0, reason: err.message, latencyMs: 0, dryRun: false }));
+    return sent.then((result) => {
       const detail = `${kind}: status ${result.status}${result.reason ? ` ${result.reason}` : ""} in ${result.latencyMs.toFixed(0)} ms${result.dryRun ? " (dry run)" : ""}`;
       this.opts.metrics.server(conversation.id, result.ok ? "pushAccepted" : "pushFailed", this.opts.now(), detail);
       if (!result.ok) console.error(`[relay] push to ${to} failed: ${detail}`);
+      return result;
     });
   }
 
@@ -536,9 +675,7 @@ export class Relay {
   private ringTimedOut(conversation: Conversation, from: string, to: string): void {
     conversation.ringTimer = null;
     // A polling device that wasn't open to collect the ring shouldn't ring later for it.
-    const queued = (this.polledRings.get(to) ?? []).filter((r) => r.conversationId !== conversation.id);
-    if (queued.length) this.polledRings.set(to, queued);
-    else this.polledRings.delete(to);
+    this.withdrawPolledRings(conversation, to);
     if (conversation.joined.has(to)) return;
     const unheard = conversation.bursts.filter((b) => b.from !== to && !b.deliveredTo.has(to));
     conversation.bursts = conversation.bursts.filter((b) => !unheard.includes(b));
@@ -551,6 +688,63 @@ export class Relay {
       droppedBursts: unheard.length,
     });
     this.prune(conversation);
+  }
+
+  private withdrawPolledRings(conversation: Conversation, userId: string): void {
+    const queued = (this.polledRings.get(userId) ?? []).filter((r) => r.conversationId !== conversation.id);
+    if (queued.length) this.polledRings.set(userId, queued);
+    else this.polledRings.delete(userId);
+  }
+
+  private recentlyAuthorized(conversation: Conversation): boolean {
+    return conversation.authorizedAt !== null && this.opts.now() - conversation.authorizedAt < this.opts.authTtlMs;
+  }
+
+  // Accounts: whether the two may still talk (friends, neither account deleted). One check at
+  // a time per conversation. A check that fails counts as allowed until the next one: an
+  // outage isn't a block.
+  private authorize(conversation: Conversation, from: string, to: string): Promise<boolean> {
+    if (!conversation.authorizing) {
+      const accounts = this.opts.accounts;
+      const check = accounts.canTalk ? accounts.canTalk(from, to) : accounts.ringLookup(from, to).then((l) => l.allowed);
+      conversation.authorizing = check
+        .then(
+          (allowed) => allowed,
+          (err: Error) => {
+            console.error(`[relay] checking ${from} and ${to} are friends failed: ${err.message}`);
+            return true;
+          },
+        )
+        .then((allowed) => {
+          conversation.authorizing = null;
+          if (allowed) conversation.authorizedAt = this.opts.now();
+          return allowed;
+        });
+    }
+    return conversation.authorizing;
+  }
+
+  // They may no longer talk (a block, an unfriending, a deleted account): drop the
+  // conversation and all its audio, and tell whoever is in it.
+  private revoke(conversation: Conversation): void {
+    if (this.byId.get(conversation.id) !== conversation) return;
+    this.opts.metrics.server(conversation.id, "conversationRevoked", this.opts.now(), "not friends");
+    for (const member of conversation.members) {
+      const active = this.activeBursts.get(member);
+      if (active?.conversation === conversation) {
+        this.dropActiveBurst(member);
+        this.devicePeer(member, active.deviceId)?.sendJSON({ type: "talk-refused", burstId: active.burst.id, reason: "not-friends" });
+      } else {
+        this.memberPeer(conversation, member)?.sendJSON({ type: "conversation-ended", conversationId: conversation.id, reason: "not-friends" });
+      }
+      this.withdrawPolledRings(conversation, member);
+    }
+    this.clearRing(conversation);
+    conversation.bursts = [];
+    conversation.joined.clear();
+    conversation.floor = null;
+    this.byId.delete(conversation.id);
+    this.byPair.delete(pairKey(...conversation.members));
   }
 
   private armRingTimer(conversation: Conversation, to: string, ms: number): void {
@@ -603,6 +797,8 @@ export class Relay {
         ringTimer: null,
         ringFrom: null,
         messageRecordedAt: new Map(),
+        authorizedAt: null,
+        authorizing: null,
         prefetch: null,
       };
       this.byPair.set(key, conversation);
@@ -631,6 +827,18 @@ export class Relay {
       this.byPair.delete(pairKey(...conversation.members));
     }
   }
+}
+
+// APNs won't deliver to this token again (Apple's "Unregistered", or a token that isn't a
+// device token for this app), as opposed to a failure that may be temporary.
+function isUnreachable(result: PushResult): boolean {
+  if (result.ok || result.dryRun) return false;
+  return result.status === 410 || (result.status === 400 && ["BadDeviceToken", "DeviceTokenNotForTopic"].includes(result.reason ?? ""));
+}
+
+// Audio a conversation is holding for a member who hasn't heard it.
+function bufferedBytes(conversation: Conversation): number {
+  return conversation.bursts.reduce((n, b) => n + b.bytes, 0);
 }
 
 function pairKey(a: string, b: string): string {

@@ -68,7 +68,11 @@ public enum RelayRecord {
 ///
 ///   Downlink: GET /v1/relay/stream, a long-lived response carrying records as they happen.
 ///   Uplink:   POST /v1/relay/send, one at a time so records arrive in order; whatever
-///             queues up while a POST is in flight goes in the next one.
+///             queues up while a POST is in flight goes in the next one. A POST that fails
+///             closes the connection (onClose): its records are lost, and a lost talk-start or
+///             talk-end would leave the two sides disagreeing about the conversation. It isn't
+///             retried, since a POST that failed may still have been applied, and resending
+///             it would repeat its audio. Closing the stream also ends it on the relay.
 ///
 /// All callbacks and calls happen on the main queue.
 public final class RelayConnection: NSObject, URLSessionDataDelegate {
@@ -169,9 +173,9 @@ public final class RelayConnection: NSObject, URLSessionDataDelegate {
             let status = (response as? HTTPURLResponse)?.statusCode ?? 0
             onPostFinished?(startedAt, Clock.nowMs(), bytes, error == nil ? status : 0)
             if let error {
-                print("[relay] send failed: \(error.localizedDescription)")
+                return finish("send failed: \(error.localizedDescription)")
             } else if status != 200 {
-                print("[relay] send: HTTP \(status)")
+                return finish("send: HTTP \(status)")
             }
             flush()
         }.resume()

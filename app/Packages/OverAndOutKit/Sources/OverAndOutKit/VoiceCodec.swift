@@ -8,6 +8,10 @@ public enum VoiceFrame {
     public static let headerBytes = 5
     public static let sampleRate: Double = 16_000
     public static let samplesPerFrame = 320 // 20 ms at 16 kHz
+    /// A PCM frame's payload: exactly one frame of Int16 samples (the last one is padded).
+    public static let pcmPayloadBytes = samplesPerFrame * 2
+    /// The largest Opus packet (RFC 6716).
+    public static let maxOpusPayloadBytes = 1275
 
     public enum Codec: UInt8 {
         case opus16k = 1
@@ -119,11 +123,14 @@ public final class VoiceDecoder {
         opusConverter?.reset()
     }
 
+    /// Nil for a frame this can't decode, including one of the wrong size: frames come off the
+    /// network, and a PCM payload longer than the buffer would crash AVFAudio.
     public func decode(codec: VoiceFrame.Codec, payload: Data) -> AVAudioPCMBuffer? {
         let capacity = AVAudioFrameCount(VoiceFrame.samplesPerFrame * 2)
         guard let output = AVAudioPCMBuffer(pcmFormat: VoiceFrame.pcmFormat, frameCapacity: capacity) else { return nil }
         switch codec {
         case .pcm16le16k:
+            guard payload.count == VoiceFrame.pcmPayloadBytes else { return nil }
             let count = payload.count / 2
             output.frameLength = AVAudioFrameCount(count)
             let channel = output.floatChannelData![0]
@@ -135,6 +142,7 @@ public final class VoiceDecoder {
             }
             return output
         case .opus16k:
+            guard (1...VoiceFrame.maxOpusPayloadBytes).contains(payload.count) else { return nil }
             guard let opusFormat else { return nil }
             guard let converter = opusConverter else { return nil }
             let input = AVAudioCompressedBuffer(format: opusFormat, packetCapacity: 1, maximumPacketSize: payload.count)

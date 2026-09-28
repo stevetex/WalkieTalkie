@@ -31,7 +31,7 @@
 
 import { createServer, type IncomingMessage, type ServerResponse, type Server } from "node:http";
 import { join, resolve } from "node:path";
-import { acceptUpgrade, rejectUpgrade } from "./ws.ts";
+import { MAX_QUEUED_BYTES, acceptUpgrade, rejectUpgrade } from "./ws.ts";
 import { ApnsPusher, DryRunPusher, apnsConfigFromEnv, type Pusher } from "./apns.ts";
 import { SimulatorPusher } from "./simulator.ts";
 import {
@@ -48,7 +48,7 @@ import { loadSecrets } from "./secrets.ts";
 import { Relay, type Peer } from "./relay.ts";
 import { summarizeAttempts } from "./report.ts";
 import { RecordParser, RecordType, encodeJSONRecord, encodeRecord } from "./records.ts";
-import type { ClientMessage, MetricsUpload } from "./protocol.ts";
+import { parseClientMessage, type MetricsUpload } from "./protocol.ts";
 import { SessionVerifier, parsePublicKeys } from "./session.ts";
 import { bearer, type ApiHandler } from "./api.ts";
 import { Accounts, USER_ID_PREFIX } from "./accounts.ts";
@@ -73,6 +73,10 @@ export interface ServerOptions {
   ringTimeoutMs?: number;
   answerJoinTimeoutMs?: number;
   prefetchPushAfterMs?: number;
+  // Relay limits (see RelayOptions); tests shorten them.
+  authTtlMs?: number;
+  maxBurstMs?: number;
+  maxBufferedBytes?: number;
 }
 
 export interface RunningServer {
@@ -95,6 +99,9 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
     ...(options.ringTimeoutMs ? { ringTimeoutMs: options.ringTimeoutMs } : {}),
     ...(options.answerJoinTimeoutMs ? { answerJoinTimeoutMs: options.answerJoinTimeoutMs } : {}),
     ...(options.prefetchPushAfterMs ? { prefetchPushAfterMs: options.prefetchPushAfterMs } : {}),
+    ...(options.authTtlMs !== undefined ? { authTtlMs: options.authTtlMs } : {}),
+    ...(options.maxBurstMs ? { maxBurstMs: options.maxBurstMs } : {}),
+    ...(options.maxBufferedBytes ? { maxBufferedBytes: options.maxBufferedBytes } : {}),
   });
 
   // Who's calling: an account (its user ID from the session token), or a client with the
@@ -133,12 +140,17 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
       "x-accel-buffering": "no",
     });
     res.flushHeaders();
+    // A client that stops reading is dropped rather than queueing its audio without limit.
+    const write = (record: Buffer): void => {
+      if (res.writableLength > MAX_QUEUED_BYTES) return void res.destroy();
+      res.write(record);
+    };
     const peer: Peer = {
       userId,
       deviceId: caller.deviceId ?? userId,
       account: caller.account,
-      sendJSON: (m) => void res.write(encodeJSONRecord(m)),
-      sendBinary: (b) => void res.write(encodeRecord(RecordType.audio, b)),
+      sendJSON: (m) => write(encodeJSONRecord(m)),
+      sendBinary: (b) => write(encodeRecord(RecordType.audio, b)),
     };
     streams.get(key)?.res.end();
     streams.set(key, { peer, res });
@@ -172,9 +184,11 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
       for (const record of parser.push(chunk as Buffer)) {
         if (record.type === RecordType.audio) {
           relay.handleAudio(stream.peer, record.payload);
-        } else {
-          relay.handleMessage(stream.peer, JSON.parse(record.payload.toString("utf8")) as ClientMessage);
+          continue;
         }
+        const message = parseClientMessage(JSON.parse(record.payload.toString("utf8")));
+        if (!message) return send(res, 400, { error: "invalid message" });
+        relay.handleMessage(stream.peer, message);
       }
     }
     send(res, 200, {});
@@ -283,16 +297,27 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
     const peer: Peer = { userId, deviceId: caller.deviceId ?? userId, account: caller.account, sendJSON: (m) => ws.sendJSON(m), sendBinary: (b) => ws.sendBinary(b) };
     relay.connect(peer);
     console.log(`[relay] ${userId} (${peer.deviceId}) connected`);
-    ws.on("text", (text: string) => {
-      let message: ClientMessage;
+    // A message that breaks the relay closes this connection, not the whole node.
+    const contained = (what: string, fn: () => void): void => {
       try {
-        message = JSON.parse(text);
+        fn();
+      } catch (err) {
+        console.error(`[relay] ${userId} (${peer.deviceId}): ${what} failed: ${(err as Error).stack ?? err}`);
+        ws.close(1011);
+      }
+    };
+    ws.on("text", (text: string) => {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(text);
       } catch {
         return ws.sendJSON({ type: "error", message: "invalid JSON" });
       }
-      relay.handleMessage(peer, message);
+      const message = parseClientMessage(parsed);
+      if (!message) return ws.sendJSON({ type: "error", message: "invalid message" });
+      contained("a message", () => relay.handleMessage(peer, message));
     });
-    ws.on("binary", (frame: Buffer) => relay.handleAudio(peer, frame));
+    ws.on("binary", (frame: Buffer) => contained("an audio frame", () => relay.handleAudio(peer, frame)));
     ws.on("close", () => {
       sockets.delete(ws);
       relay.disconnect(peer);

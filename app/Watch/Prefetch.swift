@@ -27,8 +27,9 @@ struct Prefetched {
 
     /// Reads and removes what the extension saved for this conversation, and leftovers
     /// from rings never answered. Nil if it saved nothing (no prefetch push yet, or it's
-    /// still downloading).
-    static func take(conversationId: String) -> Prefetched? {
+    /// still downloading). No audio if it was saved for another account, or the ring has
+    /// expired: the relay has dropped that message, so it mustn't play now.
+    static func take(conversationId: String, userId: String?) -> Prefetched? {
         guard let directory else { return nil }
         let records = directory.appendingPathComponent("\(conversationId).records")
         let metaFile = directory.appendingPathComponent("\(conversationId).json")
@@ -39,6 +40,11 @@ struct Prefetched {
         }
         guard let metaData = try? Data(contentsOf: metaFile),
               let meta = try? JSONSerialization.jsonObject(with: metaData) as? [String: Any] else { return nil }
+        if let unusable = unusable(meta, userId: userId) {
+            var meta = meta
+            meta["error"] = "not played: \(unusable)"
+            return Prefetched(meta: meta)
+        }
         var prefetched = Prefetched(meta: meta)
         guard let data = try? Data(contentsOf: records) else { return prefetched }
         var parser = RelayRecord.Parser()
@@ -54,6 +60,26 @@ struct Prefetched {
             }
         }
         return prefetched
+    }
+
+    /// The relay gives up on a ring 35 s after sending it.
+    static let ringLifetimeMs: Double = 35_000
+
+    /// Why the saved message can't be played, if it can't. The extension records the account
+    /// and when the ring expires (server clock; the push says).
+    private static func unusable(_ meta: [String: Any], userId: String?) -> String? {
+        guard let userId, meta["userId"] as? String == userId else { return "another account's" }
+        let expiresAt = meta["ringExpiresAt"] as? Double
+            ?? (meta["pushSentAt"] as? Double).map { $0 + ringLifetimeMs }
+            ?? (meta["receivedAt"] as? Double).map { $0 + ringLifetimeMs }
+        guard let expiresAt, Clock.nowMs() < expiresAt else { return "the ring expired" }
+        return nil
+    }
+
+    /// Everything saved, on signing out.
+    static func removeAll() {
+        guard let directory else { return }
+        try? FileManager.default.removeItem(at: directory)
     }
 
     /// A ring's message is only useful until the relay gives up on the ring (35 s).

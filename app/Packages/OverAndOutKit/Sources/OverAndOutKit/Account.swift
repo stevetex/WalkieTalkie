@@ -280,6 +280,10 @@ public enum DeviceIdentity {
 /// Calls the account API. Refreshes the token when it's a day old, and once more if the
 /// server says it expired. If the server says the session is gone, the stored session is
 /// cleared and `signedOutNotification` is posted.
+///
+/// The actor runs other calls while one waits on the network, so a response only touches the
+/// stored session if it's still the one the request was made with: a refresh or an error that
+/// finishes after signing out (or into another account) mustn't bring the old one back.
 public actor AccountClient {
     public static let signedOutNotification = Notification.Name("OverAndOutSignedOut")
 
@@ -319,20 +323,24 @@ public actor AccountClient {
         let response: Response = try await send("POST", "/v1/auth/apple", body: body, token: nil)
         let session = AccountSession(token: response.token, expiresAt: Date(timeIntervalSince1970: response.expiresAt / 1000),
                                      userId: response.user.id, name: response.user.name, deviceId: deviceId)
+        sessionChanged()
         store.save(session)
         return SignIn(session: session, created: response.created)
     }
 
     /// Saves a session made elsewhere (the watch's, from the iPhone).
     public func adopt(_ session: AccountSession) {
+        sessionChanged()
         store.save(session)
     }
 
     /// A session for another of the user's devices (the iPhone makes the watch's).
     public func makeSession(forDevice deviceId: String, platform: Platform) async throws -> AccountSession {
         struct Response: Decodable { let token: String; let expiresAt: Double }
-        let response: Response = try await request("POST", "/v1/auth/device", body: ["deviceId": deviceId, "platform": platform.rawValue])
         guard let mine = store.load() else { throw AccountAPIError.notSignedIn }
+        let response: Response = try await request("POST", "/v1/auth/device", body: ["deviceId": deviceId, "platform": platform.rawValue])
+        // Signed out, or into another account, meanwhile: this session isn't theirs to hand on.
+        guard store.load()?.userId == mine.userId else { throw AccountAPIError.notSignedIn }
         return AccountSession(token: response.token, expiresAt: Date(timeIntervalSince1970: response.expiresAt / 1000),
                               userId: mine.userId, name: mine.name, deviceId: deviceId)
     }
@@ -347,36 +355,41 @@ public actor AccountClient {
     public func refresh() async throws -> AccountSession {
         if let refreshing { return try await refreshing.value }
         let task = Task { () throws -> AccountSession in
-            guard var session = store.load() else { throw AccountAPIError.notSignedIn }
+            guard let token = store.load()?.token else { throw AccountAPIError.notSignedIn }
             struct Response: Decodable { let token: String; let expiresAt: Double }
             do {
-                let response: Response = try await send("POST", "/v1/auth/refresh", body: nil, token: session.token)
+                let response: Response = try await send("POST", "/v1/auth/refresh", body: nil, token: token)
+                // Signed out, or into another account, while this was in flight.
+                guard var session = store.load(), session.token == token else { throw AccountAPIError.notSignedIn }
                 session.token = response.token
                 session.expiresAt = Date(timeIntervalSince1970: response.expiresAt / 1000)
                 store.save(session)
                 return session
             } catch let error as AccountAPIError where error.endsSession {
-                signedOut()
+                signedOut(ifStillUsing: token)
                 throw error
             }
         }
         refreshing = task
-        defer { refreshing = nil }
+        defer { if refreshing == task { refreshing = nil } }
         return try await task.value
     }
 
-    /// Ends this device's session on the server (best effort) and forgets it.
+    /// Forgets this device's session, then ends it on the server (best effort).
     public func signOut() async {
-        if let session = store.load() {
+        let session = store.load()
+        sessionChanged()
+        store.clear()
+        if let session {
             let _: Empty? = try? await send("POST", "/v1/auth/signout", body: nil, token: session.token)
         }
-        store.clear()
     }
 
     /// `authorizationCode` comes from a fresh Sign in with Apple, so the server can revoke
     /// the Apple token.
     public func deleteAccount(authorizationCode: String) async throws {
         let _: Empty = try await request("DELETE", "/v1/me", body: ["authorizationCode": authorizationCode])
+        sessionChanged()
         store.clear()
     }
 
@@ -384,13 +397,13 @@ public actor AccountClient {
 
     public func me() async throws -> AccountUser {
         let user: AccountUser = try await request("GET", "/v1/me")
-        updateStoredName(user.name)
+        updateStoredName(user)
         return user
     }
 
     public func rename(_ name: String) async throws -> AccountUser {
         let user: AccountUser = try await request("PATCH", "/v1/me", body: ["name": name])
-        updateStoredName(user.name)
+        updateStoredName(user)
         return user
     }
 
@@ -486,13 +499,25 @@ public actor AccountClient {
 
     private struct Empty: Decodable {}
 
-    private func updateStoredName(_ name: String) {
-        guard var session = store.load(), session.name != name else { return }
-        session.name = name
+    /// Only onto the same account's session (another may have signed in meanwhile).
+    private func updateStoredName(_ user: AccountUser) {
+        guard var session = store.load(), session.userId == user.id, session.name != user.name else { return }
+        session.name = user.name
         store.save(session)
     }
 
-    private func signedOut() {
+    /// Signing in, out or into another account: a refresh in flight is for the old session.
+    /// (If its response arrives anyway, it finds a different token and is dropped.)
+    private func sessionChanged() {
+        refreshing?.cancel()
+        refreshing = nil
+    }
+
+    /// The server says the session `token` belongs to is gone. Nothing happens if the stored
+    /// session isn't that one any more (signed out, or into another account, since).
+    private func signedOut(ifStillUsing token: String) {
+        guard store.load()?.token == token else { return }
+        sessionChanged()
         store.clear()
         NotificationCenter.default.post(name: Self.signedOutNotification, object: nil)
     }
@@ -512,7 +537,7 @@ public actor AccountClient {
             let refreshed = try await refresh()
             return try await call(refreshed.token)
         } catch let error as AccountAPIError where error.endsSession {
-            signedOut()
+            signedOut(ifStillUsing: session.token)
             throw error
         }
     }

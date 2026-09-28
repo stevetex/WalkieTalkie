@@ -155,6 +155,8 @@ final class WatchAccount: NSObject, ObservableObject {
     private func signedOut(askPhone: Bool) {
         let hadSession = session != nil
         store.clear()
+        // Messages the notification extension downloaded for this account.
+        Prefetched.removeAll()
         session = nil
         friends = []
         friendsLoaded = false

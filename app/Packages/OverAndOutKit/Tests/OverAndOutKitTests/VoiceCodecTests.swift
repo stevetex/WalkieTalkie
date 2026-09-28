@@ -28,6 +28,16 @@ struct VoiceCodecTests {
         #expect(zip(decoded, samples).allSatisfy { abs($0 - $1) < 0.001 })
     }
 
+    /// A 1,282-byte PCM payload (641 samples) used to overrun the 640-sample buffer and crash.
+    @Test func rejectsPayloadsOfTheWrongSize() {
+        let decoder = VoiceDecoder()
+        for count in [0, 2, 638, 642, 1282, 64 * 1024] {
+            #expect(decoder.decode(codec: .pcm16le16k, payload: Data(count: count)) == nil)
+        }
+        #expect(decoder.decode(codec: .opus16k, payload: Data(count: 0)) == nil)
+        #expect(decoder.decode(codec: .opus16k, payload: Data(count: 1276)) == nil)
+    }
+
     @Test func opusEncodesAndDecodesAFrame() throws {
         let encoder = VoiceEncoder()
         try #require(encoder.codec == .opus16k, "no Opus encoder on this machine")
