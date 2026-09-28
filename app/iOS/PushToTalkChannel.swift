@@ -27,8 +27,9 @@ final class PushToTalkChannel: NSObject, ObservableObject {
 
     @Published private(set) var isAvailable = false
     @Published private(set) var isJoined = false
-    /// The channel's push token (hex). Valid only while joined.
-    @Published private(set) var pushToken: String?
+    /// The channel's push token (hex). It works only while joined, but it outlives leaving and
+    /// rejoining, and iOS doesn't send it again then, so it's kept (in defaults, across launches).
+    @Published private(set) var pushToken: String? = UserDefaults.standard.string(forKey: PushToTalkChannel.tokenKey)
     @Published private(set) var lastError: String?
 
     var onEvent: ((Event) -> Void)?
@@ -38,6 +39,7 @@ final class PushToTalkChannel: NSObject, ObservableObject {
     private var manager: PTChannelManager?
     private let channelUUID: UUID
     private static let channelKey = "pushToTalkChannel"
+    private static let tokenKey = "pushToTalkToken"
     private static let friendIdKey = "pushToTalkFriendId"
     private static let friendNameKey = "pushToTalkFriendName"
 
@@ -146,7 +148,6 @@ extension PushToTalkChannel: PTChannelManagerDelegate {
         TalkController.logger.notice("Left the channel, reason \(reason.rawValue)")
         Task { @MainActor in
             self.isJoined = false
-            self.pushToken = nil
             self.onRegistrationChange?()
         }
     }
@@ -157,7 +158,9 @@ extension PushToTalkChannel: PTChannelManagerDelegate {
 
     nonisolated func channelManager(_ channelManager: PTChannelManager, receivedEphemeralPushToken pushToken: Data) {
         let hex = pushToken.map { String(format: "%02x", $0) }.joined()
+        TalkController.logger.notice("PushToTalk token received (\(pushToken.count) bytes)")
         Task { @MainActor in
+            UserDefaults.standard.set(hex, forKey: Self.tokenKey)
             self.pushToken = hex
             self.onRegistrationChange?()
         }
