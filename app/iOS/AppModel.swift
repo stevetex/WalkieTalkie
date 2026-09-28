@@ -16,6 +16,11 @@ final class AppModel: ObservableObject {
         var id: String { code }
     }
 
+    /// One model for the app's life, made at launch by AppDelegate: a PushToTalk push can
+    /// launch the app in the background, where SwiftUI doesn't build the scene (or its state
+    /// objects), and the channel manager must exist to receive it.
+    static let shared = AppModel()
+
     @Published private(set) var session: AccountSession?
     @Published private(set) var friends: [Friend] = []
     @Published private(set) var friendsLoaded = false

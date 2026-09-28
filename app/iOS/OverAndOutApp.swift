@@ -1,8 +1,18 @@
 import SwiftUI
 
+/// Makes the model, and so the PushToTalk channel manager, as the app launches, including
+/// when a PushToTalk push launches it in the background.
+final class AppDelegate: NSObject, UIApplicationDelegate {
+    func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
+        _ = AppModel.shared
+        return true
+    }
+}
+
 @main
 struct OverAndOutApp: App {
-    @StateObject private var model = AppModel()
+    @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+    @StateObject private var model = AppModel.shared
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some Scene {
