@@ -104,7 +104,8 @@ test("alert pushes go to the bundle ID topic with alert headers", async () => {
     assert.equal(pttRequest.headers["apns-priority"], "10");
     assert.equal(pttRequest.headers["apns-expiration"], "0");
     assert.equal(pttRequest.headers["apns-collapse-id"], undefined);
-    assert.deepEqual(JSON.parse(pttRequest.body), { ...ring, activeSpeaker: ring.fromName });
+    const fields = { ...ring, activeSpeaker: ring.fromName };
+    assert.deepEqual(JSON.parse(pttRequest.body), { aps: fields, ...fields });
 
     const bad = await pusher.sendAlert("badtoken", "sandbox", push);
     assert.equal(bad.ok, false);

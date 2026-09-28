@@ -550,8 +550,8 @@ final class TalkController: ObservableObject {
 
     private func audioSessionActivated() {
         guard conversation != nil, !audioActive else { return }
+        // PushToTalk: the category set at launch stands; changing it while active adds delay.
         conversation?.timeline.mark("audioActivated")
-        if usesPushToTalk { Self.configureAudioSession() }
         do {
             try audio.start()
         } catch {

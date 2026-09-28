@@ -110,8 +110,13 @@ export function prefetchAlert(ring: RingPayload, expiresAt: number): AlertPush {
 // The iPhone's ring: a PushToTalk push. The app reports the sender as the channel's active
 // speaker, the system activates its audio, and the app joins the conversation and plays it.
 // Expiration 0, as Apple recommends: a late wake for audio that's gone is worse than none.
+// The body needs an "aps" dictionary even though Apple's example has none: without one, APNs
+// accepts the push (200) but iOS never hands it to the app (seen on Steve's iPhone, and
+// developer forums thread 772008). The ring fields go inside it and at the top level, where
+// the app reads them.
 export function pushToTalkRing(ring: RingPayload): AlertPush {
-  return { pushType: "pushtotalk", payload: { ...ring, activeSpeaker: ring.fromName }, expiresAt: 0 };
+  const fields = { ...ring, activeSpeaker: ring.fromName };
+  return { pushType: "pushtotalk", payload: { aps: fields, ...fields }, expiresAt: 0 };
 }
 
 export class DryRunPusher implements Pusher {
