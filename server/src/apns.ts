@@ -155,13 +155,31 @@ export class ApnsPusher implements Pusher {
     const existing = this.sessions.get(env);
     if (existing && !existing.closed && !existing.destroyed) return existing;
     const session = connect(this.hosts[env]);
+    const forget = () => {
+      if (this.sessions.get(env) === session) this.sessions.delete(env);
+    };
     session.on("error", (err) => console.error(`[apns] ${env} session error:`, err.message));
-    session.on("close", () => this.sessions.delete(env));
+    // APNs closes connections it considers idle (GOAWAY); the next push opens a new one.
+    session.on("goaway", forget);
+    session.on("close", forget);
     this.sessions.set(env, session);
     return session;
   }
 
-  sendAlert(token: string, env: ApnsEnvironment, push: AlertPush): Promise<PushResult> {
+  // A connection APNs dropped while it sat idle (overnight, say) can look open until the next
+  // push fails on it with ECONNRESET. A push that fails before any HTTP status gets one more
+  // try on a fresh connection.
+  async sendAlert(token: string, env: ApnsEnvironment, push: AlertPush): Promise<PushResult> {
+    const first = await this.attempt(token, env, push);
+    if (first.status !== 0) return first;
+    const stale = this.sessions.get(env);
+    this.sessions.delete(env);
+    stale?.destroy();
+    const second = await this.attempt(token, env, push);
+    return { ...second, latencyMs: first.latencyMs + second.latencyMs, reason: second.ok ? `retried after ${first.reason}` : second.reason };
+  }
+
+  private attempt(token: string, env: ApnsEnvironment, push: AlertPush): Promise<PushResult> {
     const started = performance.now();
     const body = JSON.stringify(push.payload);
     return new Promise((resolve) => {

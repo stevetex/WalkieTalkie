@@ -115,3 +115,33 @@ test("alert pushes go to the bundle ID topic with alert headers", async () => {
     await new Promise((r) => server.close(r));
   }
 });
+
+test("a push that fails on a dropped connection is retried once on a fresh one", async () => {
+  const { privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
+  const keyPath = join(mkdtempSync(join(tmpdir(), "apns-")), "AuthKey_TEST.p8");
+  writeFileSync(keyPath, privateKey.export({ type: "pkcs8", format: "pem" }));
+  let requests = 0;
+  const server = createServer((req, res) => {
+    requests++;
+    // The first connection dies mid-request, as an idle one APNs dropped does.
+    if (requests === 1) return req.stream.session?.destroy();
+    res.writeHead(200, { "apns-id": "id-retry" });
+    res.end();
+  });
+  await new Promise<void>((r) => server.listen(0, r));
+  const origin = `http://localhost:${(server.address() as AddressInfo).port}`;
+  const pusher = new ApnsPusher(
+    { keyPath, keyId: "KEY123", teamId: "TEAM456", bundleId: "com.example.app.watchkitapp", iphoneBundleId: "com.example.app" },
+    { sandbox: origin, production: origin },
+  );
+  try {
+    const result = await pusher.sendAlert("abcdef", "sandbox", pushToTalkRing(ring));
+    assert.equal(result.ok, true);
+    assert.equal(result.apnsId, "id-retry");
+    assert.match(result.reason ?? "", /^retried after /);
+    assert.equal(requests, 2);
+  } finally {
+    pusher.close();
+    await new Promise((r) => server.close(r));
+  }
+});
