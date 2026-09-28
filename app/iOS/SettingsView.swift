@@ -167,6 +167,12 @@ struct WalkieTalkieSection: View {
                     if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
                 }
             }
+            if !model.reachability.isEmpty {
+                LabeledContent("Friends Reach This iPhone", value: model.reachability)
+            }
+            #if DEBUG
+            LabeledContent("PushToTalk", value: ptt.isAvailable ? (ptt.isJoined ? (ptt.pushToken == nil ? "Joined, no token yet" : "Joined, token received") : "Not joined") : "Unavailable")
+            #endif
             if let error = ptt.lastError {
                 Text(error).font(.footnote).foregroundStyle(Brand.secondary)
             }

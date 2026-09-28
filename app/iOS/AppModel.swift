@@ -43,6 +43,10 @@ final class AppModel: ObservableObject {
     private var signedOutObserver: NSObjectProtocol?
     /// The push registration last sent for this session, so it's sent only when it changes.
     private var registered: (token: String, pushType: String?)?
+    /// One registration at a time, so an older one can't land after a newer one.
+    private var registering = false
+    /// How friends reach this iPhone, as last registered, for Settings.
+    @Published private(set) var reachability = ""
 
     #if DEBUG
     static let apnsEnvironment = "sandbox"
@@ -165,17 +169,26 @@ final class AppModel: ObservableObject {
     }
 
     /// The channel's token while in it; otherwise "app:", reachable only while on screen.
+    /// Registers until what the server has matches the current state (the channel and its
+    /// token change while a request is in flight).
     func registerDevice() async {
-        guard session != nil else { return }
-        let joined = pushToTalk.isJoined ? pushToTalk.pushToken : nil
-        let token = joined ?? "app:"
-        let pushType = joined == nil ? nil : "pushtotalk"
-        if let registered, registered.token == token, registered.pushType == pushType { return }
-        do {
-            try await client.registerDevice(platform: .iphone, pushToken: token, pushType: pushType, apnsEnvironment: Self.apnsEnvironment)
-            registered = (token, pushType)
-        } catch {
-            print("[oao] Device registration failed: \(error)")
+        guard !registering else { return }
+        registering = true
+        defer { registering = false }
+        while session != nil {
+            let joined = pushToTalk.isJoined ? pushToTalk.pushToken : nil
+            let token = joined ?? "app:"
+            let pushType = joined == nil ? nil : "pushtotalk"
+            if let registered, registered.token == token, registered.pushType == pushType { break }
+            do {
+                try await client.registerDevice(platform: .iphone, pushToken: token, pushType: pushType, apnsEnvironment: Self.apnsEnvironment)
+                registered = (token, pushType)
+                reachability = joined != nil ? "Walkie-talkie (PushToTalk)" : "Only while Over&Out is open"
+            } catch {
+                reachability = "Not registered: \(describe(error))"
+                print("[oao] Device registration failed: \(error)")
+                break
+            }
         }
     }
 
