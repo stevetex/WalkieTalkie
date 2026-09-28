@@ -6,6 +6,26 @@ import assert from "node:assert/strict";
 import { AccountError, Accounts } from "../src/accounts.ts";
 import type { Docs } from "../src/docs.ts";
 
+// Docs that run `between` inside the next transaction, after its reads and before it commits.
+export function interleaved(docs: Docs): Docs & { between: (() => Promise<void>) | null } {
+  const wrapped = {
+    between: null as (() => Promise<void>) | null,
+    getAll: (paths: string[]) => docs.getAll(paths),
+    list: (collection: string) => docs.list(collection),
+    query: (collection: string, query: Parameters<Docs["query"]>[1]) => docs.query(collection, query),
+    commit: (writes: Parameters<Docs["commit"]>[0]) => docs.commit(writes),
+    transaction: <T>(fn: Parameters<Docs["transaction"]>[0]) =>
+      docs.transaction(async (get) => {
+        const outcome = await fn(get);
+        const between = wrapped.between;
+        wrapped.between = null;
+        await between?.();
+        return outcome as { writes: Parameters<Docs["commit"]>[0]; result: T };
+      }),
+  };
+  return wrapped;
+}
+
 export function accountsSuite(label: string, makeDocs: () => Docs, skip: string | false = false): void {
   const DAY = 24 * 60 * 60 * 1000;
 
@@ -307,5 +327,71 @@ export function accountsSuite(label: string, makeDocs: () => Docs, skip: string 
     assert.equal(again.created, true);
     assert.notEqual(again.user.id, alice.id);
     assert.equal(await code(accounts.deleteAccount(alice.id)), "no-account");
+  });
+
+  test(`${label}: a session ends when it's signed out, replaced or its account deleted`, { skip }, async () => {
+    const { accounts, alice } = await setup();
+    const sid = await accounts.createSession(alice.id, "phone", "iphone");
+    assert.equal(await accounts.sessionActive(alice.id, sid, "phone"), true);
+    assert.equal(await accounts.sessionActive(alice.id, sid, "watch"), false);
+    assert.equal(await accounts.sessionActive(alice.id, "other", "phone"), false);
+    await accounts.endSession(alice.id, sid, "phone");
+    assert.equal(await accounts.sessionActive(alice.id, sid, "phone"), false);
+
+    const first = await accounts.createSession(alice.id, "phone", "iphone");
+    const second = await accounts.createSession(alice.id, "phone", "iphone");
+    assert.equal(await accounts.sessionActive(alice.id, first, "phone"), false);
+    assert.equal(await accounts.sessionActive(alice.id, second, "phone"), true);
+    await accounts.deleteAccount(alice.id);
+    assert.equal(await accounts.sessionActive(alice.id, second, "phone"), false);
+  });
+
+  test(`${label}: two can talk while friends, and not after a block, an unfriending or a deletion`, { skip }, async () => {
+    const { accounts, alice, bob } = await setup();
+    const carol = (await accounts.signInWithApple("001.carol.1", "Carol")).user;
+    assert.equal(await accounts.canTalk(alice.id, bob.id), false);
+    await befriend(accounts, alice.id, bob.id);
+    await befriend(accounts, alice.id, carol.id);
+    assert.equal(await accounts.canTalk(alice.id, bob.id), true);
+    assert.equal(await accounts.canTalk(bob.id, alice.id), true);
+    await accounts.block(bob.id, alice.id);
+    assert.equal(await accounts.canTalk(alice.id, bob.id), false);
+    assert.equal(await accounts.canTalk(bob.id, alice.id), false);
+    assert.equal(await accounts.canTalk(carol.id, alice.id), true);
+    await accounts.removeFriend(carol.id, alice.id);
+    assert.equal(await accounts.canTalk(alice.id, carol.id), false);
+    await befriend(accounts, alice.id, carol.id);
+    await accounts.deleteAccount(carol.id);
+    assert.equal(await accounts.canTalk(alice.id, carol.id), false);
+  });
+
+  test(`${label}: an unregistered push token is removed, unless the device has a new one`, { skip }, async () => {
+    const { accounts, alice } = await setup();
+    await accounts.registerDevice(alice.id, "watch", { platform: "watch", pushToken: "old", apnsEnvironment: "sandbox" });
+    assert.equal(await accounts.removeDevice(alice.id, "watch", "stale"), false);
+    assert.equal((await accounts.devices(alice.id)).length, 1);
+    assert.equal(await accounts.removeDevice(alice.id, "watch", "old"), true);
+    assert.deepEqual(await accounts.devices(alice.id), []);
+    assert.equal(await accounts.removeDevice(alice.id, "watch", "old"), false);
+  });
+
+  test(`${label}: an invite accepted while a block lands never leaves them friends`, { skip }, async () => {
+    const docs = interleaved(makeDocs());
+    const accounts = new Accounts(docs, { invitesPerDay: 3 });
+    const alice = (await accounts.signInWithApple("001.alice.1", "Alice")).user;
+    const bob = (await accounts.signInWithApple("001.bob.1", "Bob")).user;
+    const { code: inviteCode } = await accounts.createInvite(alice.id);
+    // Started between the acceptance's checks and its commit. (Not awaited there: on
+    // Firestore the block waits for the transaction's locks.)
+    let blocking: Promise<void> = Promise.resolve();
+    docs.between = async () => {
+      blocking = accounts.block(alice.id, bob.id);
+    };
+    await code(accounts.acceptInvite(inviteCode, bob.id));
+    await blocking;
+    assert.deepEqual((await accounts.blocks(alice.id)).map((b) => b.id), [bob.id]);
+    assert.deepEqual(await accounts.friends(alice.id), []);
+    assert.deepEqual(await accounts.friends(bob.id), []);
+    assert.deepEqual(await accounts.ringLookup(bob.id, alice.id), { allowed: false });
   });
 }

@@ -53,6 +53,8 @@ export function createApi(options: ApiOptions): ApiHandler {
   const { accounts, signer, verifier } = options;
   const log = options.log ?? ((line: string) => console.log(line));
 
+  // The token's claims, checked only for its signature and expiry. Refresh and sign-out, which
+  // check the session themselves, use this directly; every other route uses authorize.
   const authenticate = (req: IncomingMessage, graceMs = 0): SessionClaims => {
     const token = bearer(req);
     if (!token) throw new AccountError(401, "unauthorized");
@@ -62,6 +64,14 @@ export function createApi(options: ApiOptions): ApiHandler {
       if (err instanceof SessionError) throw new AccountError(401, err.reason === "expired" ? "token-expired" : "unauthorized");
       throw err;
     }
+  };
+
+  // A valid token whose session is still current: a token kept after signing out (or after
+  // the account was deleted) is refused, even before it expires.
+  const authorize = async (req: IncomingMessage): Promise<SessionClaims> => {
+    const claims = authenticate(req);
+    if (!(await accounts.sessionActive(claims.sub, claims.sid, claims.dev))) throw new AccountError(401, "session-ended");
+    return claims;
   };
 
   const issue = (userId: string, sid: string, deviceId: string) => signer.issue({ sub: userId, sid, dev: deviceId });
@@ -93,7 +103,7 @@ export function createApi(options: ApiOptions): ApiHandler {
       return [200, issue(claims.sub, claims.sid, claims.dev)];
     }],
     ["POST", /^\/v1\/auth\/device$/, async (req) => {
-      const claims = authenticate(req);
+      const claims = await authorize(req);
       const { deviceId, platform } = await readBody(req);
       if (typeof deviceId !== "string" || !isPlatform(platform)) throw new AccountError(400, "bad-request", "deviceId and platform are required");
       if (deviceId === claims.dev) throw new AccountError(400, "same-device");
@@ -107,13 +117,13 @@ export function createApi(options: ApiOptions): ApiHandler {
       return [200, {}];
     }],
     ["GET", /^\/v1\/me$/, async (req) => {
-      const id = authenticate(req).sub;
+      const id = (await authorize(req)).sub;
       const [user, platforms] = await Promise.all([accounts.user(id), accounts.platforms(id)]);
       if (!user) throw new AccountError(404, "no-account");
       return [200, { ...userJSON(user), platforms }];
     }],
     ["PATCH", /^\/v1\/me$/, async (req) => {
-      const claims = authenticate(req);
+      const claims = await authorize(req);
       const { name, ringOn, avatar } = await readBody(req);
       if (name === undefined && ringOn === undefined && avatar === undefined) {
         throw new AccountError(400, "bad-request", "name, ringOn or avatar is required");
@@ -128,7 +138,7 @@ export function createApi(options: ApiOptions): ApiHandler {
       return [200, userJSON(user!)];
     }],
     ["DELETE", /^\/v1\/me$/, async (req) => {
-      const claims = authenticate(req);
+      const claims = await authorize(req);
       const { authorizationCode } = await readBody(req);
       if (options.revoker) {
         if (typeof authorizationCode !== "string" || !authorizationCode) {
@@ -152,7 +162,7 @@ export function createApi(options: ApiOptions): ApiHandler {
       return [200, {}];
     }],
     ["PUT", /^\/v1\/me\/device$/, async (req) => {
-      const claims = authenticate(req);
+      const claims = await authorize(req);
       const { platform, pushToken, pushType, apnsEnvironment } = await readBody(req);
       if (!isPlatform(platform) || typeof pushToken !== "string" || !pushToken || pushToken.length > 512) {
         throw new AccountError(400, "bad-request", "platform and pushToken are required");
@@ -168,61 +178,61 @@ export function createApi(options: ApiOptions): ApiHandler {
       return [200, {}];
     }],
     ["PUT", /^\/v1\/me\/photo$/, async (req) => {
-      const claims = authenticate(req);
+      const claims = await authorize(req);
       const jpeg = await readBytes(req, MAX_PHOTO_BYTES);
       const photoVersion = await accounts.setPhoto(claims.sub, jpeg);
       log(`[api] ${claims.sub} set a photo (${jpeg.length} bytes)`);
       return [200, { photoVersion }];
     }],
     ["DELETE", /^\/v1\/me\/photo$/, async (req) => {
-      await accounts.removePhoto(authenticate(req).sub);
+      await accounts.removePhoto((await authorize(req)).sub);
       return [200, {}];
     }],
     ["GET", /^\/v1\/users\/([\w.-]+)\/photo$/, async (req, [id]) => {
-      const { jpeg, version } = await accounts.photo(authenticate(req).sub, id);
+      const { jpeg, version } = await accounts.photo((await authorize(req)).sub, id);
       return [200, { bytes: jpeg, contentType: "image/jpeg", version }];
     }],
-    ["GET", /^\/v1\/friends$/, async (req) => [200, { friends: await accounts.friends(authenticate(req).sub) }]],
+    ["GET", /^\/v1\/friends$/, async (req) => [200, { friends: await accounts.friends((await authorize(req)).sub) }]],
     ["PATCH", /^\/v1\/friends\/([\w.-]+)$/, async (req, [id]) => {
-      const claims = authenticate(req);
+      const claims = await authorize(req);
       const { favorite } = await readBody(req);
       if (typeof favorite !== "boolean") throw new AccountError(400, "bad-request", "favorite is required");
       await accounts.setFavorite(claims.sub, id, favorite);
       return [200, {}];
     }],
     ["DELETE", /^\/v1\/friends\/([\w.-]+)$/, async (req, [id]) => {
-      await accounts.removeFriend(authenticate(req).sub, id);
+      await accounts.removeFriend((await authorize(req)).sub, id);
       return [200, {}];
     }],
     ["POST", /^\/v1\/invites$/, async (req) => {
-      const { code, expiresAt } = await accounts.createInvite(authenticate(req).sub);
+      const { code, expiresAt } = await accounts.createInvite((await authorize(req)).sub);
       return [200, { code, url: `${options.inviteBaseUrl}${code}`, expiresAt }];
     }],
-    ["GET", /^\/v1\/invites\/([\w.-]+)$/, async (req, [code]) => [200, await accounts.invite(code, authenticate(req).sub)]],
+    ["GET", /^\/v1\/invites\/([\w.-]+)$/, async (req, [code]) => [200, await accounts.invite(code, (await authorize(req)).sub)]],
     ["POST", /^\/v1\/invites\/([\w.-]+)\/accept$/, async (req, [code]) => {
-      const claims = authenticate(req);
+      const claims = await authorize(req);
       const friend = await accounts.acceptInvite(code, claims.sub);
       log(`[api] ${claims.sub} and ${friend.id} are friends`);
       return [200, { friend }];
     }],
     ["DELETE", /^\/v1\/invites\/([\w.-]+)$/, async (req, [code]) => {
-      await accounts.cancelInvite(code, authenticate(req).sub);
+      await accounts.cancelInvite(code, (await authorize(req)).sub);
       return [200, {}];
     }],
-    ["GET", /^\/v1\/blocks$/, async (req) => [200, { blocks: await accounts.blocks(authenticate(req).sub) }]],
+    ["GET", /^\/v1\/blocks$/, async (req) => [200, { blocks: await accounts.blocks((await authorize(req)).sub) }]],
     ["POST", /^\/v1\/blocks$/, async (req) => {
-      const claims = authenticate(req);
+      const claims = await authorize(req);
       const { userId } = await readBody(req);
       await accounts.block(claims.sub, String(userId));
       log(`[api] ${claims.sub} blocked ${userId}`);
       return [200, {}];
     }],
     ["DELETE", /^\/v1\/blocks\/([\w.-]+)$/, async (req, [id]) => {
-      await accounts.unblock(authenticate(req).sub, id);
+      await accounts.unblock((await authorize(req)).sub, id);
       return [200, {}];
     }],
     ["POST", /^\/v1\/reports$/, async (req) => {
-      const claims = authenticate(req);
+      const claims = await authorize(req);
       const body = await readBody(req);
       const report = {
         userId: String(body.userId),

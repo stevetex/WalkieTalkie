@@ -101,6 +101,9 @@ export function prefetchAlert(ring: RingPayload, expiresAt: number): AlertPush {
       },
       ...ring,
       prefetch: 1,
+      // When the relay abandons the ring (server clock, ms): the watch doesn't play a
+      // downloaded message after that.
+      ringExpiresAt: expiresAt,
     },
     collapseId: ring.conversationId,
     expiresAt,

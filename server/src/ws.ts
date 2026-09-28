@@ -7,7 +7,11 @@ import type { Duplex } from "node:stream";
 import { EventEmitter } from "node:events";
 
 const GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
-const MAX_MESSAGE_BYTES = 1 << 20;
+// Control messages are small and audio frames at most 1280 bytes (protocol.ts).
+const MAX_MESSAGE_BYTES = 64 * 1024;
+// A client that stops reading is dropped once this much is waiting to be sent to it
+// (about 25 s of PCM), rather than queueing its audio without limit.
+export const MAX_QUEUED_BYTES = 1 << 20;
 
 const OP_CONT = 0x0;
 const OP_TEXT = 0x1;
@@ -96,6 +100,11 @@ export class WebSocketConnection extends EventEmitter {
 
   private writeFrame(opcode: number, payload: Buffer): void {
     if (this.closed || this.socket.destroyed) return;
+    if (this.socket.writableLength > MAX_QUEUED_BYTES) {
+      this.socket.destroy();
+      this.finish(1008);
+      return;
+    }
     const len = payload.length;
     let header: Buffer;
     if (len < 126) {

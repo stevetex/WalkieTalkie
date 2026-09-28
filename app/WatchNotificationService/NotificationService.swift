@@ -35,6 +35,12 @@ final class NotificationService: UNNotificationServiceExtension {
               let url = Self.audioURL(userId: session.userId, conversationId: conversationId)
         else { return deliver() }
 
+        // Whose message this is, and when the relay drops it: the app plays it only for this
+        // account, and only before then (Watch/Prefetch.swift).
+        meta["userId"] = session.userId
+        if let expiresAt = info["ringExpiresAt"] as? Double { meta["ringExpiresAt"] = expiresAt }
+        if let sentAt = info["pushSentAt"] as? Double { meta["pushSentAt"] = sentAt }
+
         let directory = container.appendingPathComponent("prefetch", isDirectory: true)
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         files = (directory.appendingPathComponent("\(conversationId).records"),

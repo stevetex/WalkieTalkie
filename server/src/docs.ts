@@ -5,12 +5,14 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import {
   PreconditionFailed,
+  TransactionAborted,
   decodeFields,
   encodeFields,
   splitPath,
   type FirestoreData,
   type FirestoreDocument,
   type Query,
+  type TransactionGet,
   type Write,
 } from "./firestore.ts";
 
@@ -21,12 +23,19 @@ export interface Docs {
   query(collection: string, query: Query): Promise<FirestoreDocument[]>;
   // All or nothing; PreconditionFailed if an `exists` check fails.
   commit(writes: Write[]): Promise<void>;
+  // `fn` reads through `get` and returns writes, which commit only if none of the documents it
+  // read changed meanwhile; if one did, `fn` runs again. For checks that a concurrent write
+  // must not slip past (a block landing while an invite is accepted).
+  transaction<T>(fn: (get: TransactionGet) => Promise<{ writes: Write[]; result: T }>): Promise<T>;
 }
 
 // In memory, optionally saved to a JSON file after each commit (Firestore's typed JSON, so
 // dates survive).
 export class MemoryDocs implements Docs {
   private docs = new Map<string, FirestoreData>();
+  // The commit that last wrote each path, so a transaction can tell whether what it read changed.
+  private versions = new Map<string, number>();
+  private commits = 0;
   private file: string | null;
 
   constructor(file: string | null = null) {
@@ -82,7 +91,25 @@ export class MemoryDocs implements Docs {
     return query.limit ? rows.slice(0, query.limit) : rows;
   }
 
+  // Optimistic: `fn` runs again if a document it read was written before it commits. The
+  // check and the commit run with no await between them, so nothing can land in between.
+  async transaction<T>(fn: (get: TransactionGet) => Promise<{ writes: Write[]; result: T }>): Promise<T> {
+    for (let attempt = 1; attempt <= 5; attempt++) {
+      const read = new Map<string, number>();
+      const { writes, result } = await fn(async (paths) => {
+        for (const p of paths) if (!read.has(p)) read.set(p, this.versions.get(p) ?? 0);
+        return this.getAll(paths);
+      });
+      if ([...read].every(([p, version]) => (this.versions.get(p) ?? 0) === version)) {
+        await this.commit(writes);
+        return result;
+      }
+    }
+    throw new TransactionAborted("transaction retried too many times");
+  }
+
   async commit(writes: Write[]): Promise<void> {
+    const commit = ++this.commits;
     for (const w of writes) {
       const path = "delete" in w ? w.delete : w.set;
       checkDocument(path);
@@ -91,6 +118,7 @@ export class MemoryDocs implements Docs {
       }
     }
     for (const w of writes) {
+      this.versions.set("delete" in w ? w.delete : w.set, commit);
       if ("delete" in w) {
         this.docs.delete(w.delete);
       } else if (w.fields) {

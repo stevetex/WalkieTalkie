@@ -2,18 +2,33 @@ import Foundation
 import Testing
 @testable import OverAndOutKit
 
-/// Serves canned responses in order and records the requests.
+/// Serves canned responses in order and records the requests. A `held` reply waits for
+/// `releaseHeld()`, to finish a request after something else has happened.
 final class StubProtocol: URLProtocol, @unchecked Sendable {
-    struct Reply { let status: Int; let json: String }
+    struct Reply { let status: Int; let json: String; var held = false }
     nonisolated(unsafe) static var replies: [Reply] = []
     nonisolated(unsafe) static var requests: [URLRequest] = []
+    nonisolated(unsafe) static var held: [() -> Void] = []
     static let lock = NSLock()
 
     static func reset(_ replies: [Reply]) {
         lock.withLock {
             self.replies = replies
             requests = []
+            held = []
         }
+    }
+
+    static func waitUntilHeld() async {
+        while lock.withLock({ held.isEmpty }) { try? await Task.sleep(nanoseconds: 1_000_000) }
+    }
+
+    static func releaseHeld() {
+        let replies = lock.withLock {
+            defer { held = [] }
+            return held
+        }
+        replies.forEach { $0() }
     }
 
     override class func canInit(with request: URLRequest) -> Bool { true }
@@ -24,10 +39,17 @@ final class StubProtocol: URLProtocol, @unchecked Sendable {
             Self.requests.append(request)
             return Self.replies.isEmpty ? Reply(status: 500, json: "{}") : Self.replies.removeFirst()
         }
-        let response = HTTPURLResponse(url: request.url!, statusCode: reply.status, httpVersion: nil, headerFields: nil)!
-        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-        client?.urlProtocol(self, didLoad: Data(reply.json.utf8))
-        client?.urlProtocolDidFinishLoading(self)
+        let finish = { [self] in
+            let response = HTTPURLResponse(url: request.url!, statusCode: reply.status, httpVersion: nil, headerFields: nil)!
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: Data(reply.json.utf8))
+            client?.urlProtocolDidFinishLoading(self)
+        }
+        if reply.held {
+            Self.lock.withLock { Self.held.append(finish) }
+        } else {
+            finish()
+        }
     }
 
     override func stopLoading() {}
@@ -161,6 +183,49 @@ struct AccountTests {
             #expect(!error.endsSession)
         }
         #expect(store.load() != nil)
+    }
+
+    @Test func aRefreshInFlightDoesNotBringBackASessionThatSignedOut() async throws {
+        let store = MemorySessionStore(session(expiresIn: 28 * 24 * 3600))
+        StubProtocol.reset([
+            .init(status: 200, json: #"{"token":"new","expiresAt":1792000000000}"#, held: true),
+            .init(status: 200, json: "{}"),
+        ])
+        let c = client(store)
+        let refreshing = Task { try await c.refresh() }
+        await StubProtocol.waitUntilHeld()
+        await c.signOut()
+        #expect(store.load() == nil)
+        StubProtocol.releaseHeld()
+        _ = try? await refreshing.value
+        #expect(store.load() == nil)
+        #expect(StubProtocol.requests.map { $0.url!.path } == ["/v1/auth/refresh", "/v1/auth/signout"])
+    }
+
+    @Test func aResponseForTheOldSessionLeavesAnotherAccountsSessionAlone() async throws {
+        let store = MemorySessionStore(session(expiresIn: 28 * 24 * 3600))
+        let other = AccountSession(token: "bob", expiresAt: Date(timeIntervalSince1970: 1_792_000_000),
+                                   userId: "u_b", name: "Bob", deviceId: "phone")
+        // The refresh finishes after another account's session was stored (by the store's
+        // other user, so the client can't know): it isn't saved over Bob's.
+        StubProtocol.reset([.init(status: 200, json: #"{"token":"new","expiresAt":1792000000000}"#, held: true)])
+        let c = client(store)
+        let refreshing = Task { try await c.refresh() }
+        await StubProtocol.waitUntilHeld()
+        store.save(other)
+        StubProtocol.releaseHeld()
+        await #expect(throws: AccountAPIError.self) { try await refreshing.value }
+        #expect(store.load() == other)
+
+        // Nor does the old session's "signed out" sign Bob out.
+        store.save(session(expiresIn: 29 * 24 * 3600))
+        StubProtocol.reset([.init(status: 401, json: #"{"error":"session-ended"}"#, held: true)])
+        let listing = Task { try await c.friends() }
+        await StubProtocol.waitUntilHeld()
+        store.save(other)
+        StubProtocol.releaseHeld()
+        await #expect(throws: AccountAPIError.self) { try await listing.value }
+        #expect(store.load() == other)
     }
 
     @Test func sessionsCrossToTheWatchIntact() {

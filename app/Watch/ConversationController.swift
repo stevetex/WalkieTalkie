@@ -356,7 +356,7 @@ final class ConversationController: NSObject, ObservableObject {
     /// relay's prefetch push arrived, before the relay stream is even open. The join still
     /// replays everything; relay.onFrame skips the frames played here.
     private func playPrefetched(_ conversationId: String) {
-        guard let prefetched = Prefetched.take(conversationId: conversationId) else { return }
+        guard let prefetched = Prefetched.take(conversationId: conversationId, userId: account.session?.userId) else { return }
         let meta = prefetched.meta
         if let t = meta["receivedAt"] as? Double { conversation?.timeline.mark("nseReceived", at: t) }
         if let t = meta["fetchStartedAt"] as? Double { conversation?.timeline.mark("nseFetchStarted", at: t) }
@@ -553,6 +553,14 @@ final class ConversationController: NSObject, ObservableObject {
             audio.endCapture {}
             burstId = nil
             finish(status: "Continued on your iPhone")
+        case "conversation-ended":
+            // A block, an unfriending or a deleted account: the relay dropped the conversation.
+            guard message.conversationId == conversation?.conversationId else { return }
+            WKInterfaceDevice.current().play(.failure)
+            audio.endCapture {}
+            burstId = nil
+            finish(status: "Can't reach \(name)")
+            account.refresh()
         case "peer-left":
             log("\(name) left")
         case "ring-timeout":
