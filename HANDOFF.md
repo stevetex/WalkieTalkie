@@ -1,37 +1,35 @@
-# Handoff: Over&Out — watch app, accounts and UX done; next, walkie-talkie on the iPhone (2026-09-27)
+# Handoff: Over&Out — the iPhone talks too (2026-09-28)
 
-Read this first. Over&Out: Watch Walkie Talkie replaces Apple's Watch Walkie-Talkie app, which Apple removed in watchOS 27. The watch app works end to end on Steve's watch with real APNs pushes, through relay nodes on Google Cloud: a ring's message plays about **0.5 s after the tap** (runs 36, 41, 43) and 0.3 s after an in-app answer (run 42). Accounts (Sign in with Apple, friends, invites, block and report, account deletion), the iPhone companion app, profile photos and the branding are built, tested on Steve's devices and live. **Next: walkie-talkie on the iPhone itself** (below). There are no secrets in this file. Tokens and keys live in gitignored files and Secret Manager, listed under Local config.
+Read this first. Over&Out: Watch Walkie Talkie replaces Apple's Watch Walkie-Talkie app, which Apple removed in watchOS 27. The watch app works end to end on Steve's watch with real APNs pushes, through relay nodes on Google Cloud: a ring's message plays about **0.5–0.8 s after the tap** (runs 36–48) and 0.3 s after an in-app answer (run 42). Accounts, the iPhone app, profile photos and the branding are built and live. **New on 2026-09-28: the iPhone talks too** (iPhone ↔ watch and iPhone ↔ iPhone) through Apple's PushToTalk framework: on Steve's locked iPhone a friend's message plays with no tap, **1.2–1.5 s after the push is sent** (runs 45, 47), and he replies from the Lock Screen. It's on the `iphone-talk` branch, committed locally, not pushed; the relay and API it needs are deployed. There are no secrets in this file. Tokens and keys live in gitignored files and Secret Manager, listed under Local config.
 
 ## Start here
 
-1. Read this file, then the feasibility doc's **Design decisions** (especially 2026-09-25 "In the MVP the iPhone app is a companion", which this work revisits, and the 2026-09-27 rows) and **Prototype results** runs 36–43.
-2. Do the **Next job** below with Steve: research and propose first, then build.
+1. Read this file, then the feasibility doc's **Design decisions** (the five 2026-09-27 iPhone-talk rows and the 2026-09-28 PushToTalk requirements row) and **Prototype results** runs 44–48.
+2. Ask Steve whether to push `iphone-talk` and open a PR (nothing is pushed yet), then do the **Next job** below.
 3. Ask Steve before anything outward-facing or billed: creating Google Cloud resources, deploying to the live relay or the API, DNS changes (he adds GoDaddy records by hand), App Store Connect or developer-portal changes Xcode doesn't make itself (for example a new capability or push certificate), and deleting VMs or data.
 
 ## Links
 
-- **Feasibility doc (Claude Docs):** https://claude.ai/code/artifact/59ab6e47-6e5d-4698-8bd1-173293953df9. Log design decisions in its Design decisions table (date, decision, why, revisit if), and measured results in Prototype results (runs 1–43 so far).
-- **Backlog (Claude Docs):** https://claude.ai/code/artifact/30273f1c-2795-4fd7-b15a-370b1a177118. Small follow-ups with a Status column. Open items include retiring the shared relay token, blocks ending an open conversation, the API accepting tokens of ended sessions, a device's registration under a previous account, invites across the App Store install, session key rotation, reviewing reports, and the invite sheet's double lookup.
-- **Repo:** https://github.com/stevetex/WalkieTalkie. `main` has accounts (`665153a`, `c22cbc2`, `8537f6c`), branding (PR #1) and the device-test fixes and mascot watch screen (PR #2, `8037234`, `ba813ab`). Photos, About and "Screen name" (`3880fac` on `ux-settings-about`) are in PR #3.
+- **Feasibility doc (Claude Docs):** https://claude.ai/code/artifact/59ab6e47-6e5d-4698-8bd1-173293953df9. Log design decisions in its Design decisions table (date, decision, why, revisit if), and measured results in Prototype results (runs 1–48 so far).
+- **Backlog (Claude Docs):** https://claude.ai/code/artifact/30273f1c-2795-4fd7-b15a-370b1a177118. Small follow-ups with a Status column. New on 2026-09-28: eleven iPhone-talk items (testing PushToTalk with production push, warming the iPhone's relay connection, sharing the conversation core with the watch, and more). Older open items include retiring the shared relay token, blocks ending an open conversation, the API accepting tokens of ended sessions, a device's registration under a previous account, invites across the App Store install, session key rotation, reviewing reports, and the invite sheet's double lookup.
+- **Repo:** https://github.com/stevetex/WalkieTalkie. `main` has accounts (`665153a`, `c22cbc2`, `8537f6c`), branding (PR #1) and the device-test fixes and mascot watch screen (PR #2, `8037234`, `ba813ab`). photos, About and "Screen name" (PR #3, `3880fac`). **`iphone-talk`** (local, not pushed): `adf12b9` (the relay, API and iPhone talk), then device fixes `fa3b44d`, `6b88915`, `4f21ec9`, `c063527`, `ee6f3ad`, `11cb2eb`, `e37b124`, `c53578d`, `cedc40e`, `7d7b300`.
 - **App name and domain:** "Over&Out: Watch Walkie Talkie", overandout.app (DNS at GoDaddy, nameservers `ns61/ns62.domaincontrol.com`). Bundle IDs `com.cypressoakstudios.overandout` (iPhone), `…overandout.watchkitapp` (watch) and `…overandout.watchkitapp.notificationservice`. Team `A39XNKNDPX`.
 
-## Next job: walkie-talkie on the iPhone
+## Next job: finish iPhone talk, then the MVP list
 
-Steve wants the iPhone app to talk too, not only the watch: iPhone ↔ watch and iPhone ↔ iPhone. The 2026-09-25 decision deferred iPhone push-to-talk (the PushToTalk framework, `PTChannelManager`) past the MVP because it was untested; this session revisits it. Research, then propose to Steve before building, with the decisions below.
+iPhone talk works on Steve's devices (runs 45–48). Before the Beta:
+1. **Push and PR** `iphone-talk` when Steve says so.
+2. **Test PushToTalk with production push** (backlog): development builds get pushes through the APNs sandbox, whose connection on the phone can die unnoticed. Pushes were then accepted (200) and silently dropped until Airplane Mode was toggled (see Gotchas). Apple DTS advises testing PushToTalk with production push, which means a TestFlight build: an App Store Connect upload, so ask Steve first.
+3. **The iPhone-talk backlog items**, especially warming the relay connection (the cold connection is ~0.95 s of the 1.2–1.5 s), the stale watch registration that can take an iPhone's rings, and sharing the conversation core and mascot with the watch.
+4. **Still to do for the MVP:** the App Store listing (screenshots, description, privacy label: identifiers, name, usage data, and User Content → Photos or Videos for profile photos; review notes should explain PushToTalk and the audio background mode), the website in the new branding (`web/public`), retiring the shared relay token (backlog), and the watchOS 9–11 checks (backlog).
 
-**What exists to build on:**
-- The kit (`app/Packages/OverAndOutKit`, iOS 16 / watchOS 9) already has the relay transport (`RelayConnection.swift`), the audio pipeline (`AudioPipeline.swift`, playAndRecord/voiceChat, with `onPlaybackDrained`), Opus (`VoiceCodec.swift`, the system encoder), rings (`Ring.swift`) and timelines. The watch's `ConversationController.swift` is the reference client: talk, floor grants, join, replay, pre-connect, the 45 s window, and the prefetch path.
-- The relay rings **only watch devices**: `server/src/relay.ts:380` filters `lookup.devices` to `platform === "watch"`. The iPhone doesn't register for pushes (`AccountClient.registerDevice` exists but only the watch calls it) and declares no background modes.
-- Rings are time-sensitive alert pushes to the watch bundle ID topic; the prefetch push lets the watch's notification service extension download the message before the tap (design decisions 2026-09-25/27).
+## Done on 2026-09-28: walkie-talkie on the iPhone (runs 44–48)
 
-**To research and decide with Steve (then log in Design decisions):**
-1. **Framework:** PushToTalk (iOS 16+: `PTChannelManager`, the system talk UI, `pushtotalk` APNs push type with the `<bundle ID>.voip-ptt` topic, the Push to Talk capability and the `push-to-talk` background mode, audio session handled by the system) versus an in-app-only mode (no background, like the watch's in-app ring). Check what App Review and the entitlement require, and whether PTT works for our friend model (one channel per friend or one channel that switches).
-2. **Which device rings:** does a ring go to all of the account's devices (watch and iPhone), and what happens when one answers (the relay would tell the others to stop)? Today the relay rings every watch on the account.
-3. **iPhone UI:** a Talk screen per friend (hold to talk, the mascot-mouth idea from the watch?), and how it sits with the Friends list.
-4. **Latency:** measure tap → first audio on the iPhone the way the watch runs did (timelines, `tools/report.ts`), without the debugger.
-5. **Server changes:** register the iPhone's push token (PTT tokens are separate from APNs alert tokens), send `pushtotalk` pushes, ring iPhone devices, and the "someone answered" cancel. These need a relay deploy (ask first; about 2 minutes of downtime with one node) and possibly an API deploy.
-
-Keep the branding (`OverAndOutKit/Brand.swift`, `.brandScreen()`, each target's `Assets.xcassets`; art in `art/`). Check changes on the simulators first (the Simulator section; note the watch simulator's WatchConnectivity doesn't work here), then on Steve's devices without the debugger, and re-measure the watch's tap → first audio if the watch's ring or answer path changes. PushToTalk needs a real iPhone; check early whether the simulator supports any of it.
+- **Design** (feasibility doc, 2026-09-27 rows): PushToTalk on devices, one "Over&Out" channel whose descriptor names the current friend; an in-app ring over the open relay stream when PushToTalk isn't available (the simulator, or the channel was left); no alert ring on the iPhone. A friend's message plays at once on the iPhone (being in the channel = available). One device rings, never both: `ringOn` on the account ("watch", "iphone", unset = the watch if there is one), the other device if the chosen one can't be reached, otherwise "isn't available" at once; the device used last keeps the conversation. The iPhone has its own `TalkController`; the watch's code is unchanged.
+- **Relay** (`server/src/relay.ts`, `main.ts`, `apns.ts`): connections per device (the session token's `dev`), `moved` when a conversation moves to another of the user's devices, ring target selection (`ringTargets`), PushToTalk pushes (`pushToTalkRing`: topic `<iPhone bundle>.voip-ptt`, expiration 0, **an `aps` dictionary**), in-app rings for `app:` registrations, `talk-refused` reason `unavailable`, and one retry on a fresh APNs connection after a transport error. **API:** `PATCH /v1/me {ringOn}`, `PUT /v1/me/device {pushType: "pushtotalk"}`; `ringLookup` reads `ringOn` in the same batch.
+- **iPhone** (`app/iOS`): `PushToTalkChannel.swift` (the channel manager, token kept in defaults), `TalkController.swift` (PushToTalk or the app's own audio session; timelines with `pttPushReceived` and the audio route), `TalkView.swift` (the mascot's mouth is hold-to-talk; the in-app ring screen), Settings → Walkie-Talkie (the channel on/off, Ring Me On, and on debug builds the PushToTalk state), an onboarding step, `AppDelegate` making `AppModel.shared` at launch. `Config/iOS.entitlements` (push and Push to Talk; `iOS-NoPush.entitlements` for `OAO_PUSH=no`), `UIBackgroundModes` `push-to-talk` **and `audio`**. The kit's `AudioPipeline.start(capture:)` starts the speaker alone for PushToTalk receiving.
+- **Found on Steve's iPhone** (design decision 2026-09-28, runs 45–46): pushes without `aps` never reach the app; the app needs the audio background mode or `audiomxd` refuses its audio; the channel manager must be made in `didFinishLaunching`; iOS doesn't resend the channel token after leaving and rejoining; starting the microphone while receiving makes the engine restart and drop the audio; the APNs sandbox connection can be dead without the phone noticing.
+- **Measured:** iPhone push sent → first audio 1.16 s (run 45) and 1.54 s over Bluetooth HFP (run 47); Lock Screen Talk → first frame 1.14 s; watch tap → first audio 0.76 s after the relay changes (run 48). Simulators: iPhone → watch, watch → iPhone and iPhone ↔ iPhone (run 44).
 
 ## Done on 2026-09-27 (runs 36–43)
 
@@ -48,9 +46,9 @@ Keep the branding (`OverAndOutKit/Brand.swift`, `.brandScreen()`, each target's 
 - **Accounts (2026-09-27):**
   - **API** (`server/src/api.ts`, `accounts.ts`, `session.ts`, `apple.ts`; `api-main.ts` for Cloud Run): Sign in with Apple with a nonce; Ed25519 JWT session tokens (30 days, refreshed when a day old, refreshable up to a year past expiry while the session exists); the iPhone mints the watch's session (`POST /v1/auth/device`); profile, friends, single-use 7-day invites, blocks, reports (logged as `[report]`, emailed by an alert), push registration (`PUT /v1/me/device`), account deletion with Apple token revocation.
   - **Firestore model:** `users/{uid}` (with `photoVersion`) with `friends`, `blocks`, `devices` and `sessions` subcollections; `appleSubs/{sub}`; `invites/{code}` (TTL on `expireAt`); `reports/{id}`; `photos/{uid}`. The account logic runs on a small `Docs` interface: Firestore REST with atomic commits and preconditions, or `MemoryDocs` locally.
-  - **Relay:** accepts session tokens (user ID from the token) and the shared token (user ID from the request, never an account's). An account can only ring a friend (`ringLookup`, one Firestore batch read per ring) and rings every watch on the account; otherwise `talk-refused`. Diagnostics and `POST /v1/devices` are shared-token only.
-  - **Tests:** `npm test` runs 69 (17 skip without the emulator); `npm run test:firestore` runs 17, including the whole account suite against the Firestore emulator. `swift test` in the kit runs 20.
-- **iPhone app (`app/iOS`):** sign-in, onboarding (screen name and optional photo, Focus step, watch), friends list with photos, invite via the share sheet, invite acceptance sheet (universal links), friend page (report with reasons and optional block, block, remove), settings (photo, screen name, watch status and re-send sign-in, Focus help, blocked people, privacy and support links, About Over&Out, sign out, the Delete Account screen). It doesn't talk yet (Next job).
+  - **Relay:** accepts session tokens (user and device from the token) and the shared token (user ID from the request, never an account's). An account can only ring a friend (`ringLookup`, one Firestore batch read per ring); one kind of device rings (see Done on 2026-09-28); otherwise `talk-refused`. Diagnostics and `POST /v1/devices` are shared-token only.
+  - **Tests:** `npm test` runs 73 (17 skip without the emulator); `npm run test:firestore` runs 17, including the whole account suite against the Firestore emulator. `swift test` in the kit runs 21.
+- **iPhone app (`app/iOS`):** sign-in, onboarding (screen name and optional photo, Focus step, watch), friends list with photos, invite via the share sheet, invite acceptance sheet (universal links), friend page (report with reasons and optional block, block, remove), settings (photo, screen name, watch status and re-send sign-in, Focus help, blocked people, privacy and support links, About Over&Out, sign out, the Delete Account screen), and now talking: a Talk screen per friend, PushToTalk, Settings → Walkie-Talkie.
 - **Branding (2026-09-27, `0e65ca9`):** the icon ("Chrome Tomorrow" mascot), the stacked wordmark and light/dark semantic colors are in each target's `Assets.xcassets`; `OverAndOutKit/Brand.swift` has the palette and `.brandScreen()`. The iPhone's Friends and sign-in screens have a masthead; the watch's main screen is the mascot (above). Source art, exports and usage notes are in `art/` (see `art/README.md`). The website (`web/public`) doesn't use it yet.
 - **Watch app:** its session comes from the iPhone (`Watch/WatchAccount.swift`), stored in the Keychain under the app group; friends from the API, cached, with a picker when there's more than one; push token registered under the account; token refresh and friends reload 5 s after coming to the front and only when idle (never on the ring path). The shared token is gone from the builds.
 - **Prefetch prototype** (2026-09-27): the relay sends a second, silent push 3 s after an APNs ring; the notification service extension downloads the held message (now with the account's token from the Keychain) and the app plays it on the tap. Tap → first audio 0.60–0.77 s (runs 32–34), 0.48 s with accounts (run 36). Refinements are in the backlog.
@@ -68,21 +66,33 @@ Keep the branding (`OverAndOutKit/Brand.swift`, `.brandScreen()`, each target's 
 | Do Not Disturb | Rings break through only if Over&Out is on the Focus's allowed apps. Onboarding now guides users to that |
 | Talk → relay's "go ahead" | 0.2–0.48 s |
 
+### Measured on Steve's iPhone (no debugger, PushToTalk, sandbox APNs)
+
+| What | Result |
+| --- | --- |
+| Push sent → PushToTalk push received | 0.19–0.35 s (runs 45, 47) |
+| Push received → audio session active | 0.46–0.65 s |
+| Push received → relay stream joined | 0.97–1.18 s (the cold connection is the longest step) |
+| **Push sent → first audio (no tap)** | **1.16 s** (run 45); 1.54 s over a Bluetooth headset (run 47) |
+| Lock Screen Talk → first frame sent / relay's go-ahead | 1.14 s / 1.28 s (run 47) |
+
 ## Open risks
 
 - **WatchConnectivity handoff** worked once on hardware (run 36). If it proves unreliable, the fallbacks are the watch asking again on reachability changes (already there), Settings → "Sign In on Watch Again" on the iPhone, or Sign in with Apple on the watch.
 - **App Review:** report/block and account deletion are in; the listing, privacy label and review notes aren't written yet.
 - **watchOS 9–11 is untested** (Opus encoder, background behaviour, the extension). In the backlog, needed before the Beta.
+- **PushToTalk on production push is unmeasured.** Every iPhone run used the APNs sandbox, which silently dropped pushes until Airplane Mode was toggled. Production should be steadier (Apple DTS), but it needs a TestFlight build to confirm (backlog).
+- **App Review and the audio background mode:** the iPhone declares `audio` alongside `push-to-talk` because PushToTalk can't activate its audio in the background without it. It's ordinary playback (guideline 2.5.4); explain it in the review notes.
 - **One relay node:** a deploy or a node failure means about 2 minutes without the relay until option E's failover and a second node exist.
 
 ## Deployment today (Google Cloud)
 
 - **Resources** (project `walkie-talkie-relay`, owned by stevelt@gmail.com; all in us-central1):
-  - instance group `relay` (zone us-central1-a) with one node, `relay-1` (e2-micro, COS, 10 GB boot disk, 10 GB data disk `relay-1-1`), template `relay-<commit>`, **running `665153a`**;
+  - instance group `relay` (zone us-central1-a) with one node, `relay-1` (e2-micro, COS, 10 GB boot disk, 10 GB data disk `relay-1-1`), template `relay-<commit>`, **running `11cb2eb`** (iPhone talk; deployed 2026-09-28 with Steve's OK);
   - static IP `walkie-relay-ip` `35.209.96.216` (Standard tier), on `relay-1`;
   - Firestore (default) database, TTL policies on `timelines.expireAt` and `invites.expireAt`;
   - service accounts `relay-node` (Firestore, logs, metrics, image pull, its secrets) and `account-api` (Firestore, the API's secrets);
-  - Cloud Run service `api` (`https://api-yqgprbu3ja-uc.a.run.app`, scales to zero, max 4 instances, running `3880fac`);
+  - Cloud Run service `api` (`https://api-yqgprbu3ja-uc.a.run.app`, scales to zero, max 4 instances, running `adf12b9`);
   - Firebase added to the project (Steve accepted the terms in the console); Hosting site `walkie-talkie-relay` (`walkie-talkie-relay.web.app`) with the custom domain overandout.app; `/v1/*` rewritten to `api`;
   - Artifact Registry repo `relay` (images `relay` and `api`); Secret Manager secrets `relay-token`, `apns-key`, `acme-eab`, `session-signing-key`, `session-public-keys` (key ID `k20260927`) and `apple-siwa-key`;
   - health check `relay-health`, firewall rule `walkie-web` (80/443), two uptime checks and alert policies, and the alert policy "Over&Out: user report".
@@ -129,6 +139,19 @@ Keep the branding (`OverAndOutKit/Brand.swift`, `.brandScreen()`, each target's 
 - **Timeline:** `node tools/report.ts <conversationId>` (with `SPIKE_TOKEN`). The watch uploads its timeline when the conversation ends, so ask Steve to tap **End**.
 - **Cold start:** Settings → Testing → **Quit when I leave** (debug builds), then press the crown. watchOS 27 has no app switcher, and quitting in the foreground brings the app back.
 
+## Testing on the iPhone
+
+- **Hardware:** Steve's iPhone 17 Pro Max ("Tex iPhone 17", UDID `00008150-000215EA3E02401C`), iOS 27. Install as for the watch: the **OverAndOut** scheme, then **Stop**. After a reinstall, check Settings → Walkie-Talkie: it can leave the channel (backlog), and then rings go to the watch.
+- **Ring it with the bot:** set Ring Me On to iPhone, lock the phone, then `bot.ts send --account` as above. The message plays with no tap; `--stay 60` leaves time to reply from the Lock Screen's Talk button (tap the blue waveform in the Dynamic Island). The iPhone uploads its timeline when it leaves the conversation, which it does by itself once the audio stops.
+- **If nothing plays** and the timeline has no `pttPushReceived`, toggle Airplane Mode on the iPhone (the sandbox push connection; see Gotchas), then ring again.
+- **The phone's own log** (the app logs to subsystem `com.cypressoakstudios.overandout`, PushToTalk to `com.apple.pushtotalk.framework`, the system side is `callservicesd`, pushes are `apsd`): connect the iPhone by cable, then Steve runs in a terminal tab (it needs his password)
+
+  ```bash
+  sudo log collect --device-udid 00008150-000215EA3E02401C --last 5m --output <scratchpad>/iphone.logarchive && sudo chown -R $USER <scratchpad>/iphone.logarchive
+  ```
+
+  and read it with `/usr/bin/log show <archive> --info --debug --style compact --predicate 'subsystem == "com.cypressoakstudios.overandout"'` (zsh has its own `log` builtin, so use the full path).
+
 ## Simulator
 
 A local relay that also serves the API, accepts dev sign-ins and delivers rings to simulators:
@@ -171,6 +194,11 @@ Details:
 - **A replaced node's SSH host key changes.** Remove the old entry with `ssh-keygen -R compute.<instance id> -f ~/.ssh/google_compute_known_hosts`; gcloud then reads the new key from guest attributes.
 - **`zsh` doesn't split unquoted variables,** so `gcloud … $FLAGS` passes one argument. Spell flags out, or run the command under `bash`.
 - **The share sheet's Copy puts a URL on the pasteboard,** which `xcrun simctl pbpaste` doesn't print.
+- **PushToTalk doesn't run in the simulator** (`PTChannelManager` fails with InvalidPlatform), so simulator iPhones talk only in the app, with rings over the open relay stream.
+- **The APNs sandbox connection can be dead without the iPhone noticing.** PushToTalk pushes are then accepted (HTTP 200) and never delivered, and the phone's `apsd` logs nothing. Toggling Airplane Mode fixes it until next time. Apple DTS (developer forums thread 773514) advises testing PushToTalk with production push.
+- **PushToTalk pushes need an `aps` dictionary** in the body, despite Apple's example (forums thread 772008), and the app needs the `audio` background mode as well as `push-to-talk`, or the system won't activate its audio in the background.
+- **An iPhone test build's relay is `relay-1`,** but a local relay for the simulators may already hold port 8080 (another session's); run yours on another port and build with `OAO_SERVER_HOST` and `OAO_API_HOST` set to it.
+- **Stale device registrations win rings:** a simulator watch signed in under an earlier account stayed registered there and took the ring meant for that account's iPhone (backlog).
 
 ## Steve's preferences
 

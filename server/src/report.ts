@@ -41,6 +41,12 @@ const INTERVALS: Array<[string, string, string]> = [
   ["Notification: opened → joined", "receiver.notificationOpened", "receiver.joined"],
   ["Preconnect: launch → stream open (before the tap)", "receiver.preconnectStarted", "receiver.preconnected"],
   ["Notification: opened → first audio", "receiver.notificationOpened", "receiver.firstAudioScheduled"],
+  // The iPhone's PushToTalk ring (design decision 2026-09-27): no tap, the push is the answer.
+  ["iPhone: push sent → PushToTalk push received (cross-device)", "server.pushSent", "receiver.pttPushReceived"],
+  ["iPhone: push received → relay stream open", "receiver.pttPushReceived", "receiver.socketOpen"],
+  ["iPhone: push received → joined", "receiver.pttPushReceived", "receiver.joined"],
+  ["iPhone: push received → audio session active", "receiver.pttPushReceived", "receiver.audioActivated"],
+  ["iPhone: push received → first audio", "receiver.pttPushReceived", "receiver.firstAudioScheduled"],
   ["Total: press → first audio (cross-device)", "sender.talkPressed", "receiver.firstAudioScheduled"],
   ["Total: push sent → first audio, minus human answer time", "server.pushSent", "receiver.firstAudioScheduled"],
 ];

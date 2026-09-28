@@ -5,6 +5,8 @@ import SwiftUI
 /// Signed out → Sign in with Apple. Signed in for the first time → onboarding. Then friends.
 struct RootView: View {
     @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var talk: TalkController
+    @State private var path: [Friend] = []
 
     var body: some View {
         Group {
@@ -19,9 +21,19 @@ struct RootView: View {
                     .masthead()
             } else {
                 // Inside the stack, so its navigation bar (and the Settings button) stays above it.
-                NavigationStack {
+                NavigationStack(path: $path) {
                     FriendsView()
                         .masthead()
+                }
+                .fullScreenCover(item: ringBinding) { ring in
+                    IncomingRingView(ring: ring)
+                }
+                // A friend started a conversation: show their Talk screen.
+                .onChange(of: talk.arrivedFrom) { id in
+                    guard let id else { return }
+                    talk.arrivedFrom = nil
+                    guard let friend = model.friends.first(where: { $0.id == id }), path.last?.id != id else { return }
+                    path = [friend]
                 }
             }
         }
@@ -43,6 +55,10 @@ struct RootView: View {
             get: { model.session != nil && model.onboarded ? model.pendingInvite : nil },
             set: { if $0 == nil { model.pendingInvite = nil } }
         )
+    }
+
+    private var ringBinding: Binding<Ring?> {
+        Binding(get: { talk.incomingRing }, set: { if $0 == nil { talk.declineIncomingRing() } })
     }
 
     private var errorBinding: Binding<Bool> {
@@ -79,13 +95,13 @@ struct SignInView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 0) {
-                Text("A walkie-talkie for Apple Watch")
+                Text("A walkie-talkie for iPhone and Apple Watch")
                     .font(.title3)
                     .foregroundStyle(Brand.secondary)
                     .padding(.top, 4)
                 VStack(alignment: .leading, spacing: 14) {
-                    Label("Hold the mascot's mouth on your watch to talk, and your friend hears you", systemImage: "mic.fill")
-                    Label("They tap the ring to listen and talk back", systemImage: "bell.and.waves.left.and.right")
+                    Label("Hold the mascot's mouth on your iPhone or watch to talk, and your friend hears you", systemImage: "mic.fill")
+                    Label("On a watch they tap the ring to listen; on an iPhone it plays right away", systemImage: "bell.and.waves.left.and.right")
                     Label("Only friends you invite can ring you", systemImage: "person.2.fill")
                 }
                 .font(.callout)
@@ -156,4 +172,8 @@ struct SignInView: View {
             if !ASAuthorizationError.isCancel(error) { model.errorMessage = error.localizedDescription }
         }
     }
+}
+
+extension Ring: @retroactive Identifiable {
+    public var id: String { conversationId }
 }

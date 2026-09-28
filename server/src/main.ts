@@ -103,7 +103,8 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
     const presented = bearer(req) ?? url.searchParams.get("token");
     if (presented && options.sessions && presented.split(".").length === 3) {
       try {
-        return { account: true, userId: options.sessions.verify(presented).sub };
+        const claims = options.sessions.verify(presented);
+        return { account: true, userId: claims.sub, deviceId: claims.dev };
       } catch {
         return null;
       }
@@ -112,18 +113,20 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
     // Shared-token clients can't claim an account's user ID.
     const userId = url.searchParams.get("userId");
     if (userId?.startsWith(USER_ID_PREFIX)) return null;
-    return { account: false, userId };
+    return { account: false, userId, deviceId: userId };
   };
 
   const sockets = new Set<ReturnType<typeof acceptUpgrade>>();
-  // HTTP transport peers by user, so a POST can find the stream it belongs to.
+  // HTTP transport peers by user and device, so a POST can find the stream it belongs to.
   const streams = new Map<string, { peer: Peer; res: ServerResponse }>();
+  const streamKey = (caller: Caller): string => `${caller.userId}\n${caller.deviceId}`;
 
   // GET /v1/relay/stream: the server-to-client half of the HTTP transport. The response
   // stays open for the conversation and carries the same messages as the WebSocket.
   const openStream = (req: IncomingMessage, res: ServerResponse, url: URL, caller: Caller): void => {
     const userId = caller.userId;
     if (!userId) return send(res, 400, { error: "userId is required" });
+    const key = streamKey(caller);
     res.writeHead(200, {
       "content-type": "application/octet-stream",
       "cache-control": "no-store",
@@ -132,14 +135,15 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
     res.flushHeaders();
     const peer: Peer = {
       userId,
+      deviceId: caller.deviceId ?? userId,
       account: caller.account,
       sendJSON: (m) => void res.write(encodeJSONRecord(m)),
       sendBinary: (b) => void res.write(encodeRecord(RecordType.audio, b)),
     };
-    streams.get(userId)?.res.end();
-    streams.set(userId, { peer, res });
+    streams.get(key)?.res.end();
+    streams.set(key, { peer, res });
     relay.connect(peer);
-    console.log(`[relay] ${userId} connected (http)`);
+    console.log(`[relay] ${userId} (${peer.deviceId}) connected (http)`);
     // The stream's first message doubles as hello-ack for clock-offset estimates.
     const clientTime = Number(url.searchParams.get("clientTime") ?? 0);
     peer.sendJSON({ type: "hello-ack", clientTime, serverTime: Date.now() });
@@ -152,16 +156,16 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
     const ping = setInterval(() => peer.sendJSON({ type: "ping" }), 15_000);
     req.on("close", () => {
       clearInterval(ping);
-      if (streams.get(userId)?.peer === peer) streams.delete(userId);
+      if (streams.get(key)?.peer === peer) streams.delete(key);
       relay.disconnect(peer);
-      console.log(`[relay] ${userId} disconnected (http)`);
+      console.log(`[relay] ${userId} (${peer.deviceId}) disconnected (http)`);
     });
   };
 
   // POST /v1/relay/send: the client-to-server half. Each body is a batch of records
   // (control messages and audio frames), applied in order.
   const receiveRecords = async (req: IncomingMessage, res: ServerResponse, caller: Caller): Promise<void> => {
-    const stream = streams.get(caller.userId ?? "");
+    const stream = streams.get(streamKey(caller));
     if (!stream) return send(res, 409, { error: "open GET /v1/relay/stream first" });
     const parser = new RecordParser();
     for await (const chunk of req) {
@@ -276,9 +280,9 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
     if (!ws) return;
     sockets.add(ws);
 
-    const peer: Peer = { userId, account: caller.account, sendJSON: (m) => ws.sendJSON(m), sendBinary: (b) => ws.sendBinary(b) };
+    const peer: Peer = { userId, deviceId: caller.deviceId ?? userId, account: caller.account, sendJSON: (m) => ws.sendJSON(m), sendBinary: (b) => ws.sendBinary(b) };
     relay.connect(peer);
-    console.log(`[relay] ${userId} connected`);
+    console.log(`[relay] ${userId} (${peer.deviceId}) connected`);
     ws.on("text", (text: string) => {
       let message: ClientMessage;
       try {
@@ -292,7 +296,7 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
     ws.on("close", () => {
       sockets.delete(ws);
       relay.disconnect(peer);
-      console.log(`[relay] ${userId} disconnected`);
+      console.log(`[relay] ${userId} (${peer.deviceId}) disconnected`);
     });
   });
 
@@ -329,6 +333,8 @@ interface Caller {
   account: boolean;
   // From the session token for accounts; from the request (?userId=) otherwise.
   userId: string | null;
+  // The session token's device for accounts; the user ID otherwise.
+  deviceId: string | null;
 }
 
 function send(res: ServerResponse, status: number, body: unknown): void {

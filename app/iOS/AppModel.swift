@@ -1,3 +1,4 @@
+import AVFoundation
 import Foundation
 import OverAndOutKit
 import SwiftUI
@@ -15,12 +16,19 @@ final class AppModel: ObservableObject {
         var id: String { code }
     }
 
+    /// One model for the app's life, made at launch by AppDelegate: a PushToTalk push can
+    /// launch the app in the background, where SwiftUI doesn't build the scene (or its state
+    /// objects), and the channel manager must exist to receive it.
+    static let shared = AppModel()
+
     @Published private(set) var session: AccountSession?
     @Published private(set) var friends: [Friend] = []
     @Published private(set) var friendsLoaded = false
     @Published private(set) var blocks: [BlockedUser] = []
     /// Your own profile photo's version, from /v1/me; nil without one.
     @Published private(set) var photoVersion: Double?
+    /// Which device rings, as chosen; nil = the default (see `ringsOn`).
+    @Published private(set) var ringOn: Platform?
     @Published private(set) var updatingPhoto = false
     @Published var pendingInvite: PendingInvite?
     @Published var errorMessage: String?
@@ -30,12 +38,26 @@ final class AppModel: ObservableObject {
 
     let client: AccountClient
     let watch = PhoneWatchLink()
+    let pushToTalk = PushToTalkChannel()
+    let talk: TalkController
     let deviceId = DeviceIdentity.id()
     let linkDomain: String
     /// A local API (the simulator) accepts "dev:" sign-ins without Apple.
     let isLocalServer: Bool
 
     private var signedOutObserver: NSObjectProtocol?
+    /// The push registration last sent for this session, so it's sent only when it changes.
+    private var registered: (token: String, pushType: String?)?
+    /// One registration at a time, so an older one can't land after a newer one.
+    private var registering = false
+    /// How friends reach this iPhone, as last registered, for Settings.
+    @Published private(set) var reachability = ""
+
+    #if DEBUG
+    static let apnsEnvironment = "sandbox"
+    #else
+    static let apnsEnvironment = "production"
+    #endif
 
     init() {
         let info = Bundle.main.infoDictionary ?? [:]
@@ -45,6 +67,15 @@ final class AppModel: ObservableObject {
         let base = AccountClient.baseURL(host: host) ?? URL(string: "https://overandout.app")!
         client = AccountClient(baseURL: base, store: KeychainSessionStore())
         session = client.session
+        TalkController.configureAudioSession()
+        talk = TalkController(client: client, relayHost: info["OAOServerHost"] as? String ?? "", ptt: pushToTalk)
+        // Early, so the system can restore the channel and deliver its pushes.
+        pushToTalk.onRegistrationChange = { [weak self] in
+            guard let self else { return }
+            Task { await self.registerDevice() }
+            talk.pushToTalkChanged()
+        }
+        pushToTalk.start()
         watch.makeSession = { [client] deviceId in
             guard client.session != nil else { return nil }
             return try await client.makeSession(forDevice: deviceId, platform: .watch)
@@ -68,6 +99,8 @@ final class AppModel: ObservableObject {
             session = result.session
             if result.created { onboarded = false }
             watch.signedInChanged(true)
+            await registerDevice()
+            talk.appBecameActive()
             await refresh()
             if pendingInvite != nil { await loadPendingInvite() }
         } catch {
@@ -90,8 +123,12 @@ final class AppModel: ObservableObject {
     }
 
     private func didSignOut() {
+        talk.signedOut()
+        pushToTalk.leave()
+        registered = nil
         session = nil
         photoVersion = nil
+        ringOn = nil
         friends = []
         friendsLoaded = false
         blocks = []
@@ -111,6 +148,7 @@ final class AppModel: ObservableObject {
             session = client.session
             if user.name != session?.name { session?.name = user.name }
             photoVersion = user.photoVersion
+            ringOn = user.ringOn
             friends = loadedFriends
             blocks = loadedBlocks
             friendsLoaded = true
@@ -118,6 +156,55 @@ final class AppModel: ObservableObject {
             if session != nil { errorMessage = describe(error) }
         }
     }
+
+    // MARK: Walkie-talkie on the iPhone
+
+    /// The device that rings for this account: the choice, or the watch if there is one.
+    var ringsOn: Platform { ringOn ?? (watch.isWatchAppInstalled ? .watch : .iphone) }
+
+    func setRingOn(_ platform: Platform) async {
+        let previous = ringOn
+        ringOn = platform
+        do {
+            ringOn = try await client.setRingOn(platform).ringOn
+        } catch {
+            ringOn = previous
+            errorMessage = describe(error)
+        }
+    }
+
+    /// The channel's token while in it; otherwise "app:", reachable only while on screen.
+    /// Registers until what the server has matches the current state (the channel and its
+    /// token change while a request is in flight).
+    func registerDevice() async {
+        guard !registering else { return }
+        registering = true
+        defer { registering = false }
+        while session != nil {
+            let joined = pushToTalk.isJoined ? pushToTalk.pushToken : nil
+            let token = joined ?? "app:"
+            let pushType = joined == nil ? nil : "pushtotalk"
+            if let registered, registered.token == token, registered.pushType == pushType { break }
+            do {
+                try await client.registerDevice(platform: .iphone, pushToken: token, pushType: pushType, apnsEnvironment: Self.apnsEnvironment)
+                registered = (token, pushType)
+                reachability = joined != nil ? "Walkie-talkie (PushToTalk)" : "Only while Over&Out is open"
+            } catch {
+                reachability = "Not registered: \(describe(error))"
+                print("[oao] Device registration failed: \(error)")
+                break
+            }
+        }
+    }
+
+    func requestMicrophone() async {
+        guard AVAudioSession.sharedInstance().recordPermission == .undetermined else { return }
+        _ = await withCheckedContinuation { continuation in
+            AVAudioSession.sharedInstance().requestRecordPermission { continuation.resume(returning: $0) }
+        }
+    }
+
+    var microphoneAllowed: Bool { AVAudioSession.sharedInstance().recordPermission == .granted }
 
     func rename(_ name: String) async -> Bool {
         do {

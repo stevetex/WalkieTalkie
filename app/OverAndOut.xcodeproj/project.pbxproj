@@ -68,6 +68,7 @@
 		0AA000000000000000000062 /* WatchNotificationService.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = WatchNotificationService.entitlements; sourceTree = "<group>"; };
 		0AA000000000000000000072 /* iOS-Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "iOS-Info.plist"; sourceTree = "<group>"; };
 		0AA000000000000000000073 /* iOS.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = iOS.entitlements; sourceTree = "<group>"; };
+		0AA0000000000000000000F1 /* iOS-NoPush.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = "iOS-NoPush.entitlements"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -143,6 +144,7 @@
 				0AA000000000000000000009 /* Local.xcconfig.example */,
 				0AA000000000000000000072 /* iOS-Info.plist */,
 				0AA000000000000000000073 /* iOS.entitlements */,
+				0AA0000000000000000000F1 /* iOS-NoPush.entitlements */,
 				0AA00000000000000000000A /* Watch-Info.plist */,
 				0AA00000000000000000000B /* Watch.entitlements */,
 				0AA00000000000000000000C /* Watch-NoPush.entitlements */,
@@ -380,7 +382,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				CODE_SIGN_ENTITLEMENTS = Config/iOS.entitlements;
+				CODE_SIGN_ENTITLEMENTS = "$(OAO_IOS_ENTITLEMENTS_$(OAO_PUSH))";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_PREVIEWS = YES;
@@ -410,7 +412,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				CODE_SIGN_ENTITLEMENTS = Config/iOS.entitlements;
+				CODE_SIGN_ENTITLEMENTS = "$(OAO_IOS_ENTITLEMENTS_$(OAO_PUSH))";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_PREVIEWS = YES;

@@ -13,9 +13,12 @@ public struct RelayMessage: Decodable {
     public var replayBursts: Int?
     public var droppedBursts: Int?
     public var from: String?
+    /// ring (over the stream, to an app on screen): the caller's name and when it was sent.
+    public var fromName: String?
+    public var pushSentAt: Double?
     public var replay: Bool?
     public var message: String?
-    /// talk-refused: why ("not-friends").
+    /// talk-refused: why ("not-friends", or "unavailable": none of their devices can ring).
     public var reason: String?
 }
 

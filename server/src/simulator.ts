@@ -36,6 +36,9 @@ export class SimulatorPusher implements Pusher {
 
   async sendAlert(token: string, env: ApnsEnvironment, push: AlertPush): Promise<PushResult> {
     if (!token.startsWith(SIMULATOR_TOKEN_PREFIX)) return this.next.sendAlert(token, env, push);
+    if (push.pushType === "pushtotalk") {
+      return { ok: false, status: 400, reason: "PushToTalk isn't available in the simulator", latencyMs: 0, dryRun: false };
+    }
     const started = performance.now();
     const target = parseSimulatorToken(token);
     if (!target) return { ok: false, status: 400, reason: "bad simulator token", latencyMs: 0, dryRun: false };
