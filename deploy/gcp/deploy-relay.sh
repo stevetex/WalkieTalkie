@@ -47,7 +47,7 @@ trap 'rm -rf "$stage"' EXIT
 git -C "$repo" show "$rev:deploy/gcp/relay-node.cloud-init.yaml" >"$stage/cloud-init.yaml"
 
 if ! gc compute instance-templates describe "$template" >/dev/null 2>&1; then
-  echo "Creating instance template $template…"
+  echo "Creating instance template ${template}…"
   # e2-micro on a standard disk stays in the free tier (one per billing account). The
   # data disk holds Caddy's certificates; the group keeps it across replacements. Guest
   # attributes publish each new node's SSH host keys, so gcloud compute ssh trusts a

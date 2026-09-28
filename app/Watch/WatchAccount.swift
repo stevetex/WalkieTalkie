@@ -129,7 +129,8 @@ final class WatchAccount: NSObject, ObservableObject {
     }
 
     private func setFriends(_ loaded: [Friend]) {
-        friends = loaded
+        // Favorites (starred on the iPhone) first in the picker.
+        friends = Friend.favoritesFirst(loaded)
         friendsLoaded = true
         if let data = try? JSONEncoder().encode(loaded) { UserDefaults.standard.set(data, forKey: Key.friends) }
         if let selected = selectedFriendId, !loaded.contains(where: { $0.id == selected }) { selectedFriendId = nil }

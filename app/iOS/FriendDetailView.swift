@@ -1,23 +1,38 @@
 import OverAndOutKit
 import SwiftUI
 
-/// A friend: report, block or remove them (App Review 1.2).
+/// A friend: their star, when they last talked to you, and report, block or remove them
+/// (App Review 1.2).
 struct FriendDetailView: View {
     @EnvironmentObject private var model: AppModel
     @Environment(\.dismiss) private var dismiss
-    let friend: Friend
+    let initial: Friend
+
+    init(friend: Friend) {
+        initial = friend
+    }
+
+    /// The latest from the friends list (the star changes here).
+    private var friend: Friend { model.friends.first { $0.id == initial.id } ?? initial }
     @State private var reporting = false
     @State private var confirmingBlock = false
     @State private var confirmingRemove = false
     @State private var working = false
+
+    private var lastMessaged: String {
+        guard let at = friend.lastMessageAt else { return "Not yet" }
+        let date = Date(timeIntervalSince1970: at / 1000)
+        if Calendar.current.isDateInToday(date) { return "Today, \(date.formatted(date: .omitted, time: .shortened))" }
+        if Calendar.current.isDateInYesterday(date) { return "Yesterday, \(date.formatted(date: .omitted, time: .shortened))" }
+        return date.formatted(date: .abbreviated, time: .shortened)
+    }
 
     var body: some View {
         List {
             Group {
                 Section {
                     VStack(spacing: 10) {
-                        Avatar(name: friend.name, userId: friend.id, photoVersion: friend.photoVersion,
-                               size: 96, client: model.client)
+                        Avatar(friend: friend, size: 96, client: model.client)
                         Text(friend.name)
                             .font(.title2.bold())
                         Text(
@@ -30,9 +45,27 @@ struct FriendDetailView: View {
                     .listRowBackground(Color.clear)
                 }
                 Section {
+                    Toggle(isOn: Binding(
+                        get: { friend.isFavorite },
+                        set: { value in Task { await model.setFavorite(friend, value) } }
+                    )) {
+                        Label {
+                            Text("Favorite")
+                        } icon: {
+                            Image(systemName: friend.isFavorite ? "star.fill" : "star").foregroundStyle(Brand.orange)
+                        }
+                    }
+                    LabeledContent("Last messaged you", value: lastMessaged)
+                } footer: {
+                    Text("Favorites are at the top of your friends list, on your iPhone and your watch.")
+                }
+                Section {
                     Button("Report \(friend.name)…") { reporting = true }
+                    // Red set by hand: the brand's foreground style would override the role's.
                     Button("Block \(friend.name)", role: .destructive) { confirmingBlock = true }
+                        .foregroundStyle(.red)
                     Button("Remove Friend", role: .destructive) { confirmingRemove = true }
+                        .foregroundStyle(.red)
                 } footer: {
                     Text(
                         "Blocking removes \(friend.name) from your friends. They can't ring you or invite you again, and they aren't told.")
@@ -41,6 +74,7 @@ struct FriendDetailView: View {
             .listRowBackground(Brand.surface)
         }
         .disabled(working)
+        .task { await model.refreshFriends() }
         .brandScreen()
         .navigationTitle(friend.name)
         .navigationBarTitleDisplayMode(.inline)

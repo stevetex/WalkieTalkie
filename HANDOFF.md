@@ -10,7 +10,7 @@ Read this first. Over&Out: Watch Walkie Talkie replaces Apple's Watch Walkie-Tal
 
 ## Links
 
-- **Feasibility doc (Claude Docs):** https://claude.ai/code/artifact/59ab6e47-6e5d-4698-8bd1-173293953df9. Log design decisions in its Design decisions table (date, decision, why, revisit if), and measured results in Prototype results (runs 1–48 so far).
+- **Feasibility doc (Claude Docs):** https://claude.ai/code/artifact/59ab6e47-6e5d-4698-8bd1-173293953df9. Log design decisions in its Design decisions table (date, decision, why, revisit if), and measured results in Prototype results (runs 1–50 so far).
 - **Backlog (Claude Docs):** https://claude.ai/code/artifact/30273f1c-2795-4fd7-b15a-370b1a177118. Small follow-ups with a Status column. New on 2026-09-28: eleven iPhone-talk items (testing PushToTalk with production push, warming the iPhone's relay connection, sharing the conversation core with the watch, and more). Older open items include retiring the shared relay token, blocks ending an open conversation, the API accepting tokens of ended sessions, a device's registration under a previous account, invites across the App Store install, session key rotation, reviewing reports, and the invite sheet's double lookup.
 - **Repo:** https://github.com/stevetex/WalkieTalkie. `main` has accounts (`665153a`, `c22cbc2`, `8537f6c`), branding (PR #1) and the device-test fixes and mascot watch screen (PR #2, `8037234`, `ba813ab`). photos, About and "Screen name" (PR #3, `3880fac`). **`iphone-talk`** (local, not pushed): `adf12b9` (the relay, API and iPhone talk), then device fixes `fa3b44d`, `6b88915`, `4f21ec9`, `c063527`, `ee6f3ad`, `11cb2eb`, `e37b124`, `c53578d`, `cedc40e`, `7d7b300`.
 - **App name and domain:** "Over&Out: Watch Walkie Talkie", overandout.app (DNS at GoDaddy, nameservers `ns61/ns62.domaincontrol.com`). Bundle IDs `com.cypressoakstudios.overandout` (iPhone), `…overandout.watchkitapp` (watch) and `…overandout.watchkitapp.notificationservice`. Team `A39XNKNDPX`.
@@ -22,6 +22,18 @@ iPhone talk works on Steve's devices (runs 45–48). Before the Beta:
 2. **Test PushToTalk with production push** (backlog): development builds get pushes through the APNs sandbox, whose connection on the phone can die unnoticed. Pushes were then accepted (200) and silently dropped until Airplane Mode was toggled (see Gotchas). Apple DTS advises testing PushToTalk with production push, which means a TestFlight build: an App Store Connect upload, so ask Steve first.
 3. **The iPhone-talk backlog items**, especially warming the relay connection (the cold connection is ~0.95 s of the 1.2–1.5 s), the stale watch registration that can take an iPhone's rings, and sharing the conversation core and mascot with the watch.
 4. **Still to do for the MVP:** the App Store listing (screenshots, description, privacy label: identifiers, name, usage data, and User Content → Photos or Videos for profile photos; review notes should explain PushToTalk and the audio background mode), the website in the new branding (`web/public`), retiring the shared relay token (backlog), and the watchOS 9–11 checks (backlog).
+
+## Done on 2026-09-28 (later): UI polish (runs 49–50)
+
+On the local branch **`ui-polish`** (`b0e9e18`, committed to deploy, not pushed), plus uncommitted: the deploy scripts' locale fix and this file. Design decisions 2026-09-28 (four rows) in the feasibility doc; backlog updated.
+- **Pictures:** a photo or one of the 17 mascots (`art/characters`), Honey by default. `users/{uid}.avatar` (a mascot ID; replaces the photo, and a new photo clears it), `PATCH /v1/me {avatar}`, `avatar` in friend lists. The kit's `Mascot` maps IDs to `Mascot<Name>` images in each app's `Assets.xcassets/Mascots`; `Avatar` draws photo, mascot or the default. iPhone: Settings or onboarding → the picture chooser (`PictureChooser` in `ProfilePhotoPicker.swift`).
+- **Ring Me On asks:** the API sets `ringOn` to the device that was ringing when an account's first device of the other kind registers (`registerDevice`); `GET /v1/me` returns `platforms`; the iPhone asks once ("Where should friends ring you?", `askedRingOn-<uid>` in defaults) and its picker shows the server's view.
+- **Favorites and "Last messaged you":** `users/{uid}/friends/{id}.favorite` (`PATCH /v1/friends/{id}`), favorites first on the iPhone and the watch's picker; the relay writes `lastMessageAt` on the recipient's entry at talk-start (at most once a minute per conversation, not awaited), shown on the friend page.
+- **iPhone:** masthead above the Friends title (no navigation bar on Friends); Talk screen title is the friend's picture and name, End Conversation under the status; branded ring (bell mouth, Decline then orange Answer); three-step onboarding with art (watch step only when paired); Settings → Appearance (System/Light/Dark, `@AppStorage("appearance")`); ivory screens get a visible bar background so the status bar follows the appearance (`brandScreen()`); the Talk mascot upscaled 2× with MetalFX (`art/upscale-art.swift`, `art/masters/mascot-talk-2x.png`).
+- **Watch:** dark palette only (its colour assets have no light variant), friend pictures on the main screen, ring layout, diagnostics only in debug builds, "moved" ends the screen ("Continued on your iPhone"). `MascotTalkButton` and `MascotGeometry` are in the kit.
+- **Tools:** `node tools/test-account.ts photo [file.jpg]` (default `tools/test-bot-photo.jpg`, the 🤖 on indigo; the live bot has it).
+- **Measured:** watch tap → first audio 0.56 s (run 49); iPhone push sent → first audio 1.02 s over Bluetooth (run 50).
+- **Next:** Steve reviews and asks for a push and PR of `ui-polish`; then the MVP list below.
 
 ## Done on 2026-09-28: walkie-talkie on the iPhone (runs 44–48)
 
@@ -88,11 +100,11 @@ iPhone talk works on Steve's devices (runs 45–48). Before the Beta:
 ## Deployment today (Google Cloud)
 
 - **Resources** (project `walkie-talkie-relay`, owned by stevelt@gmail.com; all in us-central1):
-  - instance group `relay` (zone us-central1-a) with one node, `relay-1` (e2-micro, COS, 10 GB boot disk, 10 GB data disk `relay-1-1`), template `relay-<commit>`, **running `11cb2eb`** (iPhone talk; deployed 2026-09-28 with Steve's OK);
+  - instance group `relay` (zone us-central1-a) with one node, `relay-1` (e2-micro, COS, 10 GB boot disk, 10 GB data disk `relay-1-1`), template `relay-<commit>`, **running `b0e9e18`** (UI polish: records "last messaged you"; deployed by Steve 2026-09-28);
   - static IP `walkie-relay-ip` `35.209.96.216` (Standard tier), on `relay-1`;
   - Firestore (default) database, TTL policies on `timelines.expireAt` and `invites.expireAt`;
   - service accounts `relay-node` (Firestore, logs, metrics, image pull, its secrets) and `account-api` (Firestore, the API's secrets);
-  - Cloud Run service `api` (`https://api-yqgprbu3ja-uc.a.run.app`, scales to zero, max 4 instances, running `adf12b9`);
+  - Cloud Run service `api` (`https://api-yqgprbu3ja-uc.a.run.app`, scales to zero, max 4 instances, running `b0e9e18`);
   - Firebase added to the project (Steve accepted the terms in the console); Hosting site `walkie-talkie-relay` (`walkie-talkie-relay.web.app`) with the custom domain overandout.app; `/v1/*` rewritten to `api`;
   - Artifact Registry repo `relay` (images `relay` and `api`); Secret Manager secrets `relay-token`, `apns-key`, `acme-eab`, `session-signing-key`, `session-public-keys` (key ID `k20260927`) and `apple-siwa-key`;
   - health check `relay-health`, firewall rule `walkie-web` (80/443), two uptime checks and alert policies, and the alert policy "Over&Out: user report".
@@ -198,6 +210,8 @@ Details:
 - **The APNs sandbox connection can be dead without the iPhone noticing.** PushToTalk pushes are then accepted (HTTP 200) and never delivered, and the phone's `apsd` logs nothing. Toggling Airplane Mode fixes it until next time. Apple DTS (developer forums thread 773514) advises testing PushToTalk with production push.
 - **PushToTalk pushes need an `aps` dictionary** in the body, despite Apple's example (forums thread 772008), and the app needs the `audio` background mode as well as `push-to-talk`, or the system won't activate its audio in the background.
 - **An iPhone test build's relay is `relay-1`,** but a local relay for the simulators may already hold port 8080 (another session's); run yours on another port and build with `OAO_SERVER_HOST` and `OAO_API_HOST` set to it.
+- **Deploy scripts under a non-UTF-8 locale:** macOS's bash 3.2 read the "…" after `$template` as part of the variable name ("template…: unbound variable"). Variables next to non-ASCII text are now braced (`${template}…`).
+- **Simulator taps:** the first tap after typing or navigation often doesn't register; repeat it, or wait a second.
 - **Stale device registrations win rings:** a simulator watch signed in under an earlier account stayed registered there and took the ring meant for that account's iPhone (backlog).
 
 ## Steve's preferences

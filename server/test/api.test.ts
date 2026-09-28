@@ -97,7 +97,7 @@ test("sign in, invite a friend, and ring them with session tokens", async () => 
   await withApi(async ({ url }) => {
     const alice = await signIn(url, "apple.alice", "Alice", "alice-phone");
     assert.equal(alice.created, true);
-    assert.deepEqual((await call(url, "GET", "/v1/me", alice.token)).body, alice.user);
+    assert.deepEqual((await call(url, "GET", "/v1/me", alice.token)).body, { ...alice.user, platforms: [] });
     // The iPhone gets the watch its own session.
     const watch = await call(url, "POST", "/v1/auth/device", alice.token, { deviceId: "alice-watch", platform: "watch" });
     assert.equal(watch.status, 200);
@@ -126,6 +126,17 @@ test("sign in, invite a friend, and ring them with session tokens", async () => 
     assert.equal(aliceWatch.frames.length, 10);
     bobClient.close();
     aliceWatch.close();
+
+    // Alice's friend page: when Bob last talked to her (the relay records it), and her star.
+    const [bobForAlice] = (await call(url, "GET", "/v1/friends", alice.token)).body.friends;
+    assert.equal(typeof bobForAlice.lastMessageAt, "number");
+    assert.equal(bobForAlice.favorite, undefined);
+    assert.equal((await call(url, "GET", "/v1/friends", bob.token)).body.friends[0].lastMessageAt, undefined);
+    assert.equal((await call(url, "PATCH", `/v1/friends/${bob.user.id}`, alice.token, { favorite: true })).status, 200);
+    assert.equal((await call(url, "GET", "/v1/friends", alice.token)).body.friends[0].favorite, true);
+    assert.equal((await call(url, "GET", "/v1/friends", bob.token)).body.friends[0].favorite, undefined);
+    assert.equal((await call(url, "PATCH", `/v1/friends/${bob.user.id}`, alice.token, { favorite: "yes" })).status, 400);
+    assert.equal((await call(url, "PATCH", "/v1/friends/u_nobody", alice.token, { favorite: true })).status, 404);
   });
 });
 
@@ -374,6 +385,13 @@ test("one device rings: the watch by default, the iPhone when chosen, the other 
     // Back to the default: with no watch, that's the iPhone.
     assert.equal((await call(url, "PATCH", "/v1/me", alice.token, { ringOn: null })).body.ringOn, undefined);
     assert.equal((await call(url, "PATCH", "/v1/me", alice.token, { ringOn: "tv" })).status, 400);
+    assert.deepEqual((await call(url, "GET", "/v1/me", alice.token)).body.platforms, ["iphone"]);
+
+    // A mascot as the picture, which friends see in their lists.
+    assert.equal((await call(url, "PATCH", "/v1/me", alice.token, { avatar: "fox" })).body.avatar, "fox");
+    assert.equal((await call(url, "GET", "/v1/me", alice.token)).body.avatar, "fox");
+    assert.equal((await call(url, "PATCH", "/v1/me", alice.token, { avatar: "<fox>" })).status, 400);
+    assert.equal((await call(url, "PATCH", "/v1/me", alice.token, { avatar: null })).body.avatar, undefined);
     assert.equal((await call(url, "PUT", "/v1/me/device", alice.token, { platform: "watch", pushToken: "x", pushType: "pushtotalk" })).status, 400);
     bobClient.close();
   }, { ringTimeoutMs: 200 });

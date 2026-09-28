@@ -35,6 +35,8 @@ final class ConversationController: NSObject, ObservableObject {
     @Published private(set) var phase: Phase = .idle
     @Published private(set) var statusLine = ""
     @Published private(set) var peerName: String?
+    /// Who the conversation is with, for their picture.
+    @Published private(set) var peerId: String?
     @Published private(set) var isTalking = false
     @Published private(set) var remoteTalking = false
     /// In a conversation and able to record right now (relay open and audio on). The Talk
@@ -334,6 +336,7 @@ final class ConversationController: NSObject, ObservableObject {
                                     peerId: ring.from, peerName: ring.fromName, timeline: timeline)
         phase = .connecting
         peerName = ring.fromName
+        peerId = ring.from
         statusLine = "Connecting to \(ring.fromName)…"
         rejoinedOnFreshStream = false
         playPrefetched(ring.conversationId)
@@ -440,6 +443,7 @@ final class ConversationController: NSObject, ObservableObject {
                                     peerId: friend.id, peerName: name, timeline: timeline)
         phase = .connecting
         peerName = name
+        peerId = friend.id
         statusLine = "Connecting…"
         connectRelay()
         activateOwnAudio()
@@ -543,6 +547,12 @@ final class ConversationController: NSObject, ObservableObject {
             audio.endPlayback()
             friendStoppedTalkingIfDone()
             resetIdleTimer()
+        case "moved":
+            // Answered or talked on the iPhone: the conversation is there now. (The relay
+            // ignores this device's leave, since it's no longer the one in the conversation.)
+            audio.endCapture {}
+            burstId = nil
+            finish(status: "Continued on your iPhone")
         case "peer-left":
             log("\(name) left")
         case "ring-timeout":
@@ -697,6 +707,7 @@ final class ConversationController: NSObject, ObservableObject {
         idleTimer?.invalidate()
         phase = .idle
         peerName = nil
+        peerId = nil
         statusLine = status
 
         guard let conversationId = ended.conversationId else { return }

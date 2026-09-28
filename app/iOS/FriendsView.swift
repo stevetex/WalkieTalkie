@@ -13,9 +13,11 @@ struct FriendsView: View {
                 if model.friends.isEmpty {
                     Section {
                         VStack(spacing: 12) {
-                            Image(systemName: "person.2.wave.2")
-                                .font(.system(size: 44))
-                                .foregroundStyle(Brand.accent)
+                            Image("OverAndOutMascot")
+                                .resizable()
+                                .scaledToFit()
+                                .frame(height: 96)
+                                .accessibilityHidden(true)
                             Text(model.friendsLoaded ? "No friends yet" : "Loading…")
                                 .font(.headline)
                             Text("Invite a friend over Messages. When they tap the link, you can talk from your iPhone or Apple Watch.")
@@ -28,7 +30,7 @@ struct FriendsView: View {
                     }
                 } else {
                     Section {
-                        ForEach(model.friends) { friend in
+                        ForEach(Friend.favoritesFirst(model.friends)) { friend in
                             NavigationLink(value: friend) {
                                 FriendRow(friend: friend)
                             }
@@ -39,7 +41,11 @@ struct FriendsView: View {
                 }
                 Section {
                     Button(action: invite) {
-                        Label(creatingInvite ? "Creating Invite…" : "Invite a Friend", systemImage: "message.fill")
+                        Label {
+                            Text(creatingInvite ? "Creating Invite…" : "Invite a Friend")
+                        } icon: {
+                            Image(systemName: "message.fill").foregroundStyle(Brand.accent)
+                        }
                     }
                     .disabled(creatingInvite)
                 } footer: {
@@ -49,26 +55,52 @@ struct FriendsView: View {
             .listRowBackground(Brand.surface)
         }
         .brandScreen()
-        .navigationTitle("Friends")
-        .navigationBarTitleDisplayMode(.inline)
+        // The masthead, then this screen's title and Settings, in place of a navigation bar.
+        .safeAreaInset(edge: .top, spacing: 0) { header }
+        .toolbar(.hidden, for: .navigationBar)
+        // Light status bar text over the masthead, and on the indigo Talk screens pushed from here.
         .toolbarColorScheme(.dark, for: .navigationBar)
+        .navigationTitle("Friends")
         .navigationDestination(for: Friend.self) { friend in
             TalkView(friend: friend)
         }
-        .toolbar {
-            ToolbarItem(placement: .navigationBarTrailing) {
+        .refreshable { await model.refresh() }
+        // After an invite, check every 10 s for half an hour for the friend who accepts it.
+        .task(id: model.lastInviteAt) {
+            guard let since = model.lastInviteAt else { return }
+            while Date().timeIntervalSince(since) < 30 * 60 {
+                try? await Task.sleep(nanoseconds: 10_000_000_000)
+                if Task.isCancelled { return }
+                await model.refreshFriends()
+            }
+        }
+        .sheet(item: $sharing) { link in
+            ShareSheet(items: [InviteMessage(link: link, from: model.displayName)])
+                .presentationDetents([.medium, .large])
+        }
+    }
+
+    private var header: some View {
+        VStack(spacing: 0) {
+            Masthead()
+            HStack {
+                Text("Friends")
+                    .font(.largeTitle.bold())
+                    .accessibilityAddTraits(.isHeader)
+                Spacer()
                 NavigationLink {
                     SettingsView()
                 } label: {
                     Image(systemName: "gearshape")
+                        .font(.title2)
+                        .frame(width: 44, height: 44)
                 }
                 .accessibilityLabel("Settings")
             }
-        }
-        .refreshable { await model.refresh() }
-        .sheet(item: $sharing) { link in
-            ShareSheet(items: [InviteMessage(link: link, from: model.displayName)])
-                .presentationDetents([.medium, .large])
+            .padding(.horizontal, 20)
+            .padding(.top, 12)
+            .foregroundStyle(Brand.primary)
+            .background(Brand.background)
         }
     }
 
@@ -91,8 +123,14 @@ struct FriendRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            Avatar(name: friend.name, userId: friend.id, photoVersion: friend.photoVersion, size: 36, client: model.client)
+            Avatar(friend: friend, size: 40, client: model.client)
             Text(friend.name)
+            if friend.isFavorite {
+                Image(systemName: "star.fill")
+                    .font(.caption)
+                    .foregroundStyle(Brand.orange)
+                    .accessibilityLabel("Favorite")
+            }
         }
         .padding(.vertical, 2)
     }

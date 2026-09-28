@@ -10,11 +10,14 @@
 //   POST   /v1/auth/refresh          (a token up to a year past expiry) → {token, expiresAt}
 //   POST   /v1/auth/device           {deviceId, platform} → a session for another device (the watch)
 //   POST   /v1/auth/signout          ends this session and its device's push registration
-//   GET    /v1/me                    PATCH /v1/me {name?, ringOn?: "watch" | "iphone" | null}
+//   GET    /v1/me                    → the user, plus platforms: the kinds of device registered for rings
+//   PATCH  /v1/me                    {name?, ringOn?: "watch" | "iphone" | null, avatar?: <mascot ID> | null}
+//                                     (a mascot replaces the photo, and a new photo replaces the mascot)
 //   DELETE /v1/me                    {authorizationCode} → revokes the Apple token, deletes everything
 //   PUT    /v1/me/device             {platform, pushToken, pushType?, apnsEnvironment} for this session's
 //                                     device; pushType "pushtotalk" = an iPhone's PushToTalk channel token
 //   GET    /v1/friends               DELETE /v1/friends/{id}
+//   PATCH  /v1/friends/{id}          {favorite: boolean}: the user's star on a friend
 //   POST   /v1/invites               → {code, url, expiresAt}
 //   GET    /v1/invites/{code}        → who it's from, before accepting
 //   POST   /v1/invites/{code}/accept → {friend}
@@ -26,7 +29,7 @@
 //   GET    /v1/users/{id}/photo      → image/jpeg: your own photo or a friend's
 
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { AccountError, MAX_PHOTO_BYTES, isPlatform, isPushType, type Accounts, type Platform, type User } from "./accounts.ts";
+import { AccountError, MAX_PHOTO_BYTES, isAvatar, isPlatform, isPushType, type Accounts, type Platform, type User } from "./accounts.ts";
 import type { AppleIdentity } from "./apple.ts";
 import { REFRESH_GRACE_MS, SessionError, type SessionClaims, type SessionSigner, type SessionVerifier } from "./session.ts";
 
@@ -104,19 +107,24 @@ export function createApi(options: ApiOptions): ApiHandler {
       return [200, {}];
     }],
     ["GET", /^\/v1\/me$/, async (req) => {
-      const user = await accounts.user(authenticate(req).sub);
+      const id = authenticate(req).sub;
+      const [user, platforms] = await Promise.all([accounts.user(id), accounts.platforms(id)]);
       if (!user) throw new AccountError(404, "no-account");
-      return [200, userJSON(user)];
+      return [200, { ...userJSON(user), platforms }];
     }],
     ["PATCH", /^\/v1\/me$/, async (req) => {
       const claims = authenticate(req);
-      const { name, ringOn } = await readBody(req);
-      if (name === undefined && ringOn === undefined) throw new AccountError(400, "bad-request", "name or ringOn is required");
+      const { name, ringOn, avatar } = await readBody(req);
+      if (name === undefined && ringOn === undefined && avatar === undefined) {
+        throw new AccountError(400, "bad-request", "name, ringOn or avatar is required");
+      }
       if (name !== undefined && typeof name !== "string") throw new AccountError(400, "bad-name");
       if (ringOn !== undefined && ringOn !== null && !isPlatform(ringOn)) throw new AccountError(400, "bad-ring-on");
       let user: User | undefined;
+      if (avatar !== undefined && avatar !== null && !isAvatar(avatar)) throw new AccountError(400, "bad-avatar");
       if (typeof name === "string") user = await accounts.rename(claims.sub, name);
       if (ringOn !== undefined) user = await accounts.setRingOn(claims.sub, ringOn as Platform | null);
+      if (avatar !== undefined) user = await accounts.setAvatar(claims.sub, avatar as string | null);
       return [200, userJSON(user!)];
     }],
     ["DELETE", /^\/v1\/me$/, async (req) => {
@@ -175,6 +183,13 @@ export function createApi(options: ApiOptions): ApiHandler {
       return [200, { bytes: jpeg, contentType: "image/jpeg", version }];
     }],
     ["GET", /^\/v1\/friends$/, async (req) => [200, { friends: await accounts.friends(authenticate(req).sub) }]],
+    ["PATCH", /^\/v1\/friends\/([\w.-]+)$/, async (req, [id]) => {
+      const claims = authenticate(req);
+      const { favorite } = await readBody(req);
+      if (typeof favorite !== "boolean") throw new AccountError(400, "bad-request", "favorite is required");
+      await accounts.setFavorite(claims.sub, id, favorite);
+      return [200, {}];
+    }],
     ["DELETE", /^\/v1\/friends\/([\w.-]+)$/, async (req, [id]) => {
       await accounts.removeFriend(authenticate(req).sub, id);
       return [200, {}];
@@ -256,11 +271,12 @@ export function createApi(options: ApiOptions): ApiHandler {
   };
 }
 
-function userJSON(user: User): { id: string; name: string; photoVersion?: number; ringOn?: Platform } {
+function userJSON(user: User): { id: string; name: string; photoVersion?: number; avatar?: string; ringOn?: Platform } {
   return {
     id: user.id,
     name: user.name,
     ...(user.photoVersion !== undefined ? { photoVersion: user.photoVersion } : {}),
+    ...(user.avatar !== undefined ? { avatar: user.avatar } : {}),
     ...(user.ringOn !== undefined ? { ringOn: user.ringOn } : {}),
   };
 }

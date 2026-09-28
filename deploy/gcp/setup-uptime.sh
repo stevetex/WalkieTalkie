@@ -40,7 +40,7 @@ for host in "$@"; do
 
   policy="Relay down: $host"
   if [ -z "$(gc monitoring policies list --filter="displayName=\"$policy\"" --format='value(name)')" ]; then
-    echo "Creating the alert policy for $host…"
+    echo "Creating the alert policy for ${host}…"
     policy_file=$(mktemp)
     cat >"$policy_file" <<EOF
 {

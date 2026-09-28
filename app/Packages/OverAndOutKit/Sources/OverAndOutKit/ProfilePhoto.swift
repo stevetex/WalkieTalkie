@@ -60,33 +60,41 @@ public actor PhotoCache {
     }
 }
 
-/// A person's photo in a circle, or their initial on orange while there's none.
+/// A person's picture in a circle: their photo, their chosen mascot, or the default mascot
+/// (design decision 2026-09-28). While a photo loads, a plain indigo circle.
 public struct Avatar: View {
     let name: String
     let userId: String
     let photoVersion: Double?
+    let avatar: String?
     let size: CGFloat
     let client: AccountClient?
 
     @State private var photo: Image?
 
-    public init(name: String, userId: String, photoVersion: Double?, size: CGFloat, client: AccountClient?) {
+    public init(name: String, userId: String, photoVersion: Double?, avatar: String? = nil, size: CGFloat, client: AccountClient?) {
         self.name = name
         self.userId = userId
         self.photoVersion = photoVersion
+        self.avatar = avatar
         self.size = size
         self.client = client
+    }
+
+    public init(friend: Friend, size: CGFloat, client: AccountClient?) {
+        self.init(name: friend.name, userId: friend.id, photoVersion: friend.photoVersion, avatar: friend.avatar, size: size, client: client)
     }
 
     public var body: some View {
         ZStack {
             if let photo {
                 photo.resizable().scaledToFill()
+            } else if photoVersion != nil {
+                Circle().fill(Brand.indigo)
             } else {
-                Circle().fill(Brand.orange.gradient)
-                Text(String(name.prefix(1)).uppercased())
-                    .font(.system(size: size * 0.45, weight: .semibold))
-                    .foregroundStyle(Brand.ink)
+                Image((Mascot(id: avatar) ?? .default).imageName)
+                    .resizable()
+                    .scaledToFill()
             }
         }
         .frame(width: size, height: size)

@@ -13,6 +13,7 @@ Open [preview.html](preview.html) to browse the artwork, see approximate iPhone 
 | iPhone app icon / App Store | `icons/iPhone.xcassets/AppIcon.appiconset/OverAndOut-1024.png` |
 | Apple Watch app icon / App Store | `icons/Watch.xcassets/AppIcon.appiconset/OverAndOut-1024.png` |
 | Reusable transparent character | `masters/mascot-color.png` |
+| The iPhone's Talk-screen mascot (the app's `OverAndOutMascot` crop, x 262–1024, y 36–1220, upscaled 2× with MetalFX by `upscale-art.swift`) | `masters/mascot-talk-2x.png` |
 | Adaptive welcome / About layout | `screens/ScreenArt.xcassets/OverAndOutMascot.imageset/` |
 | Composed welcome / About artwork | `screens/about-welcome-1024.png` |
 | Documentation header / light-background logo | `documentation/over-and-out-horizontal-1200.png` |
