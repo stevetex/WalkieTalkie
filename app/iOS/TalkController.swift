@@ -1,4 +1,5 @@
 import AVFoundation
+import os
 import OverAndOutKit
 import SwiftUI
 import UIKit
@@ -220,6 +221,7 @@ final class TalkController: ObservableObject {
     private func handle(_ event: PushToTalkChannel.Event) {
         switch event {
         case let .ring(ring, receivedAt):
+            log("PushToTalk push from \(ring.fromName)")
             answer(ring, via: "pushtotalk", receivedAt: receivedAt)
         case let .transmitStarted(fromSystemUI):
             guard fromSystemUI, !talkHeld else { return }
@@ -240,8 +242,10 @@ final class TalkController: ObservableObject {
             statusLine = "Couldn't talk right now"
             endBurst()
         case .audioActivated:
+            log("PushToTalk audio activated")
             audioSessionActivated()
         case .audioDeactivated:
+            log("PushToTalk audio deactivated")
             audio.stop()
             audioActive = false
             updateTalkReady()
@@ -254,6 +258,7 @@ final class TalkController: ObservableObject {
     /// A PushToTalk push, or Answer on an in-app ring. The relay stream's request joins, so
     /// the relay starts the replay without another round trip.
     private func answer(_ ring: Ring, via: String, receivedAt: Double? = nil) {
+        log("Answering \(ring.conversationId) via \(via), PushToTalk \(usesPushToTalk), foreground \(inForeground)")
         if let current = conversation {
             if current.conversationId == ring.conversationId, current.joined { return }
             if current.conversationId != ring.conversationId { finish() }
@@ -320,7 +325,11 @@ final class TalkController: ObservableObject {
         let conversationId = conversation?.conversationId
         withToken { [weak self] session in
             guard let self, conversation != nil, conversation?.conversationId == conversationId else { return }
-            guard let session else { return finish(status: "You're signed out") }
+            guard let session else {
+                log("No session for the relay")
+                return finish(status: "You're signed out")
+            }
+            log(join.map { "Connecting to the relay, joining \($0)" } ?? "Connecting to the relay")
             relay.connect(baseURL: baseURL, token: session.token, userId: session.userId, join: join)
         }
     }
@@ -344,6 +353,7 @@ final class TalkController: ObservableObject {
     private func relayReady(clockOffsetMs: Double) {
         guard let current = conversation else { return }
         defer { updateTalkReady() }
+        log("Relay stream open")
         conversation?.timeline.mark("socketOpen")
         self.clockOffsetMs = clockOffsetMs
         bestClockRoundTripMs = .infinity
@@ -403,6 +413,7 @@ final class TalkController: ObservableObject {
             // Answered or talked on the watch: the conversation is there now.
             finish(status: "Continued on your watch")
         case "joined":
+            log("Joined")
             conversation?.joined = true
             conversation?.timeline.mark("joined", detail: "\(message.replayBursts ?? 0) buffered bursts")
             phase = .live
@@ -660,8 +671,11 @@ final class TalkController: ObservableObject {
         if !(200..<300).contains(status) { throw URLError(.badServerResponse) }
     }
 
+    /// In Console.app: the iPhone, subsystem com.cypressoakstudios.overandout.
+    static let logger = Logger(subsystem: "com.cypressoakstudios.overandout", category: "talk")
+
     func log(_ line: String) {
-        print("[oao] \(line)")
+        Self.logger.notice("\(line, privacy: .public)")
         conversation?.timeline.mark("log", detail: line, once: false)
     }
 }

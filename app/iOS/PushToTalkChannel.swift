@@ -65,6 +65,7 @@ final class PushToTalkChannel: NSObject, ObservableObject {
         guard manager == nil else { return }
         PTChannelManager.channelManager(delegate: self, restorationDelegate: self) { manager, error in
             Task { @MainActor in
+                TalkController.logger.notice("Channel manager: \(manager == nil ? "failed \(String(describing: error))" : "ready, active channel \(String(describing: manager?.activeChannelUUID))", privacy: .public)")
                 if let manager {
                     self.manager = manager
                     self.isAvailable = true
@@ -133,6 +134,7 @@ final class PushToTalkChannel: NSObject, ObservableObject {
 
 extension PushToTalkChannel: PTChannelManagerDelegate {
     nonisolated func channelManager(_ channelManager: PTChannelManager, didJoinChannel channelUUID: UUID, reason: PTChannelJoinReason) {
+        TalkController.logger.notice("Joined the channel, reason \(reason.rawValue)")
         Task { @MainActor in
             self.isJoined = true
             self.lastError = nil
@@ -141,6 +143,7 @@ extension PushToTalkChannel: PTChannelManagerDelegate {
     }
 
     nonisolated func channelManager(_ channelManager: PTChannelManager, didLeaveChannel channelUUID: UUID, reason: PTChannelLeaveReason) {
+        TalkController.logger.notice("Left the channel, reason \(reason.rawValue)")
         Task { @MainActor in
             self.isJoined = false
             self.pushToken = nil
@@ -163,7 +166,11 @@ extension PushToTalkChannel: PTChannelManagerDelegate {
     /// A friend is talking. Must return at once: the conversation is set up on the main actor.
     nonisolated func incomingPushResult(channelManager: PTChannelManager, channelUUID: UUID, pushPayload: [String: Any]) -> PTPushResult {
         let receivedAt = Clock.nowMs()
-        guard let ring = Ring(userInfo: pushPayload) else { return .leaveChannel }
+        TalkController.logger.notice("PushToTalk push received: \(pushPayload.keys.sorted().joined(separator: ","), privacy: .public)")
+        guard let ring = Ring(userInfo: pushPayload) else {
+            TalkController.logger.error("PushToTalk push without a ring; leaving the channel")
+            return .leaveChannel
+        }
         Task { @MainActor in
             // A push launching the app can arrive before the manager's own callback: a push
             // means we're in the channel.

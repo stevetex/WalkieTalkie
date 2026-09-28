@@ -4,6 +4,7 @@ import SwiftUI
 /// when a PushToTalk push launches it in the background.
 final class AppDelegate: NSObject, UIApplicationDelegate {
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
+        TalkController.logger.notice("Launched, state \(application.applicationState.rawValue)")
         _ = AppModel.shared
         return true
     }
