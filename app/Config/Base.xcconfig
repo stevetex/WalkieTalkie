@@ -23,12 +23,16 @@ OAO_API_HOST = overandout.app
 // entitlement and the site's apple-app-site-association file (web/public).
 OAO_LINK_DOMAIN = overandout.app
 
-// Push on the watch:
+// Push on the watch and the iPhone:
 //   yes  Push Notifications and Time Sensitive Notifications entitlements. Needs a
 //        paid Apple Developer Program membership.
 //   no   No push entitlements, so a free Personal Team can sign the app.
 OAO_PUSH = yes
 OAO_WATCH_ENTITLEMENTS_yes = Config/Watch.entitlements
 OAO_WATCH_ENTITLEMENTS_no = Config/Watch-NoPush.entitlements
+// The iPhone: with push, Push Notifications and Push to Talk (the iPhone rings through its
+// PushToTalk channel; design decision 2026-09-27). Without, it talks only while on screen.
+OAO_IOS_ENTITLEMENTS_yes = Config/iOS.entitlements
+OAO_IOS_ENTITLEMENTS_no = Config/iOS-NoPush.entitlements
 
 #include? "Local.xcconfig"

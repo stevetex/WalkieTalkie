@@ -1,9 +1,11 @@
 // Accounts, friends, invites, blocks, reports and devices (design decision 2026-09-27).
 //
-//   users/{uid}                     name, appleSub, createdAt, photoVersion (when there's a photo)
+//   users/{uid}                     name, appleSub, createdAt, photoVersion (when there's a photo),
+//                                   ringOn ("watch" or "iphone"; absent = the watch if there is one)
 //   users/{uid}/friends/{friendId}  since. Written on both sides in one commit
 //   users/{uid}/blocks/{otherId}    since. Blocking also deletes the friendship both ways
-//   users/{uid}/devices/{deviceId}  platform, pushToken, apnsEnvironment, updatedAt
+//   users/{uid}/devices/{deviceId}  platform, pushToken, pushType ("pushtotalk" for an iPhone in
+//                                   its PushToTalk channel), apnsEnvironment, updatedAt
 //   users/{uid}/sessions/{deviceId} sid, platform, createdAt, refreshedAt. One per device, so
 //                                   concurrent sign-ins on a device can't leave extras
 //   appleSubs/{sub}                 userId. Created only if absent: one account per Apple ID
@@ -40,6 +42,8 @@ export interface User {
   createdAt: number;
   // When the profile photo last changed (ms); absent without one.
   photoVersion?: number;
+  // Which device rings (design decision 2026-09-27); absent = the watch if there is one.
+  ringOn?: Platform;
 }
 
 export interface Friend {
@@ -66,15 +70,20 @@ export interface InviteInfo {
 export interface AccountDevice {
   id: string;
   platform: Platform;
-  // An APNs device token, or a "local:" / "poll:" pseudo-token (see relay.ts).
+  // An APNs device token, or a "local:" / "poll:" / "app:" pseudo-token (see relay.ts).
   pushToken: string;
+  // "pushtotalk": the token is an iPhone's PushToTalk channel token.
+  pushType: PushType;
   apnsEnvironment: ApnsEnvironment;
   updatedAt: number;
 }
 
+export const PUSH_TYPES = ["alert", "pushtotalk"] as const;
+export type PushType = (typeof PUSH_TYPES)[number];
+
 export type RingLookup =
   | { allowed: false }
-  | { allowed: true; fromName: string; devices: AccountDevice[] };
+  | { allowed: true; fromName: string; devices: AccountDevice[]; ringOn?: Platform };
 
 // An error the API returns as-is: an HTTP status and a stable code the apps can switch on.
 export class AccountError extends Error {
@@ -155,6 +164,17 @@ export class Accounts {
     return (await this.user(id))!;
   }
 
+  // Null goes back to the default: the watch if the account has one.
+  async setRingOn(id: string, ringOn: Platform | null): Promise<User> {
+    try {
+      await this.docs.commit([{ set: `users/${requireUserId(id)}`, data: ringOn ? { ringOn } : {}, fields: ["ringOn"], exists: true }]);
+    } catch (err) {
+      if (err instanceof PreconditionFailed) throw new AccountError(404, "no-account");
+      throw err;
+    }
+    return (await this.user(id))!;
+  }
+
   // Sessions: one per device, keyed by the device, so signing in again (even several times at
   // once) replaces its session. The newest sid wins; older tokens for the device stop refreshing.
   async createSession(userId: string, deviceId: string, platform: Platform): Promise<string> {
@@ -221,12 +241,12 @@ export class Accounts {
   async registerDevice(
     userId: string,
     deviceId: string,
-    device: { platform: Platform; pushToken: string; apnsEnvironment: ApnsEnvironment },
+    device: { platform: Platform; pushToken: string; pushType?: PushType; apnsEnvironment: ApnsEnvironment },
   ): Promise<void> {
     await this.docs.commit([
       {
         set: `users/${requireUserId(userId)}/devices/${checkId(deviceId, "device")}`,
-        data: { ...device, updatedAt: this.opts.now() },
+        data: { ...device, pushType: device.pushType ?? "alert", updatedAt: this.opts.now() },
       },
     ]);
   }
@@ -410,12 +430,17 @@ export class Accounts {
   // For the relay, once per ring: the two must be friends (a block removes the friendship).
   async ringLookup(from: string, to: string): Promise<RingLookup> {
     if (!isUserId(from) || !isUserId(to) || from === to) return { allowed: false };
-    const [[sender, friendship], devices] = await Promise.all([
-      this.docs.getAll([`users/${from}`, `users/${from}/friends/${to}`]),
+    const [[sender, friendship, recipient], devices] = await Promise.all([
+      this.docs.getAll([`users/${from}`, `users/${from}/friends/${to}`, `users/${to}`]),
       this.docs.list(`users/${to}/devices`),
     ]);
     if (!sender || !friendship) return { allowed: false };
-    return { allowed: true, fromName: String(sender.name), devices: devices.map((d) => toDevice(d.id, d.data)) };
+    return {
+      allowed: true,
+      fromName: String(sender.name),
+      devices: devices.map((d) => toDevice(d.id, d.data)),
+      ...(isPlatform(recipient?.ringOn) ? { ringOn: recipient.ringOn } : {}),
+    };
   }
 
   // Everything under the user, the friend entries on the other side, their open invites and
@@ -460,6 +485,10 @@ export function isUserId(id: unknown): id is string {
   return typeof id === "string" && id.startsWith(USER_ID_PREFIX) && isId(id);
 }
 
+export function isPushType(value: unknown): value is PushType {
+  return (PUSH_TYPES as readonly unknown[]).includes(value);
+}
+
 export function isPlatform(value: unknown): value is Platform {
   return (PLATFORMS as readonly unknown[]).includes(value);
 }
@@ -499,6 +528,7 @@ export function cleanName(name: unknown): string | undefined {
 function toUser(id: string, data: FirestoreData): User {
   const user: User = { id, name: String(data.name), createdAt: millis(data.createdAt) };
   if (typeof data.photoVersion === "number") user.photoVersion = data.photoVersion;
+  if (isPlatform(data.ringOn)) user.ringOn = data.ringOn;
   return user;
 }
 
@@ -507,6 +537,7 @@ function toDevice(id: string, data: FirestoreData): AccountDevice {
     id,
     platform: isPlatform(data.platform) ? data.platform : "watch",
     pushToken: String(data.pushToken ?? ""),
+    pushType: data.pushType === "pushtotalk" ? "pushtotalk" : "alert",
     apnsEnvironment: data.apnsEnvironment === "production" ? "production" : "sandbox",
     updatedAt: millis(data.updatedAt),
   };

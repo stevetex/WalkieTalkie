@@ -28,8 +28,12 @@ export type ServerMessage =
   | { type: "hello-ack"; clientTime: number; serverTime: number }
   | { type: "floor-granted"; burstId: string; conversationId: string; pushed: boolean }
   | { type: "floor-denied"; burstId: string; holder: string }
-  // An account can only ring its friends: the burst was dropped, and nobody was rung.
-  | { type: "talk-refused"; burstId: string; reason: "not-friends" }
+  // The burst was dropped and nobody was rung: not friends (an account can only ring its
+  // friends), or none of the friend's devices can be rung right now.
+  | { type: "talk-refused"; burstId: string; reason: "not-friends" | "unavailable" }
+  // The user joined or talked in this conversation from another of their devices, which now
+  // has it; this device should end its side.
+  | { type: "moved"; conversationId: string }
   | { type: "joined"; conversationId: string; peer: string; replayBursts: number }
   | { type: "burst-start"; conversationId: string; burstId: string; from: string; replay: boolean }
   | { type: "burst-end"; conversationId: string; burstId: string }

@@ -1,5 +1,7 @@
-// APNs provider for ring notifications (token-based auth, HTTP/2). A ring is a
+// APNs provider for ring notifications (token-based auth, HTTP/2). A watch ring is a
 // time-sensitive alert push that opens the app on tap (option C: no CallKit or VoIP push).
+// An iPhone ring is a PushToTalk push (design decision 2026-09-27), which wakes the app and
+// plays the message with no tap.
 // Without credentials it runs in dry-run mode and only logs, which is what the tests use.
 
 import { connect, type ClientHttp2Session } from "node:http2";
@@ -15,7 +17,10 @@ export interface ApnsConfig {
   key?: string;
   keyId: string;
   teamId: string;
+  // The watch app's bundle ID: the topic for alert pushes, since the watch registers itself.
   bundleId: string;
+  // The iPhone app's: PushToTalk pushes go to "<this>.voip-ptt". The same key signs both.
+  iphoneBundleId: string;
 }
 
 export interface PushResult {
@@ -28,6 +33,8 @@ export interface PushResult {
 }
 
 export interface AlertPush {
+  // Alert (the default) goes to the watch app; pushtotalk to the iPhone app's PushToTalk channel.
+  pushType?: "alert" | "pushtotalk";
   // The whole APNs JSON body: `aps` plus custom keys.
   payload: object;
   // A later push with the same ID replaces this one on the device.
@@ -47,9 +54,17 @@ const HOSTS: Record<ApnsEnvironment, string> = {
 };
 
 export function apnsConfigFromEnv(env: NodeJS.ProcessEnv): ApnsConfig | null {
-  const { APNS_KEY, APNS_KEY_PATH, APNS_KEY_ID, APNS_TEAM_ID, APNS_BUNDLE_ID } = env;
+  const { APNS_KEY, APNS_KEY_PATH, APNS_KEY_ID, APNS_TEAM_ID, APNS_BUNDLE_ID, APNS_IPHONE_BUNDLE_ID } = env;
   if (!(APNS_KEY || APNS_KEY_PATH) || !APNS_KEY_ID || !APNS_TEAM_ID || !APNS_BUNDLE_ID) return null;
-  return { key: APNS_KEY, keyPath: APNS_KEY_PATH, keyId: APNS_KEY_ID, teamId: APNS_TEAM_ID, bundleId: APNS_BUNDLE_ID };
+  return {
+    key: APNS_KEY,
+    keyPath: APNS_KEY_PATH,
+    keyId: APNS_KEY_ID,
+    teamId: APNS_TEAM_ID,
+    bundleId: APNS_BUNDLE_ID,
+    // The watch app's ID is the iPhone app's plus ".watchkitapp".
+    iphoneBundleId: APNS_IPHONE_BUNDLE_ID || APNS_BUNDLE_ID.replace(/\.watchkitapp$/, ""),
+  };
 }
 
 // The ring notification. Time-sensitive so it breaks through Focus modes that allow it;
@@ -92,12 +107,19 @@ export function prefetchAlert(ring: RingPayload, expiresAt: number): AlertPush {
   };
 }
 
+// The iPhone's ring: a PushToTalk push. The app reports the sender as the channel's active
+// speaker, the system activates its audio, and the app joins the conversation and plays it.
+// Expiration 0, as Apple recommends: a late wake for audio that's gone is worse than none.
+export function pushToTalkRing(ring: RingPayload): AlertPush {
+  return { pushType: "pushtotalk", payload: { ...ring, activeSpeaker: ring.fromName }, expiresAt: 0 };
+}
+
 export class DryRunPusher implements Pusher {
   sent: Array<{ token: string; env: ApnsEnvironment } & AlertPush> = [];
 
   async sendAlert(token: string, env: ApnsEnvironment, push: AlertPush): Promise<PushResult> {
     this.sent.push({ token, env, ...push });
-    console.log(`[apns:dry-run] alert -> ${token.slice(0, 8)}… (${env}) ${JSON.stringify(push.payload)}`);
+    console.log(`[apns:dry-run] ${push.pushType ?? "alert"} -> ${token.slice(0, 8)}… (${env}) ${JSON.stringify(push.payload)}`);
     return { ok: true, status: 200, latencyMs: 0, dryRun: true };
   }
 
@@ -147,8 +169,8 @@ export class ApnsPusher implements Pusher {
         ":method": "POST",
         ":path": `/3/device/${token}`,
         authorization: `bearer ${this.providerToken()}`,
-        "apns-push-type": "alert",
-        "apns-topic": this.config.bundleId,
+        "apns-push-type": push.pushType ?? "alert",
+        "apns-topic": push.pushType === "pushtotalk" ? `${this.config.iphoneBundleId}.voip-ptt` : this.config.bundleId,
         // Time-sensitive: deliver immediately rather than batched for power.
         "apns-priority": "10",
         "apns-expiration": String(Math.floor(push.expiresAt / 1000)),

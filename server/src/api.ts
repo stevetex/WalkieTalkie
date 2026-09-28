@@ -10,9 +10,10 @@
 //   POST   /v1/auth/refresh          (a token up to a year past expiry) → {token, expiresAt}
 //   POST   /v1/auth/device           {deviceId, platform} → a session for another device (the watch)
 //   POST   /v1/auth/signout          ends this session and its device's push registration
-//   GET    /v1/me                    PATCH /v1/me {name}
+//   GET    /v1/me                    PATCH /v1/me {name?, ringOn?: "watch" | "iphone" | null}
 //   DELETE /v1/me                    {authorizationCode} → revokes the Apple token, deletes everything
-//   PUT    /v1/me/device             {platform, pushToken, apnsEnvironment} for this session's device
+//   PUT    /v1/me/device             {platform, pushToken, pushType?, apnsEnvironment} for this session's
+//                                     device; pushType "pushtotalk" = an iPhone's PushToTalk channel token
 //   GET    /v1/friends               DELETE /v1/friends/{id}
 //   POST   /v1/invites               → {code, url, expiresAt}
 //   GET    /v1/invites/{code}        → who it's from, before accepting
@@ -25,7 +26,7 @@
 //   GET    /v1/users/{id}/photo      → image/jpeg: your own photo or a friend's
 
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { AccountError, MAX_PHOTO_BYTES, isPlatform, type Accounts, type User } from "./accounts.ts";
+import { AccountError, MAX_PHOTO_BYTES, isPlatform, isPushType, type Accounts, type Platform, type User } from "./accounts.ts";
 import type { AppleIdentity } from "./apple.ts";
 import { REFRESH_GRACE_MS, SessionError, type SessionClaims, type SessionSigner, type SessionVerifier } from "./session.ts";
 
@@ -109,9 +110,14 @@ export function createApi(options: ApiOptions): ApiHandler {
     }],
     ["PATCH", /^\/v1\/me$/, async (req) => {
       const claims = authenticate(req);
-      const { name } = await readBody(req);
-      if (typeof name !== "string") throw new AccountError(400, "bad-name");
-      return [200, userJSON(await accounts.rename(claims.sub, name))];
+      const { name, ringOn } = await readBody(req);
+      if (name === undefined && ringOn === undefined) throw new AccountError(400, "bad-request", "name or ringOn is required");
+      if (name !== undefined && typeof name !== "string") throw new AccountError(400, "bad-name");
+      if (ringOn !== undefined && ringOn !== null && !isPlatform(ringOn)) throw new AccountError(400, "bad-ring-on");
+      let user: User | undefined;
+      if (typeof name === "string") user = await accounts.rename(claims.sub, name);
+      if (ringOn !== undefined) user = await accounts.setRingOn(claims.sub, ringOn as Platform | null);
+      return [200, userJSON(user!)];
     }],
     ["DELETE", /^\/v1\/me$/, async (req) => {
       const claims = authenticate(req);
@@ -139,13 +145,16 @@ export function createApi(options: ApiOptions): ApiHandler {
     }],
     ["PUT", /^\/v1\/me\/device$/, async (req) => {
       const claims = authenticate(req);
-      const { platform, pushToken, apnsEnvironment } = await readBody(req);
+      const { platform, pushToken, pushType, apnsEnvironment } = await readBody(req);
       if (!isPlatform(platform) || typeof pushToken !== "string" || !pushToken || pushToken.length > 512) {
         throw new AccountError(400, "bad-request", "platform and pushToken are required");
       }
+      if (pushType !== undefined && !isPushType(pushType)) throw new AccountError(400, "bad-request", "unknown pushType");
+      if (pushType === "pushtotalk" && platform !== "iphone") throw new AccountError(400, "bad-request", "pushtotalk is for iPhones");
       await accounts.registerDevice(claims.sub, claims.dev, {
         platform,
         pushToken,
+        pushType: pushType ?? "alert",
         apnsEnvironment: apnsEnvironment === "production" ? "production" : "sandbox",
       });
       return [200, {}];
@@ -247,8 +256,13 @@ export function createApi(options: ApiOptions): ApiHandler {
   };
 }
 
-function userJSON(user: User): { id: string; name: string; photoVersion?: number } {
-  return { id: user.id, name: user.name, ...(user.photoVersion !== undefined ? { photoVersion: user.photoVersion } : {}) };
+function userJSON(user: User): { id: string; name: string; photoVersion?: number; ringOn?: Platform } {
+  return {
+    id: user.id,
+    name: user.name,
+    ...(user.photoVersion !== undefined ? { photoVersion: user.photoVersion } : {}),
+    ...(user.ringOn !== undefined ? { ringOn: user.ringOn } : {}),
+  };
 }
 
 function isBytes(body: unknown): body is { bytes: Buffer; contentType: string; version: number } {

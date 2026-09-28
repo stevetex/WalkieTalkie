@@ -40,6 +40,8 @@ public struct AccountUser: Codable, Equatable, Sendable {
     public let name: String
     /// When the profile photo last changed (ms since 1970); nil without one.
     public let photoVersion: Double?
+    /// Which device rings: nil = the watch if the account has one, else the iPhone.
+    public var ringOn: Platform? = nil
 }
 
 public struct Friend: Codable, Identifiable, Hashable, Sendable {
@@ -369,10 +371,16 @@ public actor AccountClient {
         return user
     }
 
-    public func registerDevice(platform: Platform, pushToken: String, apnsEnvironment: String) async throws {
-        let _: Empty = try await request("PUT", "/v1/me/device", body: [
-            "platform": platform.rawValue, "pushToken": pushToken, "apnsEnvironment": apnsEnvironment,
-        ])
+    /// Which device rings (nil = the default: the watch if the account has one).
+    public func setRingOn(_ platform: Platform?) async throws -> AccountUser {
+        try await request("PATCH", "/v1/me", body: ["ringOn": platform?.rawValue ?? NSNull()])
+    }
+
+    /// `pushType` "pushtotalk": the token is the iPhone's PushToTalk channel token.
+    public func registerDevice(platform: Platform, pushToken: String, pushType: String? = nil, apnsEnvironment: String) async throws {
+        var body: [String: Any] = ["platform": platform.rawValue, "pushToken": pushToken, "apnsEnvironment": apnsEnvironment]
+        if let pushType { body["pushType"] = pushType }
+        let _: Empty = try await request("PUT", "/v1/me/device", body: body)
     }
 
     // MARK: Profile photo

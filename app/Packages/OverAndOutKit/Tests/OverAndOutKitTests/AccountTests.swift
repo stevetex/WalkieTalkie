@@ -49,6 +49,39 @@ struct AccountTests {
         return AccountSession(token: "old", expiresAt: Date(timeIntervalSince1970: ms / 1000), userId: "u_a", name: "Alice", deviceId: "phone")
     }
 
+    @Test func ringOnIsSetAndClearedAndPushTypeIsSent() async throws {
+        let store = MemorySessionStore()
+        store.save(session(expiresIn: 3600))
+        StubProtocol.reset([
+            .init(status: 200, json: #"{"id":"u_a","name":"Alice","ringOn":"iphone"}"#),
+            .init(status: 200, json: #"{"id":"u_a","name":"Alice"}"#),
+            .init(status: 200, json: "{}"),
+        ])
+        let c = client(store)
+        #expect(try await c.setRingOn(.iphone).ringOn == .iphone)
+        #expect(try await c.setRingOn(nil).ringOn == nil)
+        try await c.registerDevice(platform: .iphone, pushToken: "abc", pushType: "pushtotalk", apnsEnvironment: "sandbox")
+        let bodies = StubProtocol.requests.map { request -> [String: Any] in
+            let data = request.httpBodyStream.map { stream -> Data in
+                stream.open()
+                defer { stream.close() }
+                var data = Data()
+                var buffer = [UInt8](repeating: 0, count: 1024)
+                while stream.hasBytesAvailable {
+                    let n = stream.read(&buffer, maxLength: buffer.count)
+                    if n <= 0 { break }
+                    data.append(buffer, count: n)
+                }
+                return data
+            } ?? request.httpBody ?? Data()
+            return (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
+        }
+        #expect(bodies[0]["ringOn"] as? String == "iphone")
+        #expect(bodies[1]["ringOn"] is NSNull)
+        #expect(bodies[2]["pushType"] as? String == "pushtotalk")
+        #expect(StubProtocol.requests[2].httpMethod == "PUT")
+    }
+
     @Test func photosUploadAsJPEGAndFriendsCarryTheirVersion() async throws {
         let store = MemorySessionStore()
         store.save(session(expiresIn: 3600))

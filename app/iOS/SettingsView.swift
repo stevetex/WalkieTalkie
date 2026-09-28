@@ -4,6 +4,7 @@ import SwiftUI
 struct SettingsView: View {
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var watch: PhoneWatchLink
+    @EnvironmentObject private var ptt: PushToTalkChannel
     @State private var name = ""
     @State private var confirmingSignOut = false
 
@@ -31,6 +32,8 @@ struct SettingsView: View {
                 } footer: {
                     Text("Friends see this when you ring them.")
                 }
+
+                WalkieTalkieSection()
 
                 Section("Apple Watch") {
                     LabeledContent("Status", value: watchStatus)
@@ -132,5 +135,60 @@ struct BlockedView: View {
         .brandScreen()
         .navigationTitle("Blocked People")
         .refreshable { await model.refresh() }
+    }
+}
+
+/// How this iPhone talks (design decisions 2026-09-27): being in the PushToTalk channel, and
+/// which device rings.
+struct WalkieTalkieSection: View {
+    @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var watch: PhoneWatchLink
+    @EnvironmentObject private var ptt: PushToTalkChannel
+
+    var body: some View {
+        Section {
+            if ptt.isAvailable {
+                Toggle("Walkie-Talkie on This iPhone", isOn: Binding(
+                    get: { ptt.isJoined },
+                    set: { $0 ? ptt.join() : ptt.leave() }
+                ))
+            }
+            if watch.isWatchAppInstalled || model.ringOn != nil {
+                Picker("Ring Me On", selection: Binding(
+                    get: { model.ringsOn },
+                    set: { platform in Task { await model.setRingOn(platform) } }
+                )) {
+                    Text("Apple Watch").tag(Platform.watch)
+                    Text("iPhone").tag(Platform.iphone)
+                }
+            }
+            if !model.microphoneAllowed {
+                Button("Allow the Microphone") {
+                    if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
+                }
+            }
+            if let error = ptt.lastError {
+                Text(error).font(.footnote).foregroundStyle(Brand.secondary)
+            }
+        } header: {
+            Text("Walkie-Talkie")
+        } footer: {
+            Text(footer)
+        }
+    }
+
+    private var footer: String {
+        var lines: [String] = []
+        if ptt.isAvailable {
+            lines.append(ptt.isJoined
+                ? "Friends' messages play on this iPhone right away, even when it's locked. You can talk back from the Lock Screen."
+                : "Friends can reach this iPhone only while Over&Out is open.")
+        } else {
+            lines.append("Friends can reach this iPhone while Over&Out is open.")
+        }
+        if watch.isWatchAppInstalled || model.ringOn != nil {
+            lines.append("Only one device rings. If it can't be reached, the other one does.")
+        }
+        return lines.joined(separator: " ")
     }
 }

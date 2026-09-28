@@ -8,6 +8,15 @@
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Over&amp;Out records your voice only while you hold the Talk button.</string>
+	<key>OAOServerHost</key>
+	<string>$(OAO_SERVER_HOST)</string>
+	<key>UIBackgroundModes</key>
+	<array>
+		<!-- PushToTalk: its pushes wake the app, and it can talk from the Lock Screen. -->
+		<string>push-to-talk</string>
+	</array>
 	<key>OAOApiHost</key>
 	<string>$(OAO_API_HOST)</string>
 	<key>OAOLinkDomain</key>

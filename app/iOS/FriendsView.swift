@@ -18,7 +18,7 @@ struct FriendsView: View {
                                 .foregroundStyle(Brand.accent)
                             Text(model.friendsLoaded ? "No friends yet" : "Loading…")
                                 .font(.headline)
-                            Text("Invite a friend over Messages. When they tap the link, you can ring each other from your watches.")
+                            Text("Invite a friend over Messages. When they tap the link, you can talk from your iPhone or Apple Watch.")
                                 .font(.callout)
                                 .foregroundStyle(Brand.secondary)
                                 .multilineTextAlignment(.center)
@@ -34,7 +34,7 @@ struct FriendsView: View {
                             }
                         }
                     } footer: {
-                        Text("Ring a friend from Over&Out on your watch.")
+                        Text("Tap a friend, then hold the mascot's mouth to talk. You can also talk from Over&Out on your watch.")
                     }
                 }
                 Section {
@@ -53,7 +53,7 @@ struct FriendsView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbarColorScheme(.dark, for: .navigationBar)
         .navigationDestination(for: Friend.self) { friend in
-            FriendDetailView(friend: friend)
+            TalkView(friend: friend)
         }
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {

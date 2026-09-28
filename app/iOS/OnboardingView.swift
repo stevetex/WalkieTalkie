@@ -2,11 +2,13 @@ import OverAndOutKit
 import SwiftUI
 
 /// After the first sign-in: the name friends see, letting rings through Focus (design
-/// decision 2026-09-26), and the watch.
+/// decision 2026-09-26), talking from the iPhone (2026-09-27), and the watch.
 struct OnboardingView: View {
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var watch: PhoneWatchLink
+    @EnvironmentObject private var ptt: PushToTalkChannel
     @State private var step = 0
+    @State private var askedMicrophone = false
     @State private var name = ""
     @State private var saving = false
 
@@ -14,12 +16,13 @@ struct OnboardingView: View {
         GeometryReader { geometry in
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
-                    ProgressView(value: Double(step + 1), total: 3)
+                    ProgressView(value: Double(step + 1), total: 4)
                         .tint(Brand.orange)
                         .padding(.bottom, 32)
                     switch step {
                     case 0: nameStep
                     case 1: focusStep
+                    case 2: phoneStep
                     default: watchStep
                     }
                 }
@@ -37,7 +40,7 @@ struct OnboardingView: View {
         VStack(alignment: .leading, spacing: 16) {
             Text("What should friends call you?")
                 .font(.title.bold())
-            Text("Your screen name appears on their watch when you ring them.")
+            Text("Your screen name appears on their iPhone or watch when you talk to them.")
                 .foregroundStyle(Brand.secondary)
             ProfilePhotoPicker(size: 56)
             TextField("Screen name", text: $name)
@@ -81,12 +84,45 @@ struct OnboardingView: View {
         }
     }
 
+    /// The microphone, then the PushToTalk channel (only on a device with PushToTalk).
+    private var phoneStep: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Talk from your iPhone")
+                .font(.title.bold())
+            Text("Hold the mascot's mouth to talk. Over&Out uses the microphone only while you hold it.")
+                .foregroundStyle(Brand.secondary)
+            if ptt.isAvailable {
+                Text("Turn on walkie-talkie so friends' messages play on this iPhone right away, even when it's locked. You can turn it off in Settings or from the Lock Screen.")
+                    .foregroundStyle(Brand.secondary)
+            }
+            Spacer()
+            Button {
+                Task {
+                    if !askedMicrophone {
+                        askedMicrophone = true
+                        await model.requestMicrophone()
+                    }
+                    if ptt.isAvailable, !ptt.isJoined { ptt.join() }
+                    step = 3
+                }
+            } label: {
+                Text(ptt.isAvailable ? "Turn On Walkie-Talkie" : "Allow the Microphone").frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+            .foregroundStyle(Brand.ink)
+            .controlSize(.large)
+            .tint(Brand.orange)
+            Button("Not Now") { step = 3 }
+                .frame(maxWidth: .infinity)
+        }
+    }
+
     private var watchStep: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("Over&Out on your watch")
                 .font(.title.bold())
             if !watch.isPaired {
-                Text("Over&Out needs an Apple Watch paired with this iPhone. You can still invite friends now.")
+                Text("With an Apple Watch paired to this iPhone, you can talk from your wrist too. You're ready to invite friends.")
                     .foregroundStyle(Brand.secondary)
             } else if !watch.isWatchAppInstalled {
                 Text("Install Over&Out on your watch: open the Watch app on this iPhone, scroll to Available Apps, and tap Install next to Over&Out.")

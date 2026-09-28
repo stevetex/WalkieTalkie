@@ -103,6 +103,18 @@ export function accountsSuite(label: string, makeDocs: () => Docs, skip: string 
     assert.deepEqual(lookup.devices.map((d) => [d.id, d.platform]), [["watch-1", "watch"]]);
     assert.equal((await accounts.ringLookup(bob.id, alice.id)).allowed, true);
 
+    // Bob's iPhone in its PushToTalk channel, and his choice of which device rings.
+    await accounts.registerDevice(bob.id, "phone-1", { platform: "iphone", pushToken: "cd".repeat(32), pushType: "pushtotalk", apnsEnvironment: "sandbox" });
+    assert.equal((await accounts.setRingOn(bob.id, "iphone")).ringOn, "iphone");
+    const chosen = await accounts.ringLookup(alice.id, bob.id);
+    assert.ok(chosen.allowed);
+    assert.equal(chosen.ringOn, "iphone");
+    assert.deepEqual(chosen.devices.map((d) => [d.id, d.platform, d.pushType]).sort(), [["phone-1", "iphone", "pushtotalk"], ["watch-1", "watch", "alert"]]);
+    assert.equal((await accounts.setRingOn(bob.id, null)).ringOn, undefined);
+    const byDefault = await accounts.ringLookup(alice.id, bob.id);
+    assert.ok(byDefault.allowed);
+    assert.equal(byDefault.ringOn, undefined);
+
     await accounts.block(bob.id, alice.id);
     assert.equal((await accounts.ringLookup(alice.id, bob.id)).allowed, false);
     assert.equal((await accounts.ringLookup(bob.id, alice.id)).allowed, false);
