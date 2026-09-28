@@ -164,7 +164,14 @@ extension PushToTalkChannel: PTChannelManagerDelegate {
     nonisolated func incomingPushResult(channelManager: PTChannelManager, channelUUID: UUID, pushPayload: [String: Any]) -> PTPushResult {
         let receivedAt = Clock.nowMs()
         guard let ring = Ring(userInfo: pushPayload) else { return .leaveChannel }
-        Task { @MainActor in self.emit(.ring(ring, receivedAt: receivedAt)) }
+        Task { @MainActor in
+            // A push launching the app can arrive before the manager's own callback: a push
+            // means we're in the channel.
+            if self.manager == nil { self.manager = channelManager }
+            self.isAvailable = true
+            self.isJoined = true
+            self.emit(.ring(ring, receivedAt: receivedAt))
+        }
         return .activeRemoteParticipant(PTParticipant(name: ring.fromName, image: nil))
     }
 
