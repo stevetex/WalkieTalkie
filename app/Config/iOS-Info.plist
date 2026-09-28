@@ -16,6 +16,9 @@
 	<array>
 		<!-- PushToTalk: its pushes wake the app, and it can talk from the Lock Screen. -->
 		<string>push-to-talk</string>
+		<!-- And audio: without it the system refuses to activate a PushToTalk app's audio in
+		     the background ("not allowed to play in the background"), so nothing plays. -->
+		<string>audio</string>
 	</array>
 	<key>OAOApiHost</key>
 	<string>$(OAO_API_HOST)</string>
