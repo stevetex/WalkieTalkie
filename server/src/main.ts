@@ -9,8 +9,11 @@
 //                     firestore store: host:port of the Firestore emulator instead of Google Cloud
 //   FIRESTORE_AUTH    firestore store: "gcloud" uses the gcloud CLI's account instead of the VM's
 //                     service account (local runs against the real database)
-//   SPIKE_TOKEN       the shared relay token: clients without accounts (the spike's model) and
-//                     the diagnostics endpoints. Unset = no auth for those (local only)
+//   SPIKE_TOKEN       the shared relay token, for the diagnostics endpoints (timelines, status,
+//                     the legacy device list). Unset = no auth for those (local only)
+//   SHARED_TOKEN_CLIENTS
+//                     1 = the shared token also works for relay clients without accounts (the
+//                     spike's model: they name their own user ID). Off on relay nodes
 //   SESSION_PUBLIC_KEYS  JSON {kid: PEM} of Ed25519 keys that sign session tokens (see
 //                     session.ts); with it, clients can connect with an account's token.
 //                     SESSION_PUBLIC_KEYS_SECRET names a Secret Manager secret instead
@@ -63,6 +66,9 @@ export interface ServerOptions {
   devices?: DeviceStore;
   metrics?: MetricsStore;
   token: string | null;
+  // Relay clients without accounts, with the shared token (the spike's model). Off = the shared
+  // token only reads diagnostics.
+  sharedTokenClients?: boolean;
   // Verifies account session tokens; null or absent = only the shared token works.
   sessions?: SessionVerifier | null;
   // Friend checks for accounts' rings.
@@ -206,6 +212,10 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
       const sharedOnly = ["/v1/devices", "/v1/users", "/v1/status"].includes(url.pathname) ||
         (req.method === "GET" && url.pathname.startsWith("/v1/metrics"));
       if (sharedOnly && caller.account) return send(res, 403, { error: "forbidden" });
+      // Without sharedTokenClients, the shared token reads diagnostics and nothing else.
+      const diagnostics = req.method === "GET" &&
+        (["/v1/users", "/v1/status"].includes(url.pathname) || url.pathname.startsWith("/v1/metrics"));
+      if (!caller.account && !diagnostics && !options.sharedTokenClients) return send(res, 403, { error: "forbidden" });
 
       if (req.method === "POST" && url.pathname === "/v1/devices") {
         const body = await readJSON(req);
@@ -288,6 +298,7 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
     if (url.pathname !== "/v1/relay") return rejectUpgrade(socket, 404, "Not Found");
     const caller = authenticate(req, url);
     if (!caller) return rejectUpgrade(socket, 401, "Unauthorized");
+    if (!caller.account && !options.sharedTokenClients) return rejectUpgrade(socket, 403, "Forbidden");
     const userId = caller.userId;
     if (!userId) return rejectUpgrade(socket, 400, "Bad Request");
     const ws = acceptUpgrade(req, socket);
@@ -389,6 +400,7 @@ if (import.meta.main) {
   const simulatorPush = env.SIMULATOR_PUSH === "1";
   const pusher = simulatorPush ? new SimulatorPusher(apnsPusher) : apnsPusher;
   const token = env.SPIKE_TOKEN || null;
+  const sharedTokenClients = env.SHARED_TOKEN_CLIENTS === "1";
   const host = env.HOST || undefined;
   const port = Number(env.PORT ?? 8080);
   const prefetchPushAfterMs = Number(env.PREFETCH_PUSH_MS ?? 0);
@@ -402,14 +414,14 @@ if (import.meta.main) {
     if (env.SERVE_API === "1") api = apiFromEnv(env, db, null);
     const accounts = api?.accounts ?? new Accounts(db);
     sessions = api?.verifier ?? sessions;
-    running = await startServer({ port, host, dataDir: null, devices, metrics, token, sessions, accounts, api: api?.handler, pusher, prefetchPushAfterMs });
+    running = await startServer({ port, host, dataDir: null, devices, metrics, token, sharedTokenClients, sessions, accounts, api: api?.handler, pusher, prefetchPushAfterMs });
     console.log(`[server] listening on ${host ?? ""}:${running.port}, data in Firestore ${emulatorHost ? `emulator ${emulatorHost}, ` : ""}project ${projectId}`);
   } else {
     const dataDir = ensureDir(resolve(env.DATA_DIR ?? "data"));
     // Accounts are only kept locally when this process also serves the API.
     if (env.SERVE_API === "1") api = apiFromEnv(env, new MemoryDocs(join(dataDir, "accounts.json")), dataDir);
     sessions = api?.verifier ?? sessions;
-    running = await startServer({ port, host, dataDir, token, sessions, accounts: api?.accounts, api: api?.handler, pusher, prefetchPushAfterMs });
+    running = await startServer({ port, host, dataDir, token, sharedTokenClients, sessions, accounts: api?.accounts, api: api?.handler, pusher, prefetchPushAfterMs });
     console.log(`[server] listening on ${host ?? ""}:${running.port}, data in ${dataDir}`);
   }
   for (const note of api?.notes ?? []) console.log(`[api] ${note}`);
@@ -418,7 +430,8 @@ if (import.meta.main) {
   console.log(apnsConfig ? `[server] APNs alert pushes, topic ${apnsConfig.bundleId}` : "[server] APNs not configured: dry-run pushes");
   if (prefetchPushAfterMs) console.log(`[server] prefetch pushes ${prefetchPushAfterMs} ms after a ring (prototype)`);
   if (simulatorPush) console.warn("[server] SIMULATOR_PUSH: rings to simulator tokens run xcrun simctl push");
-  if (!token) console.warn("[server] SPIKE_TOKEN not set: API and relay are unauthenticated");
+  if (!token) console.warn("[server] SPIKE_TOKEN not set: diagnostics are unauthenticated");
+  if (sharedTokenClients) console.warn("[server] SHARED_TOKEN_CLIENTS: relay clients without accounts are allowed");
   // Container stops (deploys, autohealing) send SIGTERM. Let conversations in progress
   // finish, up to DRAIN_MS, then write buffered metrics and exit.
   const drainMs = Number(env.DRAIN_MS ?? 0);

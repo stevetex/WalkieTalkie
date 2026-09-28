@@ -17,7 +17,8 @@
 // --account runs as the Test Bot's account (tools/test-account.ts create) instead of a
 // shared-token user: it connects with the account's session token, can only ring its
 // friends, and --to defaults to its first friend. SPIKE_TOKEN is then only used to read
-// timelines (--ring-until-answered).
+// timelines (--ring-until-answered). Without --account the relay must run with
+// SHARED_TOKEN_CLIENTS=1 (local only; relay nodes accept accounts only).
 
 import { parseArgs } from "node:util";
 import { execFileSync } from "node:child_process";

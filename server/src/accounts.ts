@@ -12,6 +12,9 @@
 //   users/{uid}/sessions/{deviceId} sid, platform, createdAt, refreshedAt. One per device, so
 //                                   concurrent sign-ins on a device can't leave extras
 //   appleSubs/{sub}                 userId. Created only if absent: one account per Apple ID
+//   pushTokens/{sha256 of token}    userId, deviceId, updatedAt: the one registration a push token
+//                                   belongs to. Registering it elsewhere (another account, or a new
+//                                   device ID after a reinstall) removes the old registration
 //   invites/{code}                  from, createdAt, expireAt (Firestore TTL deletes it)
 //   reports/{id}                    reporter, reported, reason, note, conversationId, createdAt, status
 //   photos/{uid}                    jpeg (bytes, at most 100 KB), updatedAt. Apart from users/{uid}
@@ -22,7 +25,7 @@
 // blocking someone takes effect on the next ring, whatever tokens are still out there. The
 // relay checks again while they talk (canTalk), so it also ends a conversation under way.
 
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { PreconditionFailed, type FirestoreData, type TransactionGet, type Write } from "./firestore.ts";
 import type { ApnsEnvironment } from "./apns.ts";
 import type { Docs } from "./docs.ts";
@@ -275,12 +278,17 @@ export class Accounts {
     requireUserId(userId);
     checkId(sid, "session");
     checkId(deviceId, "device");
-    const [current, legacy] = await this.docs.getAll([`users/${userId}/sessions/${deviceId}`, `users/${userId}/sessions/${sid}`]);
+    const [current, legacy, device] = await this.docs.getAll([
+      `users/${userId}/sessions/${deviceId}`,
+      `users/${userId}/sessions/${sid}`,
+      `users/${userId}/devices/${deviceId}`,
+    ]);
     const isCurrent = current ? current.sid === sid : legacy?.deviceId === deviceId;
     if (!isCurrent) return;
     await this.docs.commit([
       { delete: `users/${userId}/sessions/${current ? deviceId : sid}` },
       { delete: `users/${userId}/devices/${deviceId}` },
+      ...(await this.pointerDeletes(userId, device ? [{ id: deviceId, data: device }] : [])),
     ]);
   }
 
@@ -291,21 +299,41 @@ export class Accounts {
   ): Promise<void> {
     requireUserId(userId);
     checkId(deviceId, "device");
-    const [[user], devices] = await Promise.all([this.docs.getAll([`users/${userId}`]), this.docs.list(`users/${userId}/devices`)]);
+    const path = `users/${userId}/devices/${deviceId}`;
+    const pointer = ownsToken(device.pushToken) ? pushTokenPath(device.pushToken) : null;
+    const devices = await this.docs.list(`users/${userId}/devices`);
     const others = devices.filter((d) => d.id !== deviceId).map((d) => toDevice(d.id, d.data).platform);
-    // The account's first device of this kind, next to one of the other kind, with no choice
-    // made: keep ringing the device that rang until now, and the iPhone asks which one to use
-    // (design decision 2026-09-28). Without this a new watch would silently take the rings.
-    const pin = user && !isPlatform(user.ringOn) && !others.includes(device.platform) && others.length > 0
-      ? others[0]
-      : undefined;
-    await this.docs.commit([
-      {
-        set: `users/${userId}/devices/${deviceId}`,
-        data: { ...device, pushType: device.pushType ?? "alert", updatedAt: this.opts.now() },
-      },
-      ...(pin ? [{ set: `users/${userId}`, data: { ringOn: pin }, fields: ["ringOn"], exists: true }] : []),
-    ]);
+    const now = this.opts.now();
+    await this.docs.transaction(async (get) => {
+      const [user, previous, owner] = await get([`users/${userId}`, path, ...(pointer ? [pointer] : [])]);
+      const writes: Write[] = [];
+      // The token was registered somewhere else: under another account (the device signed in
+      // with another Apple ID without signing out) or this account's earlier device ID (a
+      // reinstall). That registration goes, so it can't take rings meant for this one.
+      if (owner && (owner.userId !== userId || owner.deviceId !== deviceId) && isUserId(owner.userId) && isId(owner.deviceId)) {
+        const stalePath = `users/${owner.userId}/devices/${owner.deviceId}`;
+        const [stale] = await get([stalePath]);
+        if (stale?.pushToken === device.pushToken) writes.push({ delete: stalePath });
+      }
+      // The device's previous token no longer points here.
+      if (typeof previous?.pushToken === "string" && ownsToken(previous.pushToken) && previous.pushToken !== device.pushToken) {
+        const oldPointer = pushTokenPath(previous.pushToken);
+        const [old] = await get([oldPointer]);
+        if (old?.userId === userId && old.deviceId === deviceId) writes.push({ delete: oldPointer });
+      }
+      // The account's first device of this kind, next to one of the other kind, with no choice
+      // made: keep ringing the device that rang until now, and the iPhone asks which one to use
+      // (design decision 2026-09-28). Without this a new watch would silently take the rings.
+      const pin = user && !isPlatform(user.ringOn) && !others.includes(device.platform) && others.length > 0
+        ? others[0]
+        : undefined;
+      writes.push(
+        { set: path, data: { ...device, pushType: device.pushType ?? "alert", updatedAt: now } },
+        ...(pointer ? [{ set: pointer, data: { userId, deviceId, updatedAt: now } }] : []),
+        ...(pin ? [{ set: `users/${userId}`, data: { ringOn: pin }, fields: ["ringOn"], exists: true }] : []),
+      );
+      return { writes, result: undefined };
+    });
   }
 
   // The relay, when APNs says a device's push token is no longer valid. Only that token goes:
@@ -313,11 +341,27 @@ export class Accounts {
   async removeDevice(userId: string, deviceId: string, pushToken: string): Promise<boolean> {
     if (!isUserId(userId) || !isId(deviceId)) return false;
     const path = `users/${userId}/devices/${deviceId}`;
+    const pointer = ownsToken(pushToken) ? pushTokenPath(pushToken) : null;
     return this.docs.transaction(async (get) => {
-      const [device] = await get([path]);
+      const [device, owner] = await get([path, ...(pointer ? [pointer] : [])]);
       const stale = device !== undefined && device.pushToken === pushToken;
-      return { writes: stale ? [{ delete: path, exists: true }] : [], result: stale };
+      const ownsPointer = owner?.userId === userId && owner.deviceId === deviceId;
+      return {
+        writes: stale ? [{ delete: path, exists: true }, ...(pointer && ownsPointer ? [{ delete: pointer }] : [])] : [],
+        result: stale,
+      };
     });
+  }
+
+  // Deletes for the pushTokens pointers that still name these devices of the user's.
+  private async pointerDeletes(userId: string, devices: Array<{ id: string; data: FirestoreData }>): Promise<Write[]> {
+    const tokens = devices.filter((d) => typeof d.data.pushToken === "string" && ownsToken(d.data.pushToken));
+    const paths = tokens.map((d) => pushTokenPath(String(d.data.pushToken)));
+    if (!paths.length) return [];
+    const owners = await this.docs.getAll(paths);
+    return paths.flatMap((p, i): Write[] =>
+      owners[i]?.userId === userId && owners[i]?.deviceId === tokens[i].id ? [{ delete: p }] : [],
+    );
   }
 
   // The kinds of device registered for rings, for the iPhone's Ring Me On.
@@ -589,6 +633,7 @@ export class Accounts {
       ...friends.flatMap((f): Write[] => [{ delete: `users/${f.id}/friends/${userId}` }, { delete: `users/${userId}/friends/${f.id}` }]),
       ...blocks.map((b): Write => ({ delete: `users/${userId}/blocks/${b.id}` })),
       ...devices.map((d): Write => ({ delete: `users/${userId}/devices/${d.id}` })),
+      ...(await this.pointerDeletes(userId, devices)),
       ...sessions.map((s): Write => ({ delete: `users/${userId}/sessions/${s.id}` })),
       ...invites.map((i): Write => ({ delete: `invites/${i.id}` })),
       ...(appleSub ? [{ delete: `appleSubs/${appleSub}` }] : []),
@@ -643,6 +688,20 @@ function requireUserId(id: unknown): string {
 
 function newUserId(): string {
   return USER_ID_PREFIX + randomId(12);
+}
+
+// Every iPhone out of its PushToTalk channel registers the same "app:" token, and the spike's
+// "local:" and "poll:" pseudo-tokens aren't Apple's either (see relay.ts). Every other token
+// (APNs, or "simulator:<udid>:<bundle>") belongs to one device.
+const SHARED_PSEUDO_TOKENS = ["app:", "local:", "poll:"];
+
+function ownsToken(pushToken: string): boolean {
+  return pushToken !== "" && !SHARED_PSEUDO_TOKENS.some((prefix) => pushToken.startsWith(prefix));
+}
+
+// A push token's pointer document: hashed, so the token isn't stored twice and fits an ID.
+function pushTokenPath(pushToken: string): string {
+  return `pushTokens/${createHash("sha256").update(pushToken).digest("base64url")}`;
 }
 
 // base64url, so safe in document IDs and URLs. 16 bytes = 128 bits = 22 characters.

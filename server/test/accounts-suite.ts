@@ -375,6 +375,35 @@ export function accountsSuite(label: string, makeDocs: () => Docs, skip: string 
     assert.equal(await accounts.removeDevice(alice.id, "watch", "old"), false);
   });
 
+  test(`${label}: a push token rings only the account and device that registered it last`, { skip }, async () => {
+    const { docs, accounts, alice, bob } = await setup();
+    const watchToken = "ab".repeat(32);
+    const tokens = async (userId: string) => (await accounts.devices(userId)).map((d) => `${d.id}=${d.pushToken}`);
+    // Alice's watch signs in as Bob without signing out: it no longer rings for Alice.
+    await accounts.registerDevice(alice.id, "watch-1", { platform: "watch", pushToken: watchToken, apnsEnvironment: "sandbox" });
+    await accounts.registerDevice(bob.id, "watch-1", { platform: "watch", pushToken: watchToken, apnsEnvironment: "sandbox" });
+    assert.deepEqual(await tokens(alice.id), []);
+    assert.deepEqual(await tokens(bob.id), [`watch-1=${watchToken}`]);
+    // A reinstall gives Bob's watch a new device ID with the same token: the old ID goes.
+    await accounts.registerDevice(bob.id, "watch-2", { platform: "watch", pushToken: watchToken, apnsEnvironment: "sandbox" });
+    assert.deepEqual(await tokens(bob.id), [`watch-2=${watchToken}`]);
+    // A new token frees the old one, so registering the old token elsewhere removes nothing.
+    await accounts.registerDevice(bob.id, "watch-2", { platform: "watch", pushToken: "cd".repeat(32), apnsEnvironment: "sandbox" });
+    await accounts.registerDevice(alice.id, "watch-9", { platform: "watch", pushToken: watchToken, apnsEnvironment: "sandbox" });
+    assert.deepEqual(await tokens(bob.id), [`watch-2=${"cd".repeat(32)}`]);
+    // Every iPhone out of its PushToTalk channel shares "app:", so it's never taken over.
+    await accounts.registerDevice(alice.id, "phone-1", { platform: "iphone", pushToken: "app:", apnsEnvironment: "sandbox" });
+    await accounts.registerDevice(bob.id, "phone-2", { platform: "iphone", pushToken: "app:", apnsEnvironment: "sandbox" });
+    assert.ok((await tokens(alice.id)).includes("phone-1=app:"));
+    // Signing out, a token APNs rejects, and deleting the account leave no pointers behind.
+    await accounts.removeDevice(bob.id, "watch-2", "cd".repeat(32));
+    const sid = await accounts.createSession(alice.id, "watch-9", "watch");
+    await accounts.endSession(alice.id, sid, "watch-9");
+    await accounts.registerDevice(bob.id, "watch-3", { platform: "watch", pushToken: "ef".repeat(32), apnsEnvironment: "sandbox" });
+    await accounts.deleteAccount(bob.id);
+    assert.deepEqual(await docs.list("pushTokens"), []);
+  });
+
   test(`${label}: an invite accepted while a block lands never leaves them friends`, { skip }, async () => {
     const docs = interleaved(makeDocs());
     const accounts = new Accounts(docs, { invitesPerDay: 3 });
