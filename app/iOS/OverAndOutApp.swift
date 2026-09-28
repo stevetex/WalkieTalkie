@@ -6,7 +6,18 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
         TalkController.logger.notice("Launched, state \(application.applicationState.rawValue)")
         _ = AppModel.shared
+        // Enables the app's push topics (including its .voip-ptt one) on this device's APNs
+        // connection. No permission prompt: that's only for showing notifications.
+        application.registerForRemoteNotifications()
         return true
+    }
+
+    func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
+        TalkController.logger.notice("Registered for remote notifications (\(deviceToken.count) bytes)")
+    }
+
+    func application(_ application: UIApplication, didFailToRegisterForRemoteNotificationsWithError error: Error) {
+        TalkController.logger.error("Remote notification registration failed: \(error.localizedDescription, privacy: .public)")
     }
 }
 
