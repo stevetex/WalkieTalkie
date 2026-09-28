@@ -115,7 +115,7 @@ final class TalkController: ObservableObject {
         audio.onFirstCapturedFrame = { [weak self] t in
             DispatchQueue.main.async { self?.conversation?.timeline.mark("micFirstFrame", at: t, once: false) }
         }
-        audio.onRestart = { [weak self] detail in self?.log("Audio: \(detail)") }
+        audio.onRestart = { [weak self] detail in self?.log("Audio: \(detail), route \(Self.routeDescription())") }
         ptt.onEvent = { [unowned self] event in handle(event) }
         NotificationCenter.default.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: .main) { [weak self] note in
             let raw = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt
@@ -525,6 +525,14 @@ final class TalkController: ObservableObject {
 
     // MARK: Audio session
 
+    /// Where audio goes and comes from now, for timelines: "Speaker, in MicrophoneBuiltIn".
+    static func routeDescription() -> String {
+        let session = AVAudioSession.sharedInstance()
+        let outputs = session.currentRoute.outputs.map(\.portType.rawValue).joined(separator: "+")
+        let inputs = session.currentRoute.inputs.map(\.portType.rawValue).joined(separator: "+")
+        return "\(outputs), in \(inputs), \(session.category.rawValue.replacingOccurrences(of: "AVAudioSessionCategory", with: "")) \(session.mode.rawValue.replacingOccurrences(of: "AVAudioSessionMode", with: ""))"
+    }
+
     /// Speaker by default (it's a walkie-talkie, not a phone call), Bluetooth headsets allowed.
     static func configureAudioSession() {
         try? AVAudioSession.sharedInstance().setCategory(.playAndRecord, mode: .default,
@@ -551,13 +559,16 @@ final class TalkController: ObservableObject {
     private func audioSessionActivated() {
         guard conversation != nil, !audioActive else { return }
         // PushToTalk: the category set at launch stands; changing it while active adds delay.
-        conversation?.timeline.mark("audioActivated")
+        conversation?.timeline.mark("audioActivated", detail: Self.routeDescription())
+        // PushToTalk activates audio either to receive or to transmit: the microphone only for
+        // the latter (see AudioPipeline.start). In the app's own session, both, for the whole window.
+        let capture = !usesPushToTalk || talkHeld
         do {
-            try audio.start()
+            try audio.start(capture: capture)
         } catch {
             log("Audio: \(error.localizedDescription)")
         }
-        conversation?.timeline.mark("audioEngineStarted", once: false)
+        conversation?.timeline.mark("audioEngineStarted", detail: capture ? "with microphone" : "speaker only", once: false)
         audioActive = true
         updateTalkReady()
         startBurstIfReady()

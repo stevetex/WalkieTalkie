@@ -29,8 +29,15 @@ public final class AudioPipeline {
         public var errorDescription: String? { "No microphone input available (playback only)" }
     }
 
-    private let engine = AVAudioEngine()
-    private let player = AVAudioPlayerNode()
+    // Replaced (main thread, engine stopped) when a playback-only start follows one that used
+    // the microphone: merely touching `inputNode` gives an engine an input for good.
+    private var engine = AVAudioEngine()
+    private var player = AVAudioPlayerNode()
+    /// Main thread only: this engine has touched its input node.
+    private var engineHasInput = false
+    /// Main thread only: the last start's capture choice, for restarts.
+    private var wantsCapture = true
+    private var configurationObserver: NSObjectProtocol?
     private let queue = DispatchQueue(label: "walkie.audio", qos: .userInteractive)
     private let encoder = VoiceEncoder()
     private let decoder = VoiceDecoder()
@@ -55,9 +62,7 @@ public final class AudioPipeline {
     private static let prebufferFrames = 4
 
     public init() {
-        NotificationCenter.default.addObserver(
-            forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main
-        ) { [weak self] _ in self?.restartAfterConfigurationChange() }
+        observeConfigurationChanges()
         // Build the Opus encoder and decoder at launch rather than on the first message.
         queue.async {
             let silence = [Float](repeating: 0, count: VoiceFrame.samplesPerFrame)
@@ -69,14 +74,47 @@ public final class AudioPipeline {
         }
     }
 
-    public func start() throws {
+    private func observeConfigurationChanges() {
+        if let configurationObserver { NotificationCenter.default.removeObserver(configurationObserver) }
+        configurationObserver = NotificationCenter.default.addObserver(
+            forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main
+        ) { [weak self] _ in self?.restartAfterConfigurationChange() }
+    }
+
+    /// `capture: false` starts the speaker only. For PushToTalk receiving: the system has muted
+    /// the microphone then, and starting it anyway makes the hardware reconfigure a moment later,
+    /// which stops the engine and loses what was queued to play.
+    public func start(capture: Bool = true) throws {
         wantsRunning = true
+        wantsCapture = capture
+        if !capture, engineHasInput, !engine.isRunning {
+            let fresh = AVAudioEngine()
+            let freshPlayer = AVAudioPlayerNode()
+            queue.sync {
+                engine = fresh
+                player = freshPlayer
+            }
+            attached = false
+            engineHasInput = false
+            observeConfigurationChanges()
+        }
         if !attached {
             engine.attach(player)
             engine.connect(player, to: engine.mainMixerNode, format: VoiceFrame.pcmFormat)
             attached = true
         }
+        guard capture else {
+            engine.prepare()
+            try engine.start()
+            player.play()
+            queue.async {
+                self.running = true
+                if !self.prebuffering { self.flushHeld() }
+            }
+            return
+        }
         let input = engine.inputNode
+        engineHasInput = true
         let hardware = input.outputFormat(forBus: 0)
         let hasInput = hardware.channelCount > 0 && hardware.sampleRate > 0
         input.removeTap(onBus: 0)
@@ -134,7 +172,7 @@ public final class AudioPipeline {
         toneTimer?.cancel()
         toneTimer = nil
         #endif
-        engine.inputNode.removeTap(onBus: 0)
+        if engineHasInput { engine.inputNode.removeTap(onBus: 0) }
         player.stop()
         engine.stop()
         queue.async {
@@ -150,8 +188,15 @@ public final class AudioPipeline {
     /// another session takes the audio hardware.
     private func restartAfterConfigurationChange() {
         guard wantsRunning, attached, !engine.isRunning else { return }
+        // The stopped engine discarded what the player had scheduled, and those buffers'
+        // "played" callbacks never come: count them as played, or the speaker never drains.
+        queue.sync {
+            let lost = scheduled
+            scheduled = 0
+            if lost > 0, held.isEmpty { DispatchQueue.main.async { self.onPlaybackDrained?() } }
+        }
         do {
-            try start()
+            try start(capture: wantsCapture)
             onRestart?("engine restarted after configuration change")
         } catch {
             onRestart?("engine restart failed: \(error.localizedDescription)")
