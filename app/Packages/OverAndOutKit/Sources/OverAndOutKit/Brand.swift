@@ -26,5 +26,24 @@ public extension View {
             .tint(Brand.accent)
             .scrollContentBackground(.hidden)
             .background(Brand.background.ignoresSafeArea())
+            .modifier(SystemToolbarScheme())
+    }
+}
+
+/// The navigation bar (and status bar) follow the system's light or dark appearance, so a
+/// screen pushed from an indigo one (whose bar is dark) doesn't keep light text on ivory.
+private struct SystemToolbarScheme: ViewModifier {
+    @Environment(\.colorScheme) private var colorScheme
+
+    func body(content: Content) -> some View {
+        #if os(iOS)
+        // The scheme applies only with a visible bar background.
+        content
+            .toolbarColorScheme(colorScheme, for: .navigationBar)
+            .toolbarBackground(Brand.background, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
+        #else
+        content
+        #endif
     }
 }

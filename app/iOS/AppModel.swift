@@ -27,8 +27,16 @@ final class AppModel: ObservableObject {
     @Published private(set) var blocks: [BlockedUser] = []
     /// Your own profile photo's version, from /v1/me; nil without one.
     @Published private(set) var photoVersion: Double?
+    /// Your built-in mascot picture, when you chose one instead of a photo.
+    @Published private(set) var avatar: String?
     /// Which device rings, as chosen; nil = the default (see `ringsOn`).
     @Published private(set) var ringOn: Platform?
+    /// The kinds of device registered for rings on this account, from /v1/me.
+    @Published private(set) var platforms: [Platform] = []
+    /// A watch and this iPhone can both ring: ask once which one (design decision 2026-09-28).
+    @Published var askingRingOn = false
+    /// When an invite was last made, so the friends list checks for the new friend meanwhile.
+    @Published private(set) var lastInviteAt: Date?
     @Published private(set) var updatingPhoto = false
     @Published var pendingInvite: PendingInvite?
     @Published var errorMessage: String?
@@ -128,7 +136,11 @@ final class AppModel: ObservableObject {
         registered = nil
         session = nil
         photoVersion = nil
+        avatar = nil
         ringOn = nil
+        platforms = []
+        askingRingOn = false
+        lastInviteAt = nil
         friends = []
         friendsLoaded = false
         blocks = []
@@ -148,21 +160,42 @@ final class AppModel: ObservableObject {
             session = client.session
             if user.name != session?.name { session?.name = user.name }
             photoVersion = user.photoVersion
+            avatar = user.avatar
             ringOn = user.ringOn
+            platforms = user.platforms ?? []
             friends = loadedFriends
             blocks = loadedBlocks
             friendsLoaded = true
+            if platforms.contains(.watch), platforms.contains(.iphone), !askedRingOn { askingRingOn = true }
         } catch {
             if session != nil { errorMessage = describe(error) }
         }
     }
 
+    /// Only the friends list, for the check after an invite.
+    func refreshFriends() async {
+        guard session != nil, let loaded = try? await client.friends() else { return }
+        if loaded != friends { friends = loaded }
+    }
+
     // MARK: Walkie-talkie on the iPhone
 
-    /// The device that rings for this account: the choice, or the watch if there is one.
-    var ringsOn: Platform { ringOn ?? (watch.isWatchAppInstalled ? .watch : .iphone) }
+    /// The device that rings for this account, as the server decides it: the choice, or the
+    /// watch if one is registered, else this iPhone.
+    var ringsOn: Platform { ringOn ?? (platforms.contains(.watch) ? .watch : .iphone) }
+
+    /// Ring Me On is a choice once the account has both kinds of device (or made a choice).
+    var canChooseRingOn: Bool { ringOn != nil || platforms.count > 1 }
+
+    /// Whether this iPhone has asked (or the person chose in Settings) since a watch appeared.
+    private var askedRingOn: Bool {
+        get { session.map { UserDefaults.standard.bool(forKey: "askedRingOn-\($0.userId)") } ?? true }
+        set { if let session { UserDefaults.standard.set(newValue, forKey: "askedRingOn-\(session.userId)") } }
+    }
 
     func setRingOn(_ platform: Platform) async {
+        askedRingOn = true
+        askingRingOn = false
         let previous = ringOn
         ringOn = platform
         do {
@@ -229,6 +262,7 @@ final class AppModel: ObservableObject {
             let version = try await client.setPhoto(jpeg: jpeg)
             await PhotoCache.shared.store(jpeg, userId: userId, version: version)
             photoVersion = version
+            avatar = nil
         } catch {
             errorMessage = describe(error)
         }
@@ -245,12 +279,42 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// A built-in mascot as your picture, replacing any photo.
+    func setAvatar(_ mascot: Mascot) async {
+        updatingPhoto = true
+        defer { updatingPhoto = false }
+        do {
+            let user = try await client.setAvatar(mascot)
+            avatar = user.avatar
+            photoVersion = user.photoVersion
+        } catch {
+            errorMessage = describe(error)
+        }
+    }
+
     func createInvite() async -> InviteLink? {
         do {
-            return try await client.createInvite()
+            let link = try await client.createInvite()
+            lastInviteAt = Date()
+            return link
         } catch {
             errorMessage = describe(error)
             return nil
+        }
+    }
+
+    /// Stars or unstars a friend, showing it at once.
+    func setFavorite(_ friend: Friend, _ favorite: Bool) async {
+        func apply(_ value: Bool) {
+            guard let i = friends.firstIndex(where: { $0.id == friend.id }) else { return }
+            friends[i].favorite = value ? true : nil
+        }
+        apply(favorite)
+        do {
+            try await client.setFavorite(friend.id, favorite)
+        } catch {
+            apply(!favorite)
+            errorMessage = describe(error)
         }
     }
 

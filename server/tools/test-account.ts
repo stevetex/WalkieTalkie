@@ -20,6 +20,10 @@
 //   node tools/test-account.ts friends
 //       The bot's friends.
 //
+//   node tools/test-account.ts photo [file.jpg]
+//       Sets the bot's profile photo: a square JPEG under 100 KB, by default
+//       tools/test-bot-photo.jpg (the robot face emoji on indigo).
+//
 // OAO_API is the account API (default https://overandout.app); GCP_PROJECT the Google Cloud
 // project (default walkie-talkie-relay).
 
@@ -119,8 +123,19 @@ if (import.meta.main) {
     const { friends } = await api(session.api, session.token, "GET", "/v1/friends");
     for (const f of friends) console.log(`${f.id}  ${f.name}`);
     if (!friends.length) console.log("No friends yet. Send the bot an invite from the iPhone app, then run: accept <link>");
+  } else if (command === "photo") {
+    const session = loadBotSession();
+    const file = arg ?? new URL("test-bot-photo.jpg", import.meta.url).pathname;
+    const res = await fetch(new URL("/v1/me/photo", session.api), {
+      method: "PUT",
+      headers: { "content-type": "image/jpeg", authorization: `Bearer ${session.token}` },
+      body: readFileSync(file),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(`PUT /v1/me/photo: ${res.status} ${json.error ?? ""}`);
+    console.log(`${session.name}'s photo is ${file} (version ${json.photoVersion}).`);
   } else {
-    console.error("usage: node tools/test-account.ts create | accept <invite link or code> | invite | friends");
+    console.error("usage: node tools/test-account.ts create | accept <invite link or code> | invite | friends | photo [file.jpg]");
     process.exit(2);
   }
 }

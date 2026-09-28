@@ -2,32 +2,111 @@ import OverAndOutKit
 import PhotosUI
 import SwiftUI
 
-/// Your profile photo, with Add or Change (the photo picker) and Remove. Friends see it in
-/// their friend lists and on their watch (design decision 2026-09-27).
+/// Your picture, with a button that opens the chooser: one of the built-in mascots or a photo
+/// of your own (design decisions 2026-09-27 and 2026-09-28). Friends see it in their friend
+/// lists, on their Talk screens and on their watch.
 struct ProfilePhotoPicker: View {
     @EnvironmentObject private var model: AppModel
     var size: CGFloat = 64
-    @State private var selection: PhotosPickerItem?
+    @State private var choosing = false
 
     var body: some View {
         HStack(spacing: 16) {
-            ZStack {
-                Avatar(name: model.displayName, userId: model.session?.userId ?? "",
-                       photoVersion: model.photoVersion, size: size, client: model.client)
-                if model.updatingPhoto { ProgressView() }
-            }
-            VStack(alignment: .leading, spacing: 8) {
-                // No photo-library permission is needed: the picker runs outside the app.
-                PhotosPicker(selection: $selection, matching: .images) {
-                    Text(model.photoVersion == nil ? "Add Photo" : "Change Photo")
-                }
-                if model.photoVersion != nil {
-                    Button("Remove Photo", role: .destructive) { Task { await model.removePhoto() } }
-                        .foregroundStyle(.red)
+            Button { choosing = true } label: {
+                ZStack {
+                    Avatar(name: model.displayName, userId: model.session?.userId ?? "",
+                           photoVersion: model.photoVersion, avatar: model.avatar, size: size, client: model.client)
+                    if model.updatingPhoto { ProgressView().tint(Brand.ivory) }
                 }
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(.plain)
+            .accessibilityLabel("Your picture")
+            Button("Change Picture") { choosing = true }
+                .buttonStyle(.bordered)
+                .tint(Brand.accent)
+                .disabled(model.updatingPhoto)
+        }
+        .sheet(isPresented: $choosing) {
+            PictureChooser()
+                .environmentObject(model)
+        }
+    }
+
+    /// Just the button, under a larger picture (onboarding).
+    struct ChangeButton: View {
+        @EnvironmentObject private var model: AppModel
+        @State private var choosing = false
+
+        var body: some View {
+            Button("Choose a Picture") { choosing = true }
+                .buttonStyle(.bordered)
+                .tint(Brand.accent)
+                .font(.title3)
+                .disabled(model.updatingPhoto)
+                .sheet(isPresented: $choosing) {
+                    PictureChooser()
+                        .environmentObject(model)
+                }
+        }
+    }
+}
+
+/// A grid of the mascots, and your own photo from the photo picker.
+struct PictureChooser: View {
+    @EnvironmentObject private var model: AppModel
+    @Environment(\.dismiss) private var dismiss
+    @State private var selection: PhotosPickerItem?
+
+    private let columns = [GridItem(.adaptive(minimum: 84), spacing: 16)]
+
+    /// The mascot shown for you now: your choice, or the default without a photo.
+    private var current: Mascot? {
+        model.photoVersion != nil ? nil : Mascot(id: model.avatar) ?? .default
+    }
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 24) {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Your photo").font(.headline)
+                        HStack(spacing: 12) {
+                            // No photo-library permission is needed: the picker runs outside the app.
+                            PhotosPicker(selection: $selection, matching: .images) {
+                                Label(model.photoVersion == nil ? "Choose a Photo" : "Choose Another Photo", systemImage: "photo")
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .tint(Brand.orange)
+                            .foregroundStyle(Brand.ink)
+                            if model.photoVersion != nil {
+                                Button("Remove Photo", role: .destructive) { Task { await model.removePhoto() } }
+                                    .buttonStyle(.bordered)
+                                    .tint(.red)
+                            }
+                        }
+                    }
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Or a mascot").font(.headline)
+                        LazyVGrid(columns: columns, spacing: 16) {
+                            ForEach(Mascot.allCases) { mascot in
+                                Button { choose(mascot) } label: { cell(mascot) }
+                                    .buttonStyle(.plain)
+                                    .accessibilityLabel(mascot.name)
+                                    .accessibilityAddTraits(mascot == current ? .isSelected : [])
+                            }
+                        }
+                    }
+                }
+                .padding(20)
+            }
+            .brandScreen()
+            .navigationTitle("Your Picture")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
+            }
             .disabled(model.updatingPhoto)
+            .overlay { if model.updatingPhoto { ProgressView().controlSize(.large) } }
         }
         .onChange(of: selection) { item in
             guard let item else { return }
@@ -38,7 +117,28 @@ struct ProfilePhotoPicker: View {
                     return
                 }
                 await model.setPhoto(image)
+                if model.photoVersion != nil { dismiss() }
             }
+        }
+    }
+
+    /// The picture alone; its name is only for VoiceOver.
+    private func cell(_ mascot: Mascot) -> some View {
+        Image(mascot.imageName)
+            .resizable()
+            .scaledToFill()
+            .frame(width: 76, height: 76)
+            .clipShape(Circle())
+            .overlay {
+                Circle().stroke(mascot == current ? Brand.orange : .clear, lineWidth: 4)
+            }
+            .frame(maxWidth: .infinity)
+    }
+
+    private func choose(_ mascot: Mascot) {
+        Task {
+            await model.setAvatar(mascot)
+            dismiss()
         }
     }
 }

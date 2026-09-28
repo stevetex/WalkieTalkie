@@ -1,8 +1,11 @@
 // Accounts, friends, invites, blocks, reports and devices (design decision 2026-09-27).
 //
 //   users/{uid}                     name, appleSub, createdAt, photoVersion (when there's a photo),
+//                                   avatar (a built-in mascot's ID, instead of a photo),
 //                                   ringOn ("watch" or "iphone"; absent = the watch if there is one)
-//   users/{uid}/friends/{friendId}  since. Written on both sides in one commit
+//   users/{uid}/friends/{friendId}  since, favorite (the user's star), lastMessageAt (when the
+//                                   friend last talked to the user; written by the relay).
+//                                   The friendship is written on both sides in one commit
 //   users/{uid}/blocks/{otherId}    since. Blocking also deletes the friendship both ways
 //   users/{uid}/devices/{deviceId}  platform, pushToken, pushType ("pushtotalk" for an iPhone in
 //                                   its PushToTalk channel), apnsEnvironment, updatedAt
@@ -42,6 +45,8 @@ export interface User {
   createdAt: number;
   // When the profile photo last changed (ms); absent without one.
   photoVersion?: number;
+  // A built-in mascot picture (the apps bundle the art), used instead of a photo.
+  avatar?: string;
   // Which device rings (design decision 2026-09-27); absent = the watch if there is one.
   ringOn?: Platform;
 }
@@ -51,6 +56,11 @@ export interface Friend {
   name: string;
   since: number;
   photoVersion?: number;
+  avatar?: string;
+  // The user starred this friend (their Friends list shows favorites first).
+  favorite?: boolean;
+  // When this friend last talked to the user (ms).
+  lastMessageAt?: number;
 }
 
 export interface BlockedUser {
@@ -175,6 +185,27 @@ export class Accounts {
     return (await this.user(id))!;
   }
 
+  // A built-in mascot as the profile picture, which replaces any photo; null removes it.
+  // IDs aren't listed here, so new mascots need no deploy; apps show unknown ones as the default.
+  async setAvatar(id: string, avatar: string | null): Promise<User> {
+    if (avatar !== null && !isAvatar(avatar)) throw new AccountError(400, "bad-avatar");
+    try {
+      await this.docs.commit([
+        {
+          set: `users/${requireUserId(id)}`,
+          data: avatar ? { avatar } : {},
+          fields: avatar ? ["avatar", "photoVersion"] : ["avatar"],
+          exists: true,
+        },
+        ...(avatar ? [{ delete: `photos/${id}` }] : []),
+      ]);
+    } catch (err) {
+      if (err instanceof PreconditionFailed) throw new AccountError(404, "no-account");
+      throw err;
+    }
+    return (await this.user(id))!;
+  }
+
   // Sessions: one per device, keyed by the device, so signing in again (even several times at
   // once) replaces its session. The newest sid wins; older tokens for the device stop refreshing.
   async createSession(userId: string, deviceId: string, platform: Platform): Promise<string> {
@@ -243,12 +274,29 @@ export class Accounts {
     deviceId: string,
     device: { platform: Platform; pushToken: string; pushType?: PushType; apnsEnvironment: ApnsEnvironment },
   ): Promise<void> {
+    requireUserId(userId);
+    checkId(deviceId, "device");
+    const [[user], devices] = await Promise.all([this.docs.getAll([`users/${userId}`]), this.docs.list(`users/${userId}/devices`)]);
+    const others = devices.filter((d) => d.id !== deviceId).map((d) => toDevice(d.id, d.data).platform);
+    // The account's first device of this kind, next to one of the other kind, with no choice
+    // made: keep ringing the device that rang until now, and the iPhone asks which one to use
+    // (design decision 2026-09-28). Without this a new watch would silently take the rings.
+    const pin = user && !isPlatform(user.ringOn) && !others.includes(device.platform) && others.length > 0
+      ? others[0]
+      : undefined;
     await this.docs.commit([
       {
-        set: `users/${requireUserId(userId)}/devices/${checkId(deviceId, "device")}`,
+        set: `users/${userId}/devices/${deviceId}`,
         data: { ...device, pushType: device.pushType ?? "alert", updatedAt: this.opts.now() },
       },
+      ...(pin ? [{ set: `users/${userId}`, data: { ringOn: pin }, fields: ["ringOn"], exists: true }] : []),
     ]);
+  }
+
+  // The kinds of device registered for rings, for the iPhone's Ring Me On.
+  async platforms(userId: string): Promise<Platform[]> {
+    const platforms = new Set((await this.devices(userId)).map((d) => d.platform));
+    return PLATFORMS.filter((p) => platforms.has(p));
   }
 
   async devices(userId: string): Promise<AccountDevice[]> {
@@ -264,9 +312,38 @@ export class Accounts {
         if (!user) return [];
         const friend: Friend = { id: r.id, name: String(user.name), since: millis(r.data.since) };
         if (typeof user.photoVersion === "number") friend.photoVersion = user.photoVersion;
+        if (isAvatar(user.avatar)) friend.avatar = user.avatar;
+        if (r.data.favorite === true) friend.favorite = true;
+        if (r.data.lastMessageAt !== undefined) friend.lastMessageAt = millis(r.data.lastMessageAt);
         return [friend];
       })
       .sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  // Starring is one-sided: it's the user's entry for the friend.
+  async setFavorite(userId: string, friendId: string, favorite: boolean): Promise<void> {
+    try {
+      await this.docs.commit([{
+        set: `users/${requireUserId(userId)}/friends/${requireUserId(friendId)}`,
+        data: favorite ? { favorite: true } : {},
+        fields: ["favorite"],
+        exists: true,
+      }]);
+    } catch (err) {
+      if (err instanceof PreconditionFailed) throw new AccountError(404, "not-friends");
+      throw err;
+    }
+  }
+
+  // The relay, when `from` talks to `to`: shown as "Last messaged you" on `to`'s friend page.
+  // Nothing happens if they aren't friends (any more).
+  async recordMessage(from: string, to: string, at: number): Promise<void> {
+    if (!isUserId(from) || !isUserId(to)) return;
+    try {
+      await this.docs.commit([{ set: `users/${to}/friends/${from}`, data: { lastMessageAt: new Date(at) }, fields: ["lastMessageAt"], exists: true }]);
+    } catch (err) {
+      if (!(err instanceof PreconditionFailed)) throw err;
+    }
   }
 
   async removeFriend(userId: string, friendId: string): Promise<void> {
@@ -287,7 +364,7 @@ export class Accounts {
     const version = this.opts.now();
     try {
       await this.docs.commit([
-        { set: `users/${userId}`, data: { photoVersion: version }, fields: ["photoVersion"], exists: true },
+        { set: `users/${userId}`, data: { photoVersion: version }, fields: ["photoVersion", "avatar"], exists: true },
         { set: `photos/${userId}`, data: { jpeg: Buffer.from(jpeg), updatedAt: new Date(version) } },
       ]);
     } catch (err) {
@@ -489,6 +566,11 @@ export function isPushType(value: unknown): value is PushType {
   return (PUSH_TYPES as readonly unknown[]).includes(value);
 }
 
+// A mascot ID such as "honey" or "bow-lashes-cocoa".
+export function isAvatar(value: unknown): value is string {
+  return typeof value === "string" && /^[a-z0-9][a-z0-9-]{0,31}$/.test(value);
+}
+
 export function isPlatform(value: unknown): value is Platform {
   return (PLATFORMS as readonly unknown[]).includes(value);
 }
@@ -528,6 +610,7 @@ export function cleanName(name: unknown): string | undefined {
 function toUser(id: string, data: FirestoreData): User {
   const user: User = { id, name: String(data.name), createdAt: millis(data.createdAt) };
   if (typeof data.photoVersion === "number") user.photoVersion = data.photoVersion;
+  if (isAvatar(data.avatar)) user.avatar = data.avatar;
   if (isPlatform(data.ringOn)) user.ringOn = data.ringOn;
   return user;
 }

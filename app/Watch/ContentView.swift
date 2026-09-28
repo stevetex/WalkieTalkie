@@ -53,20 +53,24 @@ struct ContentView: View {
                     pressed ? controller.talkPressed() : controller.talkReleased()
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .padding(.top, 18)
-                // Clear of the name and End at top left; the orange side button has room.
-                .offset(x: 14)
+                // The antenna ball clear of Settings above it.
+                .padding(.top, 30)
+                // Clear of the name and End (or the caller) at top left; the orange side
+                // button has room.
+                .offset(x: ringing ? 22 : 14)
 
-                if controller.incomingRing != nil {
+                if ringing {
                     // Below the mascot, which shrinks to make room, so nothing covers the mouth.
+                    // Decline on the left and Answer on the right, as on the iPhone.
                     HStack(spacing: 6) {
+                        Button("Decline") { controller.declineIncomingRing() }
+                            .buttonStyle(.bordered)
+                            .tint(.gray)
                         Button("Answer") { controller.answerIncomingRing() }
-                            .tint(.green)
-                        Button("Decline", role: .destructive) { controller.declineIncomingRing() }
-                            .tint(.red)
+                            .buttonStyle(.borderedProminent)
+                            .tint(Brand.orange)
+                            .foregroundStyle(Brand.ink)
                     }
-                    .buttonStyle(.borderedProminent)
-                    .foregroundStyle(.white)
                     .padding(.horizontal, 8)
                     .padding(.bottom, 8)
                 } else {
@@ -91,12 +95,17 @@ struct ContentView: View {
                     SettingsView(controller: controller, account: account)
                 } label: {
                     Image(systemName: "gearshape")
+                        .foregroundStyle(Brand.ivory)
                 }
+                // Quiet, so it doesn't compete with the mascot's orange.
+                .tint(Brand.surface)
                 .accessibilityLabel("Settings")
             }
         }
         .task { controller.requestMicrophone() }
     }
+
+    private var ringing: Bool { controller.incomingRing != nil }
 
     private var idleStatus: String {
         account.selectedFriend != nil ? "Hold the mouth to talk" : "Choose a friend"
@@ -110,20 +119,29 @@ struct ContentView: View {
                 NavigationLink {
                     FriendPicker(account: account)
                 } label: {
-                    HStack(spacing: 2) {
-                        Text(account.selectedFriend?.name ?? "Choose")
-                        Image(systemName: "chevron.right").font(.caption2)
+                    VStack(alignment: .leading, spacing: 4) {
+                        if let friend = account.selectedFriend {
+                            Avatar(friend: friend, size: 28, client: account.client)
+                        }
+                        HStack(spacing: 2) {
+                            Text(account.selectedFriend?.name ?? "Choose")
+                            Image(systemName: "chevron.right").font(.caption2)
+                        }
                     }
                 }
                 .buttonStyle(.plain)
             } else if let ring = controller.incomingRing {
                 if let caller = account.friends.first(where: { $0.id == ring.from }) {
-                    Avatar(name: caller.name, userId: caller.id, photoVersion: caller.photoVersion, size: 32, client: account.client)
+                    Avatar(friend: caller, size: 32, client: account.client)
                 }
                 Text(ring.fromName)
+                    .minimumScaleFactor(0.7)
                 Text("is calling")
                     .font(.caption2)
                     .foregroundStyle(Brand.silver)
+            } else if let friend = currentFriend {
+                Avatar(friend: friend, size: 28, client: account.client)
+                Text(friend.name)
             } else if !talkTitle.isEmpty {
                 Text(talkTitle)
             }
@@ -141,124 +159,19 @@ struct ContentView: View {
         .font(.footnote.weight(.semibold))
         .lineLimit(1)
         .foregroundStyle(Brand.ivory)
-        .frame(maxWidth: 110, alignment: .leading)
+        // Narrower while ringing, when the mascot moves right to make room.
+        .frame(maxWidth: ringing ? 64 : 110, alignment: .leading)
+    }
+
+    /// The friend in the conversation, or the one Talk rings.
+    private var currentFriend: Friend? {
+        if let id = controller.peerId { return account.friends.first { $0.id == id } }
+        return account.selectedFriend
     }
 
     private var settingsPlacement: ToolbarItemPlacement {
         if #available(watchOS 10.0, *) { return .topBarTrailing }
         return .automatic
-    }
-}
-
-/// Where the mouth and antenna ball sit in OverAndOutMascot, as fractions of the image's
-/// width and height. Measured on art/masters/mascot-color.png cropped to x 262–1024,
-/// y 36–1220 (the asset), where the black speaker is centred at (317, 853) with radius 182.
-private enum MascotGeometry {
-    static let aspect: CGFloat = 762.0 / 1184.0
-    static let mouth = CGPoint(x: 317.0 / 762, y: 853.0 / 1184)
-    static let mouthRadius: CGFloat = 182.0 / 762 // the black speaker, of the width
-    static let ringRadius: CGFloat = 222.0 / 762 // the silver ring around it: the touch area
-    static let ball = CGPoint(x: 540.0 / 762, y: 62.0 / 1184)
-    static let ballRadius: CGFloat = 26.0 / 762 // the ball's light centre
-}
-
-/// The mascot, whose mouth is hold-to-talk. A zero-distance drag reports both press and
-/// release; the main screen has no scroll view that could steal the gesture mid-press.
-struct MascotTalkButton: View {
-    enum MouthState { case idle, disabled, waiting, talking, listening }
-
-    let state: MouthState
-    let ringing: Bool
-    let friendName: String
-    let onPressChange: (Bool) -> Void
-
-    @State private var pressed = false
-
-    var body: some View {
-        TimelineView(.animation(minimumInterval: 1 / 30, paused: !animating)) { context in
-            let t = context.date.timeIntervalSinceReferenceDate
-            Image("OverAndOutMascot")
-                .resizable()
-                .aspectRatio(MascotGeometry.aspect, contentMode: .fit)
-                .accessibilityHidden(true)
-                .overlay { GeometryReader { geometry in overlays(geometry.size, t: t) } }
-                .scaleEffect(pressed ? 0.97 : 1)
-                .rotationEffect(.degrees(ringing ? sin(t * 2 * .pi * 5) * 4 : 0), anchor: .bottom)
-                .animation(.easeOut(duration: 0.1), value: pressed)
-        }
-    }
-
-    private var animating: Bool { ringing || state == .waiting || state == .listening }
-
-    @ViewBuilder
-    private func overlays(_ size: CGSize, t: TimeInterval) -> some View {
-        let w = size.width
-        let mouth = CGPoint(x: MascotGeometry.mouth.x * w, y: MascotGeometry.mouth.y * size.height)
-        let r = MascotGeometry.mouthRadius * w
-        let ring = MascotGeometry.ringRadius * w
-        let pulse = 0.5 + 0.5 * sin(t * 2 * .pi * 1.5)
-
-        if state == .talking {
-            Circle()
-                .fill(Brand.orange)
-                .frame(width: MascotGeometry.ballRadius * 2 * w, height: MascotGeometry.ballRadius * 2 * w)
-                .position(x: MascotGeometry.ball.x * w, y: MascotGeometry.ball.y * size.height)
-            Circle()
-                .fill(Brand.orange)
-                .frame(width: r * 2, height: r * 2)
-                .position(mouth)
-        }
-        if state == .listening || state == .waiting {
-            Circle()
-                .stroke(state == .listening ? Color.green : Brand.silver, lineWidth: r * 0.16)
-                .opacity(state == .waiting ? 0.3 + 0.7 * pulse : 1)
-                .frame(width: (r + ring), height: (r + ring))
-                .position(mouth)
-        }
-        mouthSymbol(size: r * 0.95, t: t)
-            .position(mouth)
-
-        // The touch area: the mouth and its ring, nothing else on the mascot.
-        Color.clear
-            .frame(width: ring * 2, height: ring * 2)
-            .contentShape(Circle())
-            .position(mouth)
-            .gesture(
-                DragGesture(minimumDistance: 0)
-                    .onChanged { _ in
-                        guard state != .disabled, !ringing, !pressed else { return }
-                        pressed = true
-                        onPressChange(true)
-                    }
-                    .onEnded { _ in
-                        guard pressed else { return }
-                        pressed = false
-                        onPressChange(false)
-                    }
-            )
-            .accessibilityElement()
-            .accessibilityLabel("Hold to talk to \(friendName)")
-            .accessibilityAddTraits(.isButton)
-    }
-
-    private func mouthSymbol(size: CGFloat, t: TimeInterval) -> some View {
-        let name: String
-        let color: Color
-        var scale: CGFloat = 1
-        switch state {
-        case .idle, .disabled: name = "mic.fill"; color = Brand.ivory
-        case .waiting: name = "hourglass"; color = Brand.ivory
-        case .talking: name = "waveform"; color = Brand.ink
-        case .listening:
-            name = "waveform"; color = Brand.ivory
-            scale = 0.85 + 0.15 * CGFloat(abs(sin(t * 2 * .pi * 2)))
-        }
-        return Image(systemName: name)
-            .font(.system(size: size, weight: .semibold))
-            .foregroundStyle(color)
-            .opacity(state == .disabled ? 0.3 : 1)
-            .scaleEffect(scale)
-            .allowsHitTesting(false)
     }
 }
 
@@ -322,7 +235,7 @@ struct FriendPicker: View {
                 dismiss()
             } label: {
                 HStack {
-                    Avatar(name: friend.name, userId: friend.id, photoVersion: friend.photoVersion, size: 28, client: account.client)
+                    Avatar(friend: friend, size: 28, client: account.client)
                     Text(friend.name)
                     Spacer()
                     if friend.id == account.selectedFriend?.id {

@@ -224,6 +224,63 @@ export function accountsSuite(label: string, makeDocs: () => Docs, skip: string 
     assert.equal(await code(accounts.photo(alice.id, alice.id)), "no-photo");
   });
 
+  test(`${label}: a mascot replaces the photo, and a new photo replaces the mascot`, { skip }, async () => {
+    const { accounts, alice, bob } = await setup();
+    await befriend(accounts, alice.id, bob.id);
+    const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 1, 0xff, 0xd9]);
+    await accounts.setPhoto(alice.id, jpeg);
+
+    const withMascot = await accounts.setAvatar(alice.id, "bow-lashes-honey");
+    assert.equal(withMascot.avatar, "bow-lashes-honey");
+    assert.equal(withMascot.photoVersion, undefined);
+    assert.equal(await code(accounts.photo(bob.id, alice.id)), "no-photo");
+    assert.deepEqual((await accounts.friends(bob.id)).map((f) => [f.avatar, f.photoVersion]), [["bow-lashes-honey", undefined]]);
+
+    const version = await accounts.setPhoto(alice.id, jpeg);
+    assert.deepEqual((await accounts.friends(bob.id)).map((f) => [f.avatar, f.photoVersion]), [[undefined, version]]);
+
+    await accounts.setAvatar(alice.id, "honey");
+    assert.equal((await accounts.setAvatar(alice.id, null)).avatar, undefined);
+    assert.equal(await code(accounts.setAvatar(alice.id, "../photos")), "bad-avatar");
+    assert.equal(await code(accounts.setAvatar(alice.id, "Honey")), "bad-avatar");
+  });
+
+  test(`${label}: favorites and the last message are one-sided`, { skip }, async () => {
+    const { accounts, alice, bob } = await setup();
+    await accounts.recordMessage(bob.id, alice.id, 1_000); // not friends yet: nothing
+    await befriend(accounts, alice.id, bob.id);
+    await accounts.recordMessage(bob.id, alice.id, 2_000);
+    await accounts.setFavorite(alice.id, bob.id, true);
+    assert.deepEqual((await accounts.friends(alice.id)).map((f) => [f.favorite, f.lastMessageAt]), [[true, 2_000]]);
+    assert.deepEqual((await accounts.friends(bob.id)).map((f) => [f.favorite, f.lastMessageAt]), [[undefined, undefined]]);
+    await accounts.setFavorite(alice.id, bob.id, false);
+    assert.equal((await accounts.friends(alice.id))[0].favorite, undefined);
+    await accounts.removeFriend(alice.id, bob.id);
+    assert.equal(await code(accounts.setFavorite(alice.id, bob.id, true)), "not-friends");
+    await accounts.recordMessage(bob.id, alice.id, 3_000);
+    assert.deepEqual(await accounts.friends(alice.id), []);
+  });
+
+  test(`${label}: a second kind of device keeps rings where they were until the user chooses`, { skip }, async () => {
+    const { accounts, alice } = await setup();
+    // One device, or more of one kind: nothing to choose.
+    await accounts.registerDevice(alice.id, "phone-1", { platform: "iphone", pushToken: "app:", apnsEnvironment: "sandbox" });
+    await accounts.registerDevice(alice.id, "phone-1", { platform: "iphone", pushToken: "ptt", pushType: "pushtotalk", apnsEnvironment: "sandbox" });
+    assert.equal((await accounts.user(alice.id))?.ringOn, undefined);
+    assert.deepEqual(await accounts.platforms(alice.id), ["iphone"]);
+
+    // A watch arrives: the iPhone keeps ringing (unset would now mean the watch).
+    await accounts.registerDevice(alice.id, "watch-1", { platform: "watch", pushToken: "t", apnsEnvironment: "sandbox" });
+    assert.equal((await accounts.user(alice.id))?.ringOn, "iphone");
+    assert.deepEqual(await accounts.platforms(alice.id), ["watch", "iphone"]);
+
+    // A choice the user made stays, whatever registers later.
+    await accounts.setRingOn(alice.id, "watch");
+    await accounts.registerDevice(alice.id, "watch-2", { platform: "watch", pushToken: "t2", apnsEnvironment: "sandbox" });
+    await accounts.registerDevice(alice.id, "phone-2", { platform: "iphone", pushToken: "app:", apnsEnvironment: "sandbox" });
+    assert.equal((await accounts.user(alice.id))?.ringOn, "watch");
+  });
+
   test(`${label}: deleting an account removes it everywhere but reports`, { skip }, async () => {
     const { docs, accounts, alice, bob } = await setup();
     await befriend(accounts, alice.id, bob.id);

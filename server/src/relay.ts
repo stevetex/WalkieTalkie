@@ -60,6 +60,8 @@ interface Conversation {
   // Set while a ring is waiting to be answered (or, once answered, to be joined).
   ringTimer: NodeJS.Timeout | null;
   ringFrom: string | null;
+  // When each member's talking was last recorded as "last messaged you" (recordMessage).
+  messageRecordedAt: Map<string, number>;
   // Prototype: the second, prefetch push for the current APNs ring (see prefetchAlert).
   prefetch: {
     to: string;
@@ -82,7 +84,11 @@ export interface RelayOptions {
   // signs in).
   devices: DeviceStore;
   // Accounts: the friend check and the account's devices, once per ring.
-  accounts?: { ringLookup(from: string, to: string): Promise<RingLookup> };
+  accounts?: {
+    ringLookup(from: string, to: string): Promise<RingLookup>;
+    // "Last messaged you" on the recipient's friend page; off the audio path.
+    recordMessage?(from: string, to: string, at: number): Promise<void>;
+  };
   pusher: Pusher;
   metrics: MetricsStore;
   now?: () => number;
@@ -263,6 +269,7 @@ export class Relay {
     this.endActiveBurst(from);
 
     this.enter(conversation, peer);
+    if (peer.account) this.recordMessage(conversation, from, to, now);
     const burst: Burst = {
       id: burstId,
       from,
@@ -291,6 +298,18 @@ export class Relay {
     } else {
       this.grantFloor(peer, conversation, burstId, false);
     }
+  }
+
+  // At most once a minute per sender and conversation, and never waited for.
+  private recordMessage(conversation: Conversation, from: string, to: string, now: number): void {
+    const last = conversation.messageRecordedAt.get(from);
+    if (last !== undefined && now - last < 60_000) return;
+    const record = this.opts.accounts.recordMessage;
+    if (!record) return;
+    conversation.messageRecordedAt.set(from, now);
+    record.call(this.opts.accounts, from, to, now).catch((err: Error) => {
+      console.error(`[relay] recording a message from ${from} to ${to} failed: ${err.message}`);
+    });
   }
 
   private grantFloor(peer: Peer, conversation: Conversation, burstId: string, pushed: boolean): void {
@@ -583,6 +602,7 @@ export class Relay {
         lastRingAt: null,
         ringTimer: null,
         ringFrom: null,
+        messageRecordedAt: new Map(),
         prefetch: null,
       };
       this.byPair.set(key, conversation);

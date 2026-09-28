@@ -1,43 +1,32 @@
 import OverAndOutKit
 import SwiftUI
 
-/// The account, whom Talk rings, and diagnostics.
+/// The account and the version; diagnostics in debug builds. Whom Talk rings is chosen on
+/// the main screen (the name at top left).
 struct SettingsView: View {
     @ObservedObject var controller: ConversationController
     @ObservedObject var account: WatchAccount
 
+    private var version: String {
+        let info = Bundle.main.infoDictionary ?? [:]
+        return "\(info["CFBundleShortVersionString"] as? String ?? "?") (\(info["CFBundleVersion"] as? String ?? "?"))"
+    }
+
     var body: some View {
         List {
             Group {
-                Section("Talk to") {
-                    if account.friends.isEmpty {
-                        Text("Invite a friend from Over&Out on your iPhone.")
-                            .font(.footnote)
-                            .foregroundStyle(Brand.secondary)
-                    }
-                    ForEach(account.friends) { friend in
-                        Button {
-                            account.selectedFriendId = friend.id
-                        } label: {
-                            HStack {
-                                Text(friend.name)
-                                Spacer()
-                                if friend.id == account.selectedFriend?.id {
-                                    Image(systemName: "checkmark").foregroundStyle(Brand.accent)
-                                }
-                            }
-                        }
-                    }
-                }
-                Section("This watch") {
+                Section {
                     LabeledRow(label: "Signed in as", value: account.session?.name ?? "Not signed in")
+                    LabeledRow(label: "Version", value: version)
+                } footer: {
+                    Text("Change your name and picture in Over&Out on your iPhone.")
+                }
+                #if DEBUG
+                Section("Testing") {
                     LabeledRow(label: "Server", value: controller.settings.serverHost.isEmpty ? "Not set" : controller.settings.serverHost)
                     Text(controller.registrationStatus)
                         .font(.footnote)
                     LabeledRow(label: "Codec", value: controller.codecDescription)
-                }
-                #if DEBUG
-                Section("Testing") {
                     // For a cold-start test: the app exits once it's in the background, so the
                     // next ring has to launch it.
                     Toggle("Quit when I leave", isOn: $controller.quitWhenBackgrounded)
@@ -47,13 +36,13 @@ struct SettingsView: View {
                             .foregroundStyle(Brand.secondary)
                     }
                 }
-                #endif
                 Section("Log") {
                     ForEach(controller.logLines.suffix(20).reversed(), id: \.self) { line in
                         Text(line)
                             .font(.system(size: 11, design: .monospaced))
                     }
                 }
+                #endif
             }
             .listRowBackground(Brand.surface)
         }

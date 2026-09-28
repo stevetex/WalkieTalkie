@@ -40,8 +40,12 @@ public struct AccountUser: Codable, Equatable, Sendable {
     public let name: String
     /// When the profile photo last changed (ms since 1970); nil without one.
     public let photoVersion: Double?
+    /// A built-in mascot (`Mascot`'s ID) instead of a photo.
+    public var avatar: String? = nil
     /// Which device rings: nil = the watch if the account has one, else the iPhone.
     public var ringOn: Platform? = nil
+    /// The kinds of device registered for rings (GET /v1/me only).
+    public var platforms: [Platform]? = nil
 }
 
 public struct Friend: Codable, Identifiable, Hashable, Sendable {
@@ -51,12 +55,31 @@ public struct Friend: Codable, Identifiable, Hashable, Sendable {
     public let since: Double
     /// When their profile photo last changed (ms since 1970); nil without one.
     public let photoVersion: Double?
+    /// Their built-in mascot (`Mascot`'s ID), when they chose one instead of a photo.
+    public let avatar: String?
+    /// You starred them: favorites come first in friend lists.
+    public var favorite: Bool?
+    /// When they last talked to you (ms since 1970), recorded by the relay.
+    public let lastMessageAt: Double?
 
-    public init(id: String, name: String, since: Double, photoVersion: Double? = nil) {
+    public init(id: String, name: String, since: Double, photoVersion: Double? = nil, avatar: String? = nil,
+                favorite: Bool? = nil, lastMessageAt: Double? = nil) {
         self.id = id
         self.name = name
         self.since = since
         self.photoVersion = photoVersion
+        self.avatar = avatar
+        self.favorite = favorite
+        self.lastMessageAt = lastMessageAt
+    }
+
+    public var isFavorite: Bool { favorite == true }
+
+    /// Favorites first, then by name (the server sorts by name only).
+    public static func favoritesFirst(_ friends: [Friend]) -> [Friend] {
+        friends.enumerated()
+            .sorted { a, b in a.element.isFavorite != b.element.isFavorite ? a.element.isFavorite : a.offset < b.offset }
+            .map(\.element)
     }
 }
 
@@ -376,6 +399,11 @@ public actor AccountClient {
         try await request("PATCH", "/v1/me", body: ["ringOn": platform?.rawValue ?? NSNull()])
     }
 
+    /// A built-in mascot as the profile picture (replacing any photo); nil removes it.
+    public func setAvatar(_ mascot: Mascot?) async throws -> AccountUser {
+        try await request("PATCH", "/v1/me", body: ["avatar": mascot?.rawValue ?? NSNull()])
+    }
+
     /// `pushType` "pushtotalk": the token is the iPhone's PushToTalk channel token.
     public func registerDevice(platform: Platform, pushToken: String, pushType: String? = nil, apnsEnvironment: String) async throws {
         var body: [String: Any] = ["platform": platform.rawValue, "pushToken": pushToken, "apnsEnvironment": apnsEnvironment]
@@ -409,6 +437,11 @@ public actor AccountClient {
         struct Response: Decodable { let friends: [Friend] }
         let response: Response = try await request("GET", "/v1/friends")
         return response.friends
+    }
+
+    /// Your star on a friend.
+    public func setFavorite(_ id: String, _ favorite: Bool) async throws {
+        let _: Empty = try await request("PATCH", "/v1/friends/\(id)", body: ["favorite": favorite])
     }
 
     public func removeFriend(_ id: String) async throws {

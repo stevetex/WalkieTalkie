@@ -7,6 +7,7 @@ struct SettingsView: View {
     @EnvironmentObject private var ptt: PushToTalkChannel
     @State private var name = ""
     @State private var confirmingSignOut = false
+    @AppStorage(Appearance.key) private var appearance = Appearance.system
 
     var body: some View {
         Form {
@@ -15,9 +16,9 @@ struct SettingsView: View {
                     ProfilePhotoPicker()
                         .padding(.vertical, 4)
                 } header: {
-                    Text("Photo")
+                    Text("Picture")
                 } footer: {
-                    Text("Friends see your photo on their iPhone and watch.")
+                    Text("A photo of yours or one of the mascots. Friends see it on their iPhone and watch.")
                 }
 
                 Section {
@@ -35,6 +36,15 @@ struct SettingsView: View {
 
                 WalkieTalkieSection()
 
+                Section("Appearance") {
+                    Picker("Appearance", selection: $appearance) {
+                        ForEach(Appearance.allCases) { Text($0.title).tag($0) }
+                    }
+                    .pickerStyle(.segmented)
+                    .listRowBackground(Color.clear)
+                    .listRowInsets(EdgeInsets())
+                }
+
                 Section("Apple Watch") {
                     LabeledContent("Status", value: watchStatus)
                     if watch.isWatchAppInstalled {
@@ -43,19 +53,20 @@ struct SettingsView: View {
                 }
 
                 Section {
-                    NavigationLink("Let Rings Through Focus") {
-                        ScrollView {
-                            VStack(alignment: .leading, spacing: 16) {
-                                Text(
-                                    "When Do Not Disturb or another Focus is on, your watch stays silent unless Over&Out is on that Focus's list of allowed apps."
-                                )
-                                .foregroundStyle(Brand.secondary)
-                                FocusSteps()
+                    // Rings are alerts only on the watch; the iPhone plays through PushToTalk.
+                    if watch.isPaired {
+                        NavigationLink("Let Watch Rings Through Focus") {
+                            ScrollView {
+                                VStack(alignment: .leading, spacing: 16) {
+                                    Text(FocusSteps.explanation)
+                                        .foregroundStyle(Brand.secondary)
+                                    FocusSteps()
+                                }
+                                .padding()
                             }
-                            .padding()
+                            .brandScreen()
+                            .navigationTitle("Rings and Focus")
                         }
-                        .brandScreen()
-                        .navigationTitle("Rings and Focus")
                     }
                     NavigationLink("Blocked People") { BlockedView() }
                 }
@@ -87,6 +98,7 @@ struct SettingsView: View {
         }
         .brandScreen()
         .navigationTitle("Settings")
+        .navigationBarTitleDisplayMode(.inline)
         .onAppear { name = model.displayName }
     }
 
@@ -106,6 +118,31 @@ struct SettingsView: View {
         guard nameChanged else { return }
         Task {
             if await model.rename(name.trimmingCharacters(in: .whitespaces)) { name = model.displayName }
+        }
+    }
+}
+
+/// Light, dark, or following the system (the iPhone app only; watchOS is always dark).
+enum Appearance: String, CaseIterable, Identifiable {
+    case system, light, dark
+
+    static let key = "appearance"
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .system: return "System"
+        case .light: return "Light"
+        case .dark: return "Dark"
+        }
+    }
+
+    var colorScheme: ColorScheme? {
+        switch self {
+        case .system: return nil
+        case .light: return .light
+        case .dark: return .dark
         }
     }
 }
@@ -153,7 +190,7 @@ struct WalkieTalkieSection: View {
                     set: { $0 ? ptt.join() : ptt.leave() }
                 ))
             }
-            if watch.isWatchAppInstalled || model.ringOn != nil {
+            if model.canChooseRingOn {
                 Picker("Ring Me On", selection: Binding(
                     get: { model.ringsOn },
                     set: { platform in Task { await model.setRingOn(platform) } }
@@ -167,15 +204,22 @@ struct WalkieTalkieSection: View {
                     if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
                 }
             }
-            if !model.reachability.isEmpty {
-                LabeledContent("Friends Reach This iPhone", value: model.reachability)
-            }
             #if DEBUG
+            // Diagnostics for test builds.
+            if !model.reachability.isEmpty {
+                LabeledContent("Registered", value: model.reachability)
+            }
             LabeledContent("PushToTalk", value: ptt.isAvailable ? (ptt.isJoined ? (ptt.pushToken == nil ? "Joined, no token yet" : "Joined, token received") : "Not joined") : "Unavailable")
-            #endif
             if let error = ptt.lastError {
                 Text(error).font(.footnote).foregroundStyle(Brand.secondary)
             }
+            #else
+            if model.reachability.hasPrefix("Not registered") {
+                Text("Friends can't reach this iPhone right now. Check your connection, then open Over&Out again.")
+                    .font(.footnote)
+                    .foregroundStyle(Brand.secondary)
+            }
+            #endif
         } header: {
             Text("Walkie-Talkie")
         } footer: {
@@ -192,8 +236,10 @@ struct WalkieTalkieSection: View {
         } else {
             lines.append("Friends can reach this iPhone while Over&Out is open.")
         }
-        if watch.isWatchAppInstalled || model.ringOn != nil {
+        if model.canChooseRingOn {
             lines.append("Only one device rings. If it can't be reached, the other one does.")
+        } else if watch.isWatchAppInstalled {
+            lines.append("Once Over&Out on your Apple Watch is signed in, you can choose which one rings.")
         }
         return lines.joined(separator: " ")
     }

@@ -7,6 +7,7 @@ struct RootView: View {
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var talk: TalkController
     @State private var path: [Friend] = []
+    @AppStorage(Appearance.key) private var appearance = Appearance.system
 
     var body: some View {
         Group {
@@ -18,12 +19,11 @@ struct RootView: View {
                     .masthead()
             } else if !model.onboarded {
                 OnboardingView()
-                    .masthead()
+                    .masthead(height: 56)
             } else {
                 // Inside the stack, so its navigation bar (and the Settings button) stays above it.
                 NavigationStack(path: $path) {
                     FriendsView()
-                        .masthead()
                 }
                 .fullScreenCover(item: ringBinding) { ring in
                     IncomingRingView(ring: ring)
@@ -38,9 +38,17 @@ struct RootView: View {
             }
         }
         .brandScreen()
+        .preferredColorScheme(appearance.colorScheme)
         .sheet(item: inviteBinding) { _ in
             InviteAcceptView()
                 .environmentObject(model)
+        }
+        // A watch joined an account that rang the iPhone (or the other way round): ask once.
+        .alert("Where should friends ring you?", isPresented: ringOnBinding) {
+            Button("Apple Watch") { Task { await model.setRingOn(.watch) } }
+            Button("iPhone") { Task { await model.setRingOn(.iphone) } }
+        } message: {
+            Text("Over&Out is on your Apple Watch and this iPhone. Only one of them rings. Friends ring your \(model.ringsOn == .watch ? "Apple Watch" : "iPhone") now. You can change this in Settings.")
         }
         .alert("Over&Out", isPresented: errorBinding) {
             Button("OK", role: .cancel) {}
@@ -61,25 +69,39 @@ struct RootView: View {
         Binding(get: { talk.incomingRing }, set: { if $0 == nil { talk.declineIncomingRing() } })
     }
 
+    private var ringOnBinding: Binding<Bool> {
+        Binding(
+            get: { model.askingRingOn && model.onboarded && model.session != nil && model.errorMessage == nil },
+            set: { if !$0 { model.askingRingOn = false } }
+        )
+    }
+
     private var errorBinding: Binding<Bool> {
         Binding(get: { model.errorMessage != nil }, set: { if !$0 { model.errorMessage = nil } })
     }
 }
 
-private extension View {
-    /// The wordmark on indigo, above the screen's content.
-    func masthead() -> some View {
-        safeAreaInset(edge: .top, spacing: 0) {
-            Image("OverAndOutBrand")
-                .resizable()
-                .scaledToFit()
-                .frame(height: 112)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 4)
-                .background(Brand.artIndigo)
-                .accessibilityLabel("Over&Out")
-                .accessibilityAddTraits(.isHeader)
-        }
+/// The wordmark on indigo, running up under the status bar.
+struct Masthead: View {
+    var height: CGFloat = 96
+
+    var body: some View {
+        Image("OverAndOutBrand")
+            .resizable()
+            .scaledToFit()
+            .frame(height: height)
+            .frame(maxWidth: .infinity)
+            .padding(.bottom, 4)
+            .background(Brand.artIndigo.ignoresSafeArea(edges: .top))
+            .accessibilityLabel("Over&Out")
+            .accessibilityAddTraits(.isHeader)
+    }
+}
+
+extension View {
+    /// The masthead above the screen's content.
+    func masthead(height: CGFloat = 96) -> some View {
+        safeAreaInset(edge: .top, spacing: 0) { Masthead(height: height) }
     }
 }
 
@@ -98,11 +120,13 @@ struct SignInView: View {
                 Text("A walkie-talkie for iPhone and Apple Watch")
                     .font(.title3)
                     .foregroundStyle(Brand.secondary)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: .infinity)
                     .padding(.top, 4)
                 VStack(alignment: .leading, spacing: 14) {
-                    Label("Hold the mascot's mouth on your iPhone or watch to talk, and your friend hears you", systemImage: "mic.fill")
-                    Label("On a watch they tap the ring to listen; on an iPhone it plays right away", systemImage: "bell.and.waves.left.and.right")
-                    Label("Only friends you invite can ring you", systemImage: "person.2.fill")
+                    feature("Hold the mascot's mouth on your iPhone or watch to talk, and your friend hears you", symbol: "mic.fill")
+                    feature("On a watch they tap the ring to listen; on an iPhone it plays right away", symbol: "bell.and.waves.left.and.right")
+                    feature("Only friends you invite can ring you", symbol: "person.2.fill")
                 }
                 .font(.callout)
                 .padding(.top, 36)
@@ -149,6 +173,17 @@ struct SignInView: View {
         }
         .overlay {
             if signingIn { ProgressView().controlSize(.large) }
+        }
+    }
+
+    /// A line with its symbol in a fixed-width column, so the lines' text aligns.
+    private func feature(_ text: String, symbol: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 12) {
+            Image(systemName: symbol)
+                .foregroundStyle(Brand.accent)
+                .frame(width: 32)
+            Text(text)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
