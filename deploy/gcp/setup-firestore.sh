@@ -20,7 +20,7 @@ echo "Enabling the Firestore API…"
 gc services enable firestore.googleapis.com
 
 if ! gc firestore databases describe --database='(default)' >/dev/null 2>&1; then
-  echo "Creating the (default) Firestore database in $FIRESTORE_LOCATION…"
+  echo "Creating the (default) Firestore database in ${FIRESTORE_LOCATION}…"
   # Standard edition, Native mode (the free quota applies to it), protected from deletion.
   gc firestore databases create --database='(default)' --location="$FIRESTORE_LOCATION" \
     --type=firestore-native --edition=standard --delete-protection

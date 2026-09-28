@@ -19,7 +19,7 @@ gc services enable artifactregistry.googleapis.com cloudbuild.googleapis.com sec
   publicca.googleapis.com
 
 if ! gc artifacts repositories describe relay --location="$REGION" >/dev/null 2>&1; then
-  echo "Creating the relay image repository in $REGION…"
+  echo "Creating the relay image repository in ${REGION}…"
   gc artifacts repositories create relay --location="$REGION" --repository-format=docker \
     --description="Over&Out relay node images"
 fi
