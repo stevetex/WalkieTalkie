@@ -281,7 +281,7 @@ export function accountsSuite(label: string, makeDocs: () => Docs, skip: string 
     assert.deepEqual(await accounts.friends(alice.id), []);
   });
 
-  test(`${label}: a second kind of device keeps rings where they were until the user chooses`, { skip }, async () => {
+  test(`${label}: with no choice made a watch takes the rings, and a choice stays`, { skip }, async () => {
     const { accounts, alice } = await setup();
     // One device, or more of one kind: nothing to choose.
     await accounts.registerDevice(alice.id, "phone-1", { platform: "iphone", pushToken: "app:", apnsEnvironment: "sandbox" });
@@ -289,14 +289,16 @@ export function accountsSuite(label: string, makeDocs: () => Docs, skip: string 
     assert.equal((await accounts.user(alice.id))?.ringOn, undefined);
     assert.deepEqual(await accounts.platforms(alice.id), ["iphone"]);
 
-    // A watch arrives: the iPhone keeps ringing (unset would now mean the watch).
+    // A watch arrives: nothing is pinned, so the watch rings (the watch comes first).
     await accounts.registerDevice(alice.id, "watch-1", { platform: "watch", pushToken: "t", apnsEnvironment: "sandbox" });
-    assert.equal((await accounts.user(alice.id))?.ringOn, "iphone");
+    assert.equal((await accounts.user(alice.id))?.ringOn, undefined);
     assert.deepEqual(await accounts.platforms(alice.id), ["watch", "iphone"]);
 
     // A choice the user made stays, whatever registers later.
-    await accounts.setRingOn(alice.id, "watch");
+    await accounts.setRingOn(alice.id, "iphone");
     await accounts.registerDevice(alice.id, "watch-2", { platform: "watch", pushToken: "t2", apnsEnvironment: "sandbox" });
+    assert.equal((await accounts.user(alice.id))?.ringOn, "iphone");
+    await accounts.setRingOn(alice.id, "watch");
     await accounts.registerDevice(alice.id, "phone-2", { platform: "iphone", pushToken: "app:", apnsEnvironment: "sandbox" });
     assert.equal((await accounts.user(alice.id))?.ringOn, "watch");
   });

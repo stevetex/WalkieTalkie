@@ -62,6 +62,16 @@ struct Prefetched {
         return prefetched
     }
 
+    /// Saves a held message the app downloaded itself, in the extension's format, for `take`.
+    static func save(conversationId: String, records: Data?, meta: [String: Any]) {
+        guard let directory else { return }
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        if let records { try? records.write(to: directory.appendingPathComponent("\(conversationId).records"), options: .atomic) }
+        if let data = try? JSONSerialization.data(withJSONObject: meta) {
+            try? data.write(to: directory.appendingPathComponent("\(conversationId).json"), options: .atomic)
+        }
+    }
+
     /// The relay gives up on a ring 35 s after sending it.
     static let ringLifetimeMs: Double = 35_000
 

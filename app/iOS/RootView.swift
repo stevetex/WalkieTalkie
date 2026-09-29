@@ -28,6 +28,7 @@ struct RootView: View {
                 .fullScreenCover(item: ringBinding) { ring in
                     IncomingRingView(ring: ring)
                 }
+                .overlay(alignment: .top) { BackOnBanner() }
                 // A friend started a conversation: show their Talk screen.
                 .onChange(of: talk.arrivedFrom) { id in
                     guard let id else { return }
@@ -43,12 +44,13 @@ struct RootView: View {
             InviteAcceptView()
                 .environmentObject(model)
         }
-        // A watch joined an account that rang the iPhone (or the other way round): ask once.
+        // A watch and this iPhone on one account: ask once. The watch comes first (design
+        // decision 2026-09-29), so it's the default, bold answer.
         .alert("Where should friends ring you?", isPresented: ringOnBinding) {
-            Button("Apple Watch") { Task { await model.setRingOn(.watch) } }
-            Button("iPhone") { Task { await model.setRingOn(.iphone) } }
+            Button("Apple Watch", role: .cancel) { Task { await model.setRingOn(.watch) } }
+            Button("This iPhone") { Task { await model.setRingOn(.iphone) } }
         } message: {
-            Text("Over&Out is on your Apple Watch and this iPhone. Only one of them rings. Friends ring your \(model.ringsOn == .watch ? "Apple Watch" : "iPhone") now. You can change this in Settings.")
+            Text("Over&Out is on your Apple Watch and this iPhone. Only one of them rings, your Apple Watch unless you choose this iPhone. You can change this in Settings.")
         }
         .alert("Over&Out", isPresented: errorBinding) {
             Button("OK", role: .cancel) {}
@@ -211,4 +213,41 @@ struct SignInView: View {
 
 extension Ring: @retroactive Identifiable {
     public var id: String { conversationId }
+}
+
+/// "Walkie-talkie is back on" for a few seconds after the app rejoined the channel by itself
+/// (after the system's Leave button, the system, or an update).
+struct BackOnBanner: View {
+    @EnvironmentObject private var ptt: PushToTalkChannel
+    @State private var shown = false
+
+    var body: some View {
+        // An always-present base: SwiftUI doesn't attach onChange to an empty view.
+        Color.clear
+            .frame(height: 1)
+            .allowsHitTesting(false)
+            .overlay(alignment: .top) {
+                if shown {
+                    Label("Walkie-talkie is back on", systemImage: "iphone.radiowaves.left.and.right")
+                        .font(.callout.weight(.semibold))
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 10)
+                        .background(Brand.orange, in: Capsule())
+                        .foregroundStyle(Brand.ink)
+                        .padding(.top, 8)
+                        .fixedSize()
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                        .accessibilityAddTraits(.updatesFrequently)
+                }
+            }
+            .animation(.easeOut(duration: 0.25), value: shown)
+        .onChange(of: ptt.rejoinedAt) { at in
+            guard at != nil else { return }
+            shown = true
+            Task {
+                try? await Task.sleep(nanoseconds: 3_500_000_000)
+                shown = false
+            }
+        }
+    }
 }

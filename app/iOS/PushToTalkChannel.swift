@@ -63,6 +63,11 @@ final class PushToTalkChannel: NSObject, ObservableObject {
     private static let wantedKey = "walkieTalkieWanted"
     /// Set just before the app leaves, so the delegate can tell its own leave from the system's.
     private var leavingByApp = false
+    /// A rejoin after an unexpected leave is under way; its join shows "back on".
+    private var rejoining = false
+    /// When the app turned walkie-talkie back on by itself, for a brief confirmation (run 58:
+    /// without one, Friends and Settings looked as if nothing had happened).
+    @Published private(set) var rejoinedAt: Date?
 
     override init() {
         let defaults = UserDefaults.standard
@@ -109,6 +114,10 @@ final class PushToTalkChannel: NSObject, ObservableObject {
                         self.wanted = true
                         DispatchQueue.main.asyncAfter(deadline: .now() + 5) { self.onLeftUnexpectedly?(1) }
                     }
+                    // OAO_PREVIEW_REJOINED=1: the "Walkie-talkie is back on" banner, 2 s after launch.
+                    if ProcessInfo.processInfo.environment["OAO_PREVIEW_REJOINED"] == "1" {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { self.rejoinedAt = Date() }
+                    }
                     #endif
                 }
                 self.onRegistrationChange?()
@@ -138,6 +147,7 @@ final class PushToTalkChannel: NSObject, ObservableObject {
               UIApplication.shared.applicationState == .active else { return }
         TalkController.logger.notice("Rejoining the channel (walkie-talkie is wanted on)")
         Telemetry.shared.event("pttRejoin")
+        rejoining = true
         requestJoin()
     }
 
@@ -196,6 +206,10 @@ extension PushToTalkChannel: PTChannelManagerDelegate {
         Task { @MainActor in
             self.isJoined = true
             self.lastError = nil
+            if self.rejoining {
+                self.rejoining = false
+                self.rejoinedAt = Date()
+            }
             WalkieTalkieOffNotice.clear()
             self.onRegistrationChange?()
         }
@@ -219,6 +233,7 @@ extension PushToTalkChannel: PTChannelManagerDelegate {
 
     nonisolated func channelManager(_ channelManager: PTChannelManager, failedToJoinChannel channelUUID: UUID, error: Error) {
         Telemetry.shared.event("pttJoinFailed", ["code": (error as NSError).code])
+        Task { @MainActor in self.rejoining = false }
         Task { @MainActor in self.lastError = "Couldn't turn on walkie-talkie (\((error as NSError).code))" }
     }
 
@@ -299,10 +314,12 @@ enum WalkieTalkieOffNotice {
 
     static func post(ringsWatch: Bool) {
         let content = UNMutableNotificationContent()
-        content.title = "Walkie-talkie is off on this iPhone"
+        // iOS mirrors a locked iPhone's notifications to the watch, so the words say which device
+        // (run 58).
+        content.title = "iPhone walkie-talkie is off"
         content.body = ringsWatch
-            ? "Friends' messages ring your Apple Watch instead. Tap to turn it back on."
-            : "Friends' messages won't play on this iPhone. Tap to turn it back on."
+            ? "Friends' messages ring your Apple Watch instead. Open Over&Out on your iPhone to turn it back on."
+            : "Friends' messages won't play on your iPhone. Open Over&Out to turn it back on."
         content.sound = .default
         let request = UNNotificationRequest(identifier: identifier, content: content, trigger: nil)
         UNUserNotificationCenter.current().add(request) { error in
