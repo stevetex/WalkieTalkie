@@ -7,6 +7,8 @@ struct FriendsView: View {
     @EnvironmentObject private var ptt: PushToTalkChannel
     @State private var sharing: InviteLink?
     @State private var creatingInvite = false
+    /// "Not Now" on the notifications-off row: someone who turned them off on purpose isn't asked again.
+    @AppStorage("notificationsOffDismissed") private var notificationsOffDismissed = false
 
     var body: some View {
         List {
@@ -111,6 +113,24 @@ struct FriendsView: View {
                         .foregroundStyle(Brand.secondary)
                     Button("Allow Notifications") { Task { await model.allowNotifications() } }
                         .buttonStyle(.bordered)
+                }
+                .padding(.vertical, 6)
+            }
+        } else if ptt.isJoined, model.notificationsDenied, !notificationsOffDismissed {
+            Section {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Notifications are off, so Over&Out can't tell you if walkie-talkie turns off, for example after the Leave button next to Talk.")
+                        .font(.callout)
+                        .foregroundStyle(Brand.secondary)
+                    HStack {
+                        Button("Open Settings") {
+                            if let url = URL(string: UIApplication.openNotificationSettingsURLString) { UIApplication.shared.open(url) }
+                        }
+                        .buttonStyle(.bordered)
+                        Spacer()
+                        Button("Not Now") { notificationsOffDismissed = true }
+                            .foregroundStyle(Brand.secondary)
+                    }
                 }
                 .padding(.vertical, 6)
             }

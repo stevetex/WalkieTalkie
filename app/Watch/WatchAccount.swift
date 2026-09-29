@@ -98,6 +98,16 @@ final class WatchAccount: NSObject, ObservableObject {
                     self.session = self.store.load()
                     self.setFriends(loaded)
                 }
+                // Telemetry, while idle: queued events, and the diagnostics log if the server
+                // asked for it (tools/beta.ts pull, or Report a Problem on the iPhone).
+                Telemetry.shared.send = { events, device in try await client.sendEvents(events, device: device) }
+                WatchDiagnostics.collectExtensionLines()
+                await Telemetry.shared.flush()
+                if let me = try? await client.me() {
+                    await Telemetry.shared.uploadIfRequested(requestedAt: me.diagnosticsRequestedAt) { data in
+                        try await client.uploadDiagnostics(data, platform: .watch)
+                    }
+                }
                 // Download changed photos now, while idle, so a ring never waits on one.
                 for friend in loaded {
                     guard let version = friend.photoVersion else { continue }

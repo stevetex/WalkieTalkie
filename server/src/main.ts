@@ -31,15 +31,21 @@
 //   REVISION          the git commit, reported by /healthz
 //   SIMULATOR_PUSH    1 = deliver rings to simulators on this Mac with simctl (development
 //                     only; see simulator.ts)
+//   FULL_TIMELINE_USERS
+//                     comma-separated account IDs whose devices' whole timelines are logged, not
+//                     only their summaries (telemetry.ts)
+//
+// Telemetry: on Google Cloud, structured entries go to Cloud Logging (log oao-telemetry);
+// locally, to DATA_DIR/telemetry.jsonl.
 
 import { createServer, type IncomingMessage, type ServerResponse, type Server } from "node:http";
+import { hostname } from "node:os";
 import { join, resolve } from "node:path";
 import { MAX_QUEUED_BYTES, acceptUpgrade, rejectUpgrade } from "./ws.ts";
 import { ApnsPusher, DryRunPusher, apnsConfigFromEnv, type Pusher } from "./apns.ts";
 import { SimulatorPusher } from "./simulator.ts";
 import {
   FirestoreDeviceStore,
-  FirestoreMetricsStore,
   JsonDeviceStore,
   JsonMetricsStore,
   ensureDir,
@@ -57,6 +63,7 @@ import { bearer, type ApiHandler } from "./api.ts";
 import { Accounts, USER_ID_PREFIX } from "./accounts.ts";
 import { apiFromEnv, type ApiSetup } from "./api-main.ts";
 import { MemoryDocs } from "./docs.ts";
+import { CloudLoggingSink, FileSink, StdoutSink, TelemetryMetricsStore, type DeviceInfo, type LogSink } from "./telemetry.ts";
 
 export interface ServerOptions {
   port: number;
@@ -76,6 +83,8 @@ export interface ServerOptions {
   // The account API, served on the same port (local runs).
   api?: ApiHandler;
   pusher: Pusher;
+  // Relay errors as structured entries (telemetry.ts); none = console only.
+  telemetry?: LogSink;
   ringTimeoutMs?: number;
   answerJoinTimeoutMs?: number;
   prefetchPushAfterMs?: number;
@@ -240,9 +249,13 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
         return send(res, 200, (await devices.list()).map((d) => ({ userId: d.userId, name: d.name })));
       }
       if (req.method === "POST" && url.pathname === "/v1/metrics") {
-        const upload = (await readJSON(req)) as MetricsUpload;
+        const upload = (await readJSON(req)) as MetricsUpload & { device?: DeviceInfo; deviceId?: string };
         if (!upload?.conversationId || !Array.isArray(upload.events)) return send(res, 400, { error: "bad metrics" });
-        if (caller.account) upload.userId = caller.userId!;
+        if (caller.account) {
+          upload.userId = caller.userId!;
+          upload.deviceId = caller.deviceId ?? undefined;
+        }
+        upload.device = cleanDevice(upload.device);
         await metrics.upload(upload);
         return send(res, 200, { ok: true });
       }
@@ -289,6 +302,9 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
       }
       send(res, 404, { error: "not found" });
     } catch (err) {
+      if (url.pathname.startsWith("/v1/relay") || url.pathname === "/v1/metrics") {
+        options.telemetry?.write({ kind: "oao.relay_error", what: `${req.method} ${url.pathname}`, error: (err as Error).message.slice(0, 200) }, "ERROR");
+      }
       send(res, 400, { error: (err as Error).message });
     }
   });
@@ -314,6 +330,7 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
         fn();
       } catch (err) {
         console.error(`[relay] ${userId} (${peer.deviceId}): ${what} failed: ${(err as Error).stack ?? err}`);
+        options.telemetry?.write({ kind: "oao.relay_error", what, userId, deviceId: peer.deviceId, error: (err as Error).message.slice(0, 200) }, "ERROR");
         ws.close(1011);
       }
     };
@@ -378,6 +395,17 @@ function send(res: ServerResponse, status: number, body: unknown): void {
   res.end(JSON.stringify(body));
 }
 
+// What a device says about itself in its upload: short strings only.
+function cleanDevice(value: unknown): DeviceInfo | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const out: DeviceInfo = {};
+  for (const key of ["platform", "model", "os", "build"] as const) {
+    const v = (value as Record<string, unknown>)[key];
+    if (typeof v === "string" && v) out[key] = v.replace(/[^\w .()-]/g, "").slice(0, 40);
+  }
+  return out;
+}
+
 async function readJSON(req: IncomingMessage): Promise<unknown> {
   let raw = "";
   for await (const chunk of req) {
@@ -407,21 +435,27 @@ if (import.meta.main) {
   let sessions = env.SESSION_PUBLIC_KEYS ? new SessionVerifier(parsePublicKeys(env.SESSION_PUBLIC_KEYS)) : null;
   let running: RunningServer;
   let api: ApiSetup | null = null;
+  const fullTimelineUsers = (env.FULL_TIMELINE_USERS ?? "").split(",").map((u) => u.trim()).filter(Boolean);
   if (env.STORE === "firestore") {
     const db = new Firestore({ projectId, emulatorHost, accessToken });
     const devices = new FirestoreDeviceStore(db);
-    const metrics = new FirestoreMetricsStore(db);
+    const telemetry: LogSink = onGoogleCloud
+      ? new CloudLoggingSink({ projectId, accessToken, labels: { node: hostname(), revision: env.REVISION ?? "local" } })
+      : new StdoutSink();
+    const metrics = new TelemetryMetricsStore(telemetry, { fullTimelineUsers });
     if (env.SERVE_API === "1") api = apiFromEnv(env, db, null);
     const accounts = api?.accounts ?? new Accounts(db);
     sessions = api?.verifier ?? sessions;
-    running = await startServer({ port, host, dataDir: null, devices, metrics, token, sharedTokenClients, sessions, accounts, api: api?.handler, pusher, prefetchPushAfterMs });
+    running = await startServer({ port, host, dataDir: null, devices, metrics, telemetry, token, sharedTokenClients, sessions, accounts, api: api?.handler, pusher, prefetchPushAfterMs });
     console.log(`[server] listening on ${host ?? ""}:${running.port}, data in Firestore ${emulatorHost ? `emulator ${emulatorHost}, ` : ""}project ${projectId}`);
   } else {
     const dataDir = ensureDir(resolve(env.DATA_DIR ?? "data"));
     // Accounts are only kept locally when this process also serves the API.
     if (env.SERVE_API === "1") api = apiFromEnv(env, new MemoryDocs(join(dataDir, "accounts.json")), dataDir);
     sessions = api?.verifier ?? sessions;
-    running = await startServer({ port, host, dataDir, token, sharedTokenClients, sessions, accounts: api?.accounts, api: api?.handler, pusher, prefetchPushAfterMs });
+    const telemetry = new FileSink(dataDir);
+    const metrics = new TelemetryMetricsStore(telemetry, { inner: new JsonMetricsStore(dataDir), fullTimelineUsers });
+    running = await startServer({ port, host, dataDir, metrics, telemetry, token, sharedTokenClients, sessions, accounts: api?.accounts, api: api?.handler, pusher, prefetchPushAfterMs });
     console.log(`[server] listening on ${host ?? ""}:${running.port}, data in ${dataDir}`);
   }
   for (const note of api?.notes ?? []) console.log(`[api] ${note}`);

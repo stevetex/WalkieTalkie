@@ -72,6 +72,7 @@ struct SettingsView: View {
                 }
 
                 Section {
+                    NavigationLink("Report a Problem") { ReportProblemView() }
                     Link("Privacy Policy", destination: URL(string: "https://\(model.linkDomain)/privacy")!)
                     Link("Help and Support", destination: URL(string: "https://\(model.linkDomain)/support")!)
                     NavigationLink("About Over&Out") { AboutView() }

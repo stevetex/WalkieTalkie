@@ -27,11 +27,18 @@
 //   PUT    /v1/me/photo              the profile photo, as an image/jpeg body → {photoVersion}
 //   DELETE /v1/me/photo
 //   GET    /v1/users/{id}/photo      → image/jpeg: your own photo or a friend's
+//   POST   /v1/events                {device?, events: [{name, t, fields?}]} device events outside
+//                                     conversations, logged as oao.event (telemetry.ts)
+//   POST   /v1/diagnostics           this device's compressed diagnostics log (gzip or raw
+//                                     DEFLATE; x-oao-platform, x-oao-build), when GET /v1/me asks
+//   POST   /v1/feedback              {note, platform?, build?, conversationId?, diagnostics?} a
+//                                     problem report; with diagnostics, the devices' logs follow
 
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { AccountError, MAX_PHOTO_BYTES, isAvatar, isPlatform, isPushType, type Accounts, type Platform, type User } from "./accounts.ts";
+import { AccountError, MAX_DIAGNOSTICS_BYTES, MAX_PHOTO_BYTES, isAvatar, isPlatform, isPushType, type Accounts, type Platform, type User } from "./accounts.ts";
 import type { AppleIdentity } from "./apple.ts";
 import { REFRESH_GRACE_MS, SessionError, type SessionClaims, type SessionSigner, type SessionVerifier } from "./session.ts";
+import { StdoutSink, cleanEvents, type LogSink } from "./telemetry.ts";
 
 export interface ApiOptions {
   accounts: Accounts;
@@ -43,6 +50,8 @@ export interface ApiOptions {
   // Invite links are this plus the code, for example https://overandout.app/i/.
   inviteBaseUrl: string;
   log?: (line: string) => void;
+  // Structured telemetry entries (oao.api, oao.event, …); stdout JSON by default (Cloud Run).
+  telemetry?: LogSink;
 }
 
 export type ApiHandler = (req: IncomingMessage, res: ServerResponse, url: URL) => Promise<boolean>;
@@ -52,6 +61,11 @@ export type ApiHandler = (req: IncomingMessage, res: ServerResponse, url: URL) =
 export function createApi(options: ApiOptions): ApiHandler {
   const { accounts, signer, verifier } = options;
   const log = options.log ?? ((line: string) => console.log(line));
+  const telemetry = options.telemetry ?? new StdoutSink();
+  // What people do, for usage analytics (the Beta telemetry spec): the account and the action's
+  // fields, never names.
+  const act = (action: string, userId: string, fields: Record<string, string | number | boolean | null> = {}) =>
+    telemetry.write({ kind: "oao.action", action, userId, ...fields });
 
   // The token's claims, checked only for its signature and expiry. Refresh and sign-out, which
   // check the session themselves, use this directly; every other route uses authorize.
@@ -95,6 +109,7 @@ export function createApi(options: ApiOptions): ApiHandler {
       const { user, created } = await accounts.signInWithApple(identity.sub, typeof name === "string" ? name : undefined);
       const sid = await accounts.createSession(user.id, deviceId, platform);
       log(`[api] ${user.id} signed in on a ${platform}${created ? " (new account)" : ""}`);
+      act(created ? "account_created" : "signed_in", user.id, { platform });
       return [200, { ...issue(user.id, sid, deviceId), user: userJSON(user), created }];
     }],
     ["POST", /^\/v1\/auth\/refresh$/, async (req) => {
@@ -109,11 +124,13 @@ export function createApi(options: ApiOptions): ApiHandler {
       if (deviceId === claims.dev) throw new AccountError(400, "same-device");
       const sid = await accounts.createSession(claims.sub, deviceId, platform);
       log(`[api] ${claims.sub} added a ${platform}`);
+      act("device_added", claims.sub, { platform });
       return [200, issue(claims.sub, sid, deviceId)];
     }],
     ["POST", /^\/v1\/auth\/signout$/, async (req) => {
       const claims = authenticate(req, REFRESH_GRACE_MS);
       await accounts.endSession(claims.sub, claims.sid, claims.dev);
+      act("signed_out", claims.sub);
       return [200, {}];
     }],
     ["GET", /^\/v1\/me$/, async (req) => {
@@ -132,9 +149,18 @@ export function createApi(options: ApiOptions): ApiHandler {
       if (ringOn !== undefined && ringOn !== null && !isPlatform(ringOn)) throw new AccountError(400, "bad-ring-on");
       let user: User | undefined;
       if (avatar !== undefined && avatar !== null && !isAvatar(avatar)) throw new AccountError(400, "bad-avatar");
-      if (typeof name === "string") user = await accounts.rename(claims.sub, name);
-      if (ringOn !== undefined) user = await accounts.setRingOn(claims.sub, ringOn as Platform | null);
-      if (avatar !== undefined) user = await accounts.setAvatar(claims.sub, avatar as string | null);
+      if (typeof name === "string") {
+        user = await accounts.rename(claims.sub, name);
+        act("renamed", claims.sub);
+      }
+      if (ringOn !== undefined) {
+        user = await accounts.setRingOn(claims.sub, ringOn as Platform | null);
+        act("ring_on", claims.sub, { ringOn: (ringOn as string | null) ?? "default" });
+      }
+      if (avatar !== undefined) {
+        user = await accounts.setAvatar(claims.sub, avatar as string | null);
+        act("avatar_set", claims.sub, { avatar: (avatar as string | null) ?? "default" });
+      }
       return [200, userJSON(user!)];
     }],
     ["DELETE", /^\/v1\/me$/, async (req) => {
@@ -159,6 +185,7 @@ export function createApi(options: ApiOptions): ApiHandler {
       }
       await accounts.deleteAccount(claims.sub);
       log(`[api] ${claims.sub} deleted their account`);
+      act("account_deleted", claims.sub);
       return [200, {}];
     }],
     ["PUT", /^\/v1\/me\/device$/, async (req) => {
@@ -169,11 +196,22 @@ export function createApi(options: ApiOptions): ApiHandler {
       }
       if (pushType !== undefined && !isPushType(pushType)) throw new AccountError(400, "bad-request", "unknown pushType");
       if (pushType === "pushtotalk" && platform !== "iphone") throw new AccountError(400, "bad-request", "pushtotalk is for iPhones");
-      await accounts.registerDevice(claims.sub, claims.dev, {
+      const registration = {
         platform,
         pushToken,
         pushType: pushType ?? "alert",
         apnsEnvironment: apnsEnvironment === "production" ? "production" : "sandbox",
+      } as const;
+      await accounts.registerDevice(claims.sub, claims.dev, registration);
+      // Never the token itself; "app:" is the iPhone reachable only while the app is open.
+      telemetry.write({
+        kind: "oao.registration",
+        userId: claims.sub,
+        deviceId: claims.dev,
+        platform,
+        pushType: registration.pushType,
+        apnsEnvironment: registration.apnsEnvironment,
+        inApp: pushToken === "app:",
       });
       return [200, {}];
     }],
@@ -182,10 +220,13 @@ export function createApi(options: ApiOptions): ApiHandler {
       const jpeg = await readBytes(req, MAX_PHOTO_BYTES);
       const photoVersion = await accounts.setPhoto(claims.sub, jpeg);
       log(`[api] ${claims.sub} set a photo (${jpeg.length} bytes)`);
+      act("photo_set", claims.sub);
       return [200, { photoVersion }];
     }],
     ["DELETE", /^\/v1\/me\/photo$/, async (req) => {
-      await accounts.removePhoto((await authorize(req)).sub);
+      const id = (await authorize(req)).sub;
+      await accounts.removePhoto(id);
+      act("photo_removed", id);
       return [200, {}];
     }],
     ["GET", /^\/v1\/users\/([\w.-]+)\/photo$/, async (req, [id]) => {
@@ -198,25 +239,38 @@ export function createApi(options: ApiOptions): ApiHandler {
       const { favorite } = await readBody(req);
       if (typeof favorite !== "boolean") throw new AccountError(400, "bad-request", "favorite is required");
       await accounts.setFavorite(claims.sub, id, favorite);
+      act("favorite", claims.sub, { on: favorite });
       return [200, {}];
     }],
     ["DELETE", /^\/v1\/friends\/([\w.-]+)$/, async (req, [id]) => {
-      await accounts.removeFriend((await authorize(req)).sub, id);
+      const me = (await authorize(req)).sub;
+      await accounts.removeFriend(me, id);
+      act("friend_removed", me);
       return [200, {}];
     }],
     ["POST", /^\/v1\/invites$/, async (req) => {
-      const { code, expiresAt } = await accounts.createInvite((await authorize(req)).sub);
+      const me = (await authorize(req)).sub;
+      const { code, expiresAt } = await accounts.createInvite(me);
+      act("invite_created", me);
       return [200, { code, url: `${options.inviteBaseUrl}${code}`, expiresAt }];
     }],
     ["GET", /^\/v1\/invites\/([\w.-]+)$/, async (req, [code]) => [200, await accounts.invite(code, (await authorize(req)).sub)]],
     ["POST", /^\/v1\/invites\/([\w.-]+)\/accept$/, async (req, [code]) => {
       const claims = await authorize(req);
+      // How long the invite waited, from when it expires (read before accepting uses it up).
+      const expiresAt = await accounts.invite(code, claims.sub).then((i) => i.expiresAt, () => undefined);
       const friend = await accounts.acceptInvite(code, claims.sub);
       log(`[api] ${claims.sub} and ${friend.id} are friends`);
+      act("invite_accepted", claims.sub, {
+        inviter: friend.id,
+        ...(expiresAt ? { inviteAgeMs: Math.max(0, Math.round(accounts.inviteTtlMs - (expiresAt - Date.now()))) } : {}),
+      });
       return [200, { friend }];
     }],
     ["DELETE", /^\/v1\/invites\/([\w.-]+)$/, async (req, [code]) => {
-      await accounts.cancelInvite(code, (await authorize(req)).sub);
+      const me = (await authorize(req)).sub;
+      await accounts.cancelInvite(code, me);
+      act("invite_cancelled", me);
       return [200, {}];
     }],
     ["GET", /^\/v1\/blocks$/, async (req) => [200, { blocks: await accounts.blocks((await authorize(req)).sub) }]],
@@ -225,10 +279,13 @@ export function createApi(options: ApiOptions): ApiHandler {
       const { userId } = await readBody(req);
       await accounts.block(claims.sub, String(userId));
       log(`[api] ${claims.sub} blocked ${userId}`);
+      act("blocked", claims.sub);
       return [200, {}];
     }],
     ["DELETE", /^\/v1\/blocks\/([\w.-]+)$/, async (req, [id]) => {
-      await accounts.unblock((await authorize(req)).sub, id);
+      const me = (await authorize(req)).sub;
+      await accounts.unblock(me, id);
+      act("unblocked", me);
       return [200, {}];
     }],
     ["POST", /^\/v1\/reports$/, async (req) => {
@@ -244,18 +301,63 @@ export function createApi(options: ApiOptions): ApiHandler {
       if (body.block === true) await accounts.block(claims.sub, report.userId);
       // A log-based alert on "[report]" emails the operator (deploy/gcp/setup-api.sh).
       log(`[report] ${id}: ${claims.sub} reported ${report.userId} for ${report.reason}${body.block === true ? ", and blocked them" : ""}`);
+      act("reported", claims.sub, { reason: report.reason, block: body.block === true });
+      return [200, { id }];
+    }],
+    ["POST", /^\/v1\/events$/, async (req) => {
+      const claims = await authorize(req);
+      const events = cleanEvents(await readBody(req), { userId: claims.sub, deviceId: claims.dev });
+      for (const event of events) telemetry.write(event, WARNING_EVENTS.has(String(event.name)) ? "WARNING" : "INFO");
+      return [200, { accepted: events.length }];
+    }],
+    ["POST", /^\/v1\/diagnostics$/, async (req) => {
+      const claims = await authorize(req);
+      const gzip = await readBytes(req, MAX_DIAGNOSTICS_BYTES, "diagnostics-too-large");
+      const meta = { platform: header(req, "x-oao-platform"), build: header(req, "x-oao-build") };
+      const id = await accounts.saveDiagnostics(claims.sub, claims.dev, meta, gzip);
+      telemetry.write({ kind: "oao.diagnostics", userId: claims.sub, deviceId: claims.dev, id, bytes: gzip.length, ...meta });
+      return [200, { id }];
+    }],
+    ["POST", /^\/v1\/feedback$/, async (req) => {
+      const claims = await authorize(req);
+      const body = await readBody(req);
+      if (typeof body.note !== "string" || !body.note.trim()) throw new AccountError(400, "bad-request", "note is required");
+      const feedback = {
+        note: body.note,
+        diagnostics: body.diagnostics !== false,
+        ...(typeof body.platform === "string" ? { platform: body.platform.slice(0, 16) } : {}),
+        ...(typeof body.build === "string" ? { build: body.build.slice(0, 32) } : {}),
+        ...(typeof body.conversationId === "string" ? { conversationId: body.conversationId } : {}),
+      };
+      const id = await accounts.saveFeedback(claims.sub, feedback);
+      // A log-based alert on "[feedback]" emails Steve (deploy/gcp/setup-telemetry.sh). The note
+      // itself stays in Firestore.
+      log(`[feedback] ${id}: ${claims.sub}${feedback.diagnostics ? ", with diagnostics" : ""}`);
+      telemetry.write({ kind: "oao.feedback", id, userId: claims.sub, deviceId: claims.dev, diagnostics: feedback.diagnostics, ...(feedback.build ? { build: feedback.build } : {}) }, "WARNING");
       return [200, { id }];
     }],
   ];
 
+  // An error response, as a structured entry: the route's template, never its IDs.
+  const logError = (req: IncomingMessage, route: string, status: number, code: string): void => {
+    let userId: string | undefined;
+    try {
+      const token = bearer(req);
+      if (token) userId = verifier.verify(token, REFRESH_GRACE_MS).sub;
+    } catch {}
+    telemetry.write({ kind: "oao.api", method: req.method, route, status, error: code, ...(userId ? { userId } : {}) }, status >= 500 ? "ERROR" : "WARNING");
+  };
+
   return async (req, res, url) => {
     // /v1/users itself is the relay's (diagnostics); only a user's photo is the API's.
-    if (!/^\/v1\/(auth|me|friends|invites|blocks|reports)(\/|$)|^\/v1\/users\/[\w.-]+\/photo$/.test(url.pathname)) return false;
+    if (!/^\/v1\/(auth|me|friends|invites|blocks|reports|events|diagnostics|feedback)(\/|$)|^\/v1\/users\/[\w.-]+\/photo$/.test(url.pathname)) return false;
+    let route = "unmatched";
     try {
       for (const [method, pattern, handler] of routes) {
         const match = url.pathname.match(pattern);
         if (!match) continue;
         if (req.method !== method) continue;
+        route = routeTemplate(pattern);
         const [status, body] = await handler(req, match.slice(1));
         if (isBytes(body)) {
           // Private: only the viewer and their friends may see it, so no shared caches.
@@ -267,27 +369,45 @@ export function createApi(options: ApiOptions): ApiHandler {
         return true;
       }
       send(res, 404, { error: "not-found", message: `no route for ${req.method} ${url.pathname}` });
+      logError(req, route, 404, "not-found");
     } catch (err) {
       if (err instanceof AccountError) {
         send(res, err.status, { error: err.code, message: err.message });
+        logError(req, route, err.status, err.code);
       } else if (err instanceof SyntaxError) {
         send(res, 400, { error: "bad-json", message: err.message });
+        logError(req, route, 400, "bad-json");
       } else {
         log(`[api] ${req.method} ${url.pathname} failed: ${(err as Error).stack ?? err}`);
         send(res, 500, { error: "internal", message: "something went wrong" });
+        logError(req, route, 500, "internal");
       }
     }
     return true;
   };
 }
 
-function userJSON(user: User): { id: string; name: string; photoVersion?: number; avatar?: string; ringOn?: Platform } {
+// Events that mean something went wrong on a device, so alerts and the dashboard can pick them out.
+const WARNING_EVENTS = new Set(["crash", "hang", "uncleanExit", "extensionUnfinished", "pttJoinFailed", "registrationFailed", "sessionRefreshFailed", "relayDropped"]);
+
+// "/^\/v1\/friends\/([\w.-]+)$/" → "/v1/friends/{id}".
+function routeTemplate(pattern: RegExp): string {
+  return pattern.source.replace(/^\^|\$$/g, "").replace(/\([^)]*\)/g, "{id}").replace(/\\\//g, "/");
+}
+
+function header(req: IncomingMessage, name: string): string | undefined {
+  const value = req.headers[name];
+  return typeof value === "string" && value ? value.replace(/[^\w .()-]/g, "").slice(0, 40) : undefined;
+}
+
+function userJSON(user: User): { id: string; name: string; photoVersion?: number; avatar?: string; ringOn?: Platform; diagnosticsRequestedAt?: number } {
   return {
     id: user.id,
     name: user.name,
     ...(user.photoVersion !== undefined ? { photoVersion: user.photoVersion } : {}),
     ...(user.avatar !== undefined ? { avatar: user.avatar } : {}),
     ...(user.ringOn !== undefined ? { ringOn: user.ringOn } : {}),
+    ...(user.diagnosticsRequestedAt !== undefined ? { diagnosticsRequestedAt: user.diagnosticsRequestedAt } : {}),
   };
 }
 
@@ -297,15 +417,15 @@ function isBytes(body: unknown): body is { bytes: Buffer; contentType: string; v
 
 // Past `max`, the rest is read and dropped (up to 1 MB) so the client sees the 413 rather
 // than a reset connection.
-async function readBytes(req: IncomingMessage, max: number): Promise<Buffer> {
+async function readBytes(req: IncomingMessage, max: number, tooLarge = "photo-too-large"): Promise<Buffer> {
   const chunks: Buffer[] = [];
   let size = 0;
   for await (const chunk of req) {
     size += (chunk as Buffer).length;
-    if (size > 1024 * 1024) break;
+    if (size > Math.max(max, 1024 * 1024)) break;
     if (size <= max) chunks.push(chunk as Buffer);
   }
-  if (size > max) throw new AccountError(413, "photo-too-large");
+  if (size > max) throw new AccountError(413, tooLarge);
   return Buffer.concat(chunks);
 }
 

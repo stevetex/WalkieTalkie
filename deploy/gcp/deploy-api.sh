@@ -41,6 +41,12 @@ gc run deploy api --image="$image" --region="$REGION" \
   --min-instances=0 --max-instances=4 --cpu=1 --memory=512Mi --concurrency=80 --timeout=30s \
   --env-vars-file="$stage/env.yaml"
 
+# The daily usage rollup runs from the same image (setup-stats.sh), so it keeps up with the API.
+if gc run jobs describe stats --region="$REGION" >/dev/null 2>&1; then
+  gc run jobs update stats --image="$image" --region="$REGION" >/dev/null
+  echo "The stats job uses $rev too."
+fi
+
 url=$(gc run services describe api --region="$REGION" --format='value(status.url)')
 if curl -fsS --max-time 20 "$url/v1/health" | grep -q "\"revision\":\"$rev\""; then
   echo "$url serves $rev"

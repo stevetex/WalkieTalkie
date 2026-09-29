@@ -93,6 +93,8 @@ final class PushToTalkChannel: NSObject, ObservableObject {
                     self.manager = manager
                     self.isAvailable = true
                     self.isJoined = manager.activeChannelUUID == self.channelUUID
+                    // Whether the channel survived since the last launch (an update, a reinstall).
+                    Telemetry.shared.event("pttRestored", ["joined": self.isJoined, "wanted": self.wanted.map { $0 ? "yes" : "no" } ?? "unknown"])
                     // Installs from before `wanted` existed: in the channel means wanted.
                     if self.isJoined, self.wanted == nil { self.wanted = true }
                     self.rejoinIfWanted()
@@ -135,6 +137,7 @@ final class PushToTalkChannel: NSObject, ObservableObject {
         guard wanted == true, !isJoined, manager != nil,
               UIApplication.shared.applicationState == .active else { return }
         TalkController.logger.notice("Rejoining the channel (walkie-talkie is wanted on)")
+        Telemetry.shared.event("pttRejoin")
         requestJoin()
     }
 
@@ -189,6 +192,7 @@ final class PushToTalkChannel: NSObject, ObservableObject {
 extension PushToTalkChannel: PTChannelManagerDelegate {
     nonisolated func channelManager(_ channelManager: PTChannelManager, didJoinChannel channelUUID: UUID, reason: PTChannelJoinReason) {
         TalkController.logger.notice("Joined the channel, reason \(reason.rawValue)")
+        Telemetry.shared.event("pttJoined", ["reason": reason.rawValue])
         Task { @MainActor in
             self.isJoined = true
             self.lastError = nil
@@ -205,6 +209,8 @@ extension PushToTalkChannel: PTChannelManagerDelegate {
             let byApp = self.leavingByApp || reason == .developerRequest
             self.leavingByApp = false
             self.isJoined = false
+            // 1 = the person (the system's Leave button), 2 = the app, 3 = the session ended.
+            Telemetry.shared.event("pttLeft", ["reason": reason.rawValue, "byApp": byApp, "wanted": self.wanted == true])
             self.emit(.left(reason: reason.rawValue, byApp: byApp))
             if !byApp, self.wanted == true { self.onLeftUnexpectedly?(reason.rawValue) }
             self.onRegistrationChange?()
@@ -212,6 +218,7 @@ extension PushToTalkChannel: PTChannelManagerDelegate {
     }
 
     nonisolated func channelManager(_ channelManager: PTChannelManager, failedToJoinChannel channelUUID: UUID, error: Error) {
+        Telemetry.shared.event("pttJoinFailed", ["code": (error as NSError).code])
         Task { @MainActor in self.lastError = "Couldn't turn on walkie-talkie (\((error as NSError).code))" }
     }
 

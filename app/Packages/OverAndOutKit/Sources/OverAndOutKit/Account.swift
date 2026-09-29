@@ -46,6 +46,9 @@ public struct AccountUser: Codable, Equatable, Sendable {
     public var ringOn: Platform? = nil
     /// The kinds of device registered for rings (GET /v1/me only).
     public var platforms: [Platform]? = nil
+    /// When the server asked this account's devices for their diagnostics logs (ms), while the
+    /// request is open (GET /v1/me only; the Beta telemetry spec).
+    public var diagnosticsRequestedAt: Double? = nil
 }
 
 public struct Friend: Codable, Identifiable, Hashable, Sendable {
@@ -495,6 +498,27 @@ public actor AccountClient {
         let _: Empty = try await request("POST", "/v1/reports", body: body)
     }
 
+    // MARK: Telemetry (the Beta telemetry spec)
+
+    /// Device events outside conversations, which the server logs.
+    public func sendEvents(_ events: [[String: Any]], device: [String: String]) async throws {
+        let _: Empty = try await request("POST", "/v1/events", body: ["events": events, "device": device])
+    }
+
+    /// This device's diagnostics log (DiagnosticsLog.compressed()), when the server asked for it.
+    public func uploadDiagnostics(_ data: Data, platform: Platform) async throws {
+        let headers = ["x-oao-platform": platform.rawValue, "x-oao-build": DeviceInfo.build]
+        _ = try await authorized { token in
+            try await self.sendData("POST", "/v1/diagnostics", body: data, contentType: "application/octet-stream", token: token, headers: headers)
+        }
+    }
+
+    /// Report a Problem. With diagnostics, the account's devices are asked for their logs.
+    public func sendFeedback(note: String, diagnostics: Bool, platform: Platform) async throws {
+        let body: [String: Any] = ["note": note, "diagnostics": diagnostics, "platform": platform.rawValue, "build": DeviceInfo.build]
+        let _: Empty = try await request("POST", "/v1/feedback", body: body)
+    }
+
     // MARK: Plumbing
 
     private struct Empty: Decodable {}
@@ -548,11 +572,12 @@ public actor AccountClient {
         return try JSONDecoder().decode(T.self, from: data)
     }
 
-    private func sendData(_ method: String, _ path: String, body: Data?, contentType: String?, token: String?) async throws -> Data {
+    private func sendData(_ method: String, _ path: String, body: Data?, contentType: String?, token: String?, headers: [String: String] = [:]) async throws -> Data {
         var request = URLRequest(url: baseURL.appendingPathComponent(path))
         request.httpMethod = method
         request.timeoutInterval = 20
         if let contentType { request.setValue(contentType, forHTTPHeaderField: "Content-Type") }
+        for (name, value) in headers { request.setValue(value, forHTTPHeaderField: name) }
         if let token { request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
         request.httpBody = body
         let (data, response) = try await urlSession.data(for: request)

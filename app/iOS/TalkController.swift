@@ -97,6 +97,9 @@ final class TalkController: ObservableObject {
             idleStream = false
             guard conversation != nil else { return }
             log("Relay closed: \(reason)")
+            // The stream ended without the app closing it, mid-conversation.
+            conversation?.timeline.mark("relayClosed", detail: String(reason.prefix(80)), once: false)
+            Telemetry.shared.event("relayDropped", ["reason": String(reason.prefix(80)), "conversationId": conversation?.conversationId ?? ""])
             finish()
         }
         audio.onFrame = { [weak self] frame in
@@ -115,7 +118,12 @@ final class TalkController: ObservableObject {
         audio.onFirstCapturedFrame = { [weak self] t in
             DispatchQueue.main.async { self?.conversation?.timeline.mark("micFirstFrame", at: t, once: false) }
         }
-        audio.onRestart = { [weak self] detail in self?.log("Audio: \(detail), route \(Self.routeDescription())") }
+        audio.onRestart = { [weak self] detail in
+            let route = Self.routeDescription()
+            self?.log("Audio: \(detail), route \(route)")
+            self?.conversation?.timeline.mark("audioRestarted", detail: String(detail.prefix(60)), once: false)
+            Telemetry.shared.event("audioRestarted", ["detail": String(detail.prefix(80)), "route": String(route.prefix(60))])
+        }
         ptt.onEvent = { [unowned self] event in handle(event) }
         NotificationCenter.default.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: .main) { [weak self] note in
             let raw = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt
@@ -214,9 +222,17 @@ final class TalkController: ObservableObject {
         answer(ring, via: "in app")
     }
 
-    /// The relay abandons an unanswered ring by itself; nothing to tell it.
+    /// The relay abandons an unanswered ring by itself; nothing to tell it. The decline is
+    /// uploaded as a short timeline, so the relay's summaries can tell it from a missed ring.
     func declineIncomingRing() {
+        let ring = incomingRing
         clearIncomingRing()
+        guard let ring, let baseURL = relayBaseURL, let session = client.session else { return }
+        var timeline = Timeline(role: .receiver)
+        if let sentAt = ring.pushSentAt { timeline.mark("pushSentAtServer", detail: String(Int(sentAt))) }
+        timeline.mark("ringDeclined", detail: "in app")
+        let offset = clockOffsetMs
+        Task { await uploadTimeline(timeline, conversationId: ring.conversationId, clockOffsetMs: offset, baseURL: baseURL, session: session) }
     }
 
     func end() {
@@ -660,19 +676,28 @@ final class TalkController: ObservableObject {
             openIdleStreamIfNeeded()
             return
         }
-        let body = ended.timeline.upload(conversationId: conversationId, userId: session.userId, clockOffsetMs: offset)
         Task {
-            do {
-                try await Self.post(baseURL, "/v1/metrics", body: body, token: session.token)
-            } catch {
-                log("Metrics upload failed: \(error.localizedDescription)")
-            }
+            await uploadTimeline(ended.timeline, conversationId: conversationId, clockOffsetMs: offset, baseURL: baseURL, session: session)
             endBackgroundTask()
             openIdleStreamIfNeeded()
         }
     }
 
     // MARK: Relay HTTPS (clock samples and timelines)
+
+    /// The relay turns the timeline into a summary (outcome, latencies) and keeps only that
+    /// (the Beta telemetry spec); the whole timeline stays in this iPhone's diagnostics log.
+    private func uploadTimeline(_ timeline: Timeline, conversationId: String, clockOffsetMs: Double, baseURL: URL, session: AccountSession) async {
+        Telemetry.shared.timeline(timeline, conversationId: conversationId)
+        var body = timeline.upload(conversationId: conversationId, userId: session.userId, clockOffsetMs: clockOffsetMs)
+        body["device"] = Telemetry.shared.device
+        do {
+            try await Self.post(baseURL, "/v1/metrics", body: body, token: session.token)
+        } catch {
+            log("Metrics upload failed: \(error.localizedDescription)")
+        }
+        await Telemetry.shared.flush()
+    }
 
     private static func timeSample(_ baseURL: URL, token: String) async throws -> (offsetMs: Double, roundTripMs: Double) {
         var request = URLRequest(url: baseURL.appendingPathComponent("v1/time"))

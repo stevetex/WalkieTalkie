@@ -31,6 +31,9 @@ trap 'rm -rf "$stage"' EXIT
   # Prototype: the prefetch push for the watch's notification service extension
   # (prefetchAlert in server/src/apns.ts). PREFETCH_PUSH_MS=0 in config.sh turns it off.
   echo "PREFETCH_PUSH_MS=${PREFETCH_PUSH_MS:-3000}"
+  # Accounts whose devices' whole timelines are logged, not only summaries (the Beta
+  # telemetry spec): Steve's and the Test Bot's, for measurement runs.
+  if [ -n "${FULL_TIMELINE_USERS:-}" ]; then echo "FULL_TIMELINE_USERS=$FULL_TIMELINE_USERS"; fi
   # Public CA refuses ACME accounts without a contact address.
   acme_email=${ACME_EMAIL:-${ALERT_EMAIL:-}}
   if [ -n "$acme_email" ]; then echo "ACME_EMAIL=$acme_email"; fi

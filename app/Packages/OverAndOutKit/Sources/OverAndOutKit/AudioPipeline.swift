@@ -57,6 +57,9 @@ public final class AudioPipeline {
     private var prebuffering = false
     private var reportedFirstPlayback = false
     private var scheduled = 0
+    /// When everything scheduled should have finished playing (ms, audio queue only).
+    private var expectedDrainAt: Double = 0
+    private var drainWatchdog: DispatchWorkItem?
 
     /// Frames of jitter buffer before a live burst starts playing (4 × 20 ms).
     private static let prebufferFrames = 4
@@ -87,17 +90,7 @@ public final class AudioPipeline {
     public func start(capture: Bool = true) throws {
         wantsRunning = true
         wantsCapture = capture
-        if !capture, engineHasInput, !engine.isRunning {
-            let fresh = AVAudioEngine()
-            let freshPlayer = AVAudioPlayerNode()
-            queue.sync {
-                engine = fresh
-                player = freshPlayer
-            }
-            attached = false
-            engineHasInput = false
-            observeConfigurationChanges()
-        }
+        if !capture, engineHasInput, !engine.isRunning { replaceEngine() }
         if !attached {
             engine.attach(player)
             engine.connect(player, to: engine.mainMixerNode, format: VoiceFrame.pcmFormat)
@@ -181,11 +174,29 @@ public final class AudioPipeline {
             self.pendingSamples.removeAll()
             self.held.removeAll()
             self.scheduled = 0
+            self.expectedDrainAt = 0
+            self.drainWatchdog?.cancel()
         }
     }
 
-    /// watchOS stops the engine when the audio configuration changes, for instance when
-    /// another session takes the audio hardware.
+    /// A new engine and player, attached on the next start. The old engine's connections keep
+    /// the hardware format they were made with.
+    private func replaceEngine() {
+        let fresh = AVAudioEngine()
+        let freshPlayer = AVAudioPlayerNode()
+        queue.sync {
+            engine = fresh
+            player = freshPlayer
+        }
+        attached = false
+        engineHasInput = false
+        observeConfigurationChanges()
+    }
+
+    /// The system stops the engine when the audio configuration changes: another session takes
+    /// the hardware, or the route's format changes (run 57: hearing aids switching to a call
+    /// link as PushToTalk activated audio). The stopped engine is rebuilt rather than restarted:
+    /// restarted with its old connections, it played static and never reported buffers played.
     private func restartAfterConfigurationChange() {
         guard wantsRunning, attached, !engine.isRunning else { return }
         // The stopped engine discarded what the player had scheduled, and those buffers'
@@ -193,8 +204,12 @@ public final class AudioPipeline {
         queue.sync {
             let lost = scheduled
             scheduled = 0
+            expectedDrainAt = 0
+            drainWatchdog?.cancel()
             if lost > 0, held.isEmpty { DispatchQueue.main.async { self.onPlaybackDrained?() } }
         }
+        if engineHasInput { engine.inputNode.removeTap(onBus: 0) }
+        replaceEngine()
         do {
             try start(capture: wantsCapture)
             onRestart?("engine restarted after configuration change")
@@ -295,7 +310,9 @@ public final class AudioPipeline {
 
     private func flushHeld() {
         guard running, !held.isEmpty else { return }
+        let now = Clock.nowMs()
         for buffer in held {
+            expectedDrainAt = max(expectedDrainAt, now) + Double(buffer.frameLength) / buffer.format.sampleRate * 1000
             scheduled += 1
             player.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack) { [weak self] _ in
                 guard let self else { return }
@@ -309,10 +326,31 @@ public final class AudioPipeline {
             }
         }
         held.removeAll()
+        armDrainWatchdog()
         if !player.isPlaying { player.play() }
         if !reportedFirstPlayback {
             reportedFirstPlayback = true
             onFirstPlayback?()
         }
+    }
+
+    /// If what was scheduled still hasn't been reported played a second after it should have
+    /// finished, count it as played: a stalled player must not leave the app "listening"
+    /// forever (run 57).
+    private func armDrainWatchdog() {
+        drainWatchdog?.cancel()
+        let item = DispatchWorkItem { [weak self] in
+            guard let self, self.scheduled > 0, Clock.nowMs() >= self.expectedDrainAt + 1_000 else { return }
+            let stalled = self.scheduled
+            let drained = self.held.isEmpty
+            self.scheduled = 0
+            self.expectedDrainAt = 0
+            DispatchQueue.main.async {
+                self.onRestart?("playback stalled: \(stalled) buffers never reported played; counted as played")
+                if drained { self.onPlaybackDrained?() }
+            }
+        }
+        drainWatchdog = item
+        queue.asyncAfter(deadline: .now() + .milliseconds(Int(max(0, expectedDrainAt - Clock.nowMs())) + 1_000), execute: item)
     }
 }
