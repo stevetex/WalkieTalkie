@@ -1,177 +1,74 @@
 import OverAndOutKit
 import SwiftUI
 
+/// Signed out → the prompt to sign in on the iPhone. Then the friends list, the home screen
+/// as on the iPhone (design decision 2026-09-29), with a Talk screen per friend pushed from
+/// it and an in-app ring over everything.
 struct ContentView: View {
     @ObservedObject var controller: ConversationController
     @ObservedObject var account: WatchAccount
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var path: [Friend] = []
+    @State private var leftAt: Date?
 
-    private var talkTitle: String {
-        controller.peerName ?? account.selectedFriend?.name ?? ""
-    }
-
-    private var mouthState: MascotTalkButton.MouthState {
-        if controller.phase == .idle && account.selectedFriend == nil { return .disabled }
-        if controller.phase != .idle && !controller.talkReady { return .waiting }
-        if controller.isTalking { return .talking }
-        if controller.remoteTalking { return .listening }
-        return .idle
-    }
-
-    private var statusColor: Color {
-        switch mouthState {
-        case .talking: return Brand.orange
-        case .listening: return .green
-        default: return Brand.silver
-        }
-    }
+    /// Back after this long with no conversation: the friends list, not the last Talk screen.
+    static let homeAfter: TimeInterval = 120
 
     var body: some View {
         Group {
             if account.session == nil {
                 SignInPrompt(phoneSignedIn: account.phoneSignedIn)
-            } else if account.friends.isEmpty && controller.phase == .idle && controller.incomingRing == nil {
-                NoFriendsYet(loaded: account.friendsLoaded)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(Brand.indigo.ignoresSafeArea())
             } else {
-                main
+                home
             }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Brand.indigo.ignoresSafeArea())
         .brandScreen()
+        .onChange(of: account.session?.userId) { _ in path = [] }
     }
 
-    /// The mascot fills the screen and its mouth is the Talk button. The friend's name and
-    /// End sit top left, away from the mouth, so End isn't hit while talking.
-    private var main: some View {
-        ZStack(alignment: .topLeading) {
-            VStack(spacing: 0) {
-                MascotTalkButton(
-                    state: mouthState,
-                    ringing: controller.incomingRing != nil,
-                    friendName: talkTitle.isEmpty ? "your friend" : talkTitle
-                ) { pressed in
-                    pressed ? controller.talkPressed() : controller.talkReleased()
+    private var home: some View {
+        NavigationStack(path: $path) {
+            FriendsListView(controller: controller, account: account)
+                .navigationDestination(for: Friend.self) { friend in
+                    TalkView(controller: controller, account: account, friend: friend)
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                // The antenna ball clear of Settings above it.
-                .padding(.top, 30)
-                // Clear of the name and End (or the caller) at top left; the orange side
-                // button has room.
-                .offset(x: ringing ? 22 : 14)
-
-                if ringing {
-                    // Below the mascot, which shrinks to make room, so nothing covers the mouth.
-                    // Decline on the left and Answer on the right, as on the iPhone.
-                    HStack(spacing: 6) {
-                        Button("Decline") { controller.declineIncomingRing() }
-                            .buttonStyle(.bordered)
-                            .tint(.gray)
-                        Button("Answer") { controller.answerIncomingRing() }
-                            .buttonStyle(.borderedProminent)
-                            .tint(Brand.orange)
-                            .foregroundStyle(Brand.ink)
-                    }
-                    .padding(.horizontal, 8)
-                    .padding(.bottom, 8)
-                } else {
-                    Text(controller.statusLine.isEmpty ? idleStatus : controller.statusLine)
-                        .font(.footnote)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.7)
-                        .foregroundStyle(statusColor)
-                        .padding(.bottom, 10)
-                }
-            }
-            // Up under the time, so the antenna rises between the time and Settings, and down
-            // to the bottom edge.
-            .ignoresSafeArea(edges: [.top, .bottom])
-
-            topLeft
         }
-        .padding(.horizontal, 4)
-        .toolbar {
-            ToolbarItem(placement: settingsPlacement) {
-                NavigationLink {
-                    SettingsView(controller: controller, account: account)
-                } label: {
-                    Image(systemName: "gearshape")
-                        .foregroundStyle(Brand.ivory)
-                }
-                // Quiet, so it doesn't compete with the mascot's orange.
-                .tint(Brand.surface)
-                .accessibilityLabel("Settings")
+        .accessibilityHidden(controller.incomingRing != nil)
+        .overlay {
+            if let ring = controller.incomingRing {
+                IncomingRingView(controller: controller, account: account, ring: ring)
             }
+        }
+        .onAppear { showArrived(controller.arrivedFrom) }
+        .onChange(of: controller.arrivedFrom) { showArrived($0) }
+        // A friend who's gone (removed, blocked) takes their Talk screen with them.
+        .onChange(of: account.friends) { friends in
+            path.removeAll { shown in shown.id != controller.peerId && !friends.contains { $0.id == shown.id } }
+        }
+        .onChange(of: scenePhase) { phase in
+            if phase != .active {
+                if leftAt == nil { leftAt = Date() }
+                return
+            }
+            defer { leftAt = nil }
+            guard let leftAt, Date().timeIntervalSince(leftAt) >= Self.homeAfter,
+                  controller.phase == .idle, controller.incomingRing == nil else { return }
+            path = []
         }
         .task { controller.requestMicrophone() }
     }
 
-    private var ringing: Bool { controller.incomingRing != nil }
-
-    private var idleStatus: String {
-        account.selectedFriend != nil ? "Hold the mouth to talk" : "Choose a friend"
-    }
-
-    /// The friend Talk rings (a picker when there's a choice), and End during a conversation.
-    private var topLeft: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            if controller.phase == .idle, controller.incomingRing == nil,
-               account.friends.count > 1 || account.selectedFriend == nil {
-                NavigationLink {
-                    FriendPicker(account: account)
-                } label: {
-                    VStack(alignment: .leading, spacing: 4) {
-                        if let friend = account.selectedFriend {
-                            Avatar(friend: friend, size: 28, client: account.client)
-                        }
-                        HStack(spacing: 2) {
-                            Text(account.selectedFriend?.name ?? "Choose")
-                            Image(systemName: "chevron.right").font(.caption2)
-                        }
-                    }
-                }
-                .buttonStyle(.plain)
-            } else if let ring = controller.incomingRing {
-                if let caller = account.friends.first(where: { $0.id == ring.from }) {
-                    Avatar(friend: caller, size: 32, client: account.client)
-                }
-                Text(ring.fromName)
-                    .minimumScaleFactor(0.7)
-                Text("is calling")
-                    .font(.caption2)
-                    .foregroundStyle(Brand.silver)
-            } else if let friend = currentFriend {
-                Avatar(friend: friend, size: 28, client: account.client)
-                Text(friend.name)
-            } else if !talkTitle.isEmpty {
-                Text(talkTitle)
-            }
-            if controller.phase != .idle {
-                Button(role: .destructive) { controller.end() } label: {
-                    Label("End", systemImage: "xmark")
-                        .labelStyle(.titleAndIcon)
-                        .font(.caption2.weight(.semibold))
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.mini)
-                .fixedSize()
-            }
-        }
-        .font(.footnote.weight(.semibold))
-        .lineLimit(1)
-        .foregroundStyle(Brand.ivory)
-        // Narrower while ringing, when the mascot moves right to make room.
-        .frame(maxWidth: ringing ? 64 : 110, alignment: .leading)
-    }
-
-    /// The friend in the conversation, or the one Talk rings.
-    private var currentFriend: Friend? {
-        if let id = controller.peerId { return account.friends.first { $0.id == id } }
-        return account.selectedFriend
-    }
-
-    private var settingsPlacement: ToolbarItemPlacement {
-        if #available(watchOS 10.0, *) { return .topBarTrailing }
-        return .automatic
+    /// An answered ring: the caller's Talk screen, with the friends list behind it.
+    private func showArrived(_ id: String?) {
+        guard let id else { return }
+        controller.arrivedFrom = nil
+        guard path.last?.id != id else { return }
+        // Not in the cached list yet (a new friend): the ring's name will do until it reloads.
+        let friend = account.friends.first { $0.id == id }
+            ?? Friend(id: id, name: controller.peerName ?? "Your friend", since: 0)
+        path = [friend]
     }
 }
 
@@ -221,31 +118,5 @@ struct SmallMascot: View {
             .aspectRatio(contentMode: .fit)
             .frame(height: 76)
             .accessibilityHidden(true)
-    }
-}
-
-struct FriendPicker: View {
-    @ObservedObject var account: WatchAccount
-    @Environment(\.dismiss) private var dismiss
-
-    var body: some View {
-        List(account.friends) { friend in
-            Button {
-                account.selectedFriendId = friend.id
-                dismiss()
-            } label: {
-                HStack {
-                    Avatar(friend: friend, size: 28, client: account.client)
-                    Text(friend.name)
-                    Spacer()
-                    if friend.id == account.selectedFriend?.id {
-                        Image(systemName: "checkmark").foregroundStyle(Brand.accent)
-                    }
-                }
-            }
-            .listRowBackground(Brand.surface)
-        }
-        .brandScreen()
-        .navigationTitle("Friends")
     }
 }

@@ -34,9 +34,14 @@ final class ConversationController: NSObject, ObservableObject {
     let account = WatchAccount.shared
     @Published private(set) var phase: Phase = .idle
     @Published private(set) var statusLine = ""
+    /// The friend `statusLine` is about (it stays after a conversation, for example "Missed
+    /// Alice"), so only their Talk screen shows it.
+    @Published private(set) var statusPeerId: String?
     @Published private(set) var peerName: String?
     /// Who the conversation is with, for their picture.
-    @Published private(set) var peerId: String?
+    @Published private(set) var peerId: String? {
+        didSet { if let peerId { statusPeerId = peerId } }
+    }
     @Published private(set) var isTalking = false
     @Published private(set) var remoteTalking = false
     /// In a conversation and able to record right now (relay open and audio on). The Talk
@@ -44,6 +49,9 @@ final class ConversationController: NSObject, ObservableObject {
     @Published private(set) var talkReady = false
     /// A ring that arrived while the app was on screen, waiting for Answer or Decline.
     @Published private(set) var incomingRing: Ring?
+    /// Set when a ring is answered (in the app or from its notification), so the app shows
+    /// the caller's Talk screen. The view clears it.
+    @Published var arrivedFrom: String?
     /// When the in-app ring's notification was delivered, for the timeline.
     private var incomingRingDelivered: Date?
     /// A relay stream opened (without joining) while an in-app ring is showing, so the
@@ -257,13 +265,17 @@ final class ConversationController: NSObject, ObservableObject {
 
     // MARK: UI actions
 
-    func talkPressed() {
-        guard !talkHeld, conversation != nil || account.selectedFriend != nil else { return }
+    /// Hold on a friend's Talk screen. A conversation with someone else ends first, as on
+    /// the iPhone.
+    func talkPressed(to friend: Friend) {
+        guard !talkHeld else { return }
+        // Before holding the new press: finishing clears talkHeld.
+        if let current = conversation, current.peerId != friend.id { finish() }
         talkHeld = true
         isTalking = true
         idleTimer?.invalidate()
         if conversation == nil {
-            startOutgoingConversation()
+            startOutgoingConversation(peerId: friend.id, peerName: friend.name)
         } else {
             conversation?.timeline.mark("talkPressedInWindow", once: false)
             startBurstIfReady()
@@ -364,6 +376,8 @@ final class ConversationController: NSObject, ObservableObject {
         activateOwnAudio()
         resetIdleTimer()
         removeDeliveredNotifications(for: ring.conversationId)
+        // Last, so showing the caller's screen never delays the relay or the audio.
+        arrivedFrom = ring.from
     }
 
     /// Prototype: plays what the notification service extension downloaded when the
@@ -474,17 +488,15 @@ final class ConversationController: NSObject, ObservableObject {
 
     // MARK: Outgoing
 
-    private func startOutgoingConversation() {
-        guard let friend = account.selectedFriend else { return }
+    private func startOutgoingConversation(peerId: String, peerName name: String) {
         var timeline = Timeline(role: .sender)
         timeline.mark("talkPressed")
-        let name = friend.name
         conversation = Conversation(outgoing: true, conversationId: nil,
-                                    peerId: friend.id, peerName: name, timeline: timeline)
+                                    peerId: peerId, peerName: name, timeline: timeline)
         phase = .connecting
         peerName = name
-        peerId = friend.id
-        statusLine = "Connecting…"
+        self.peerId = peerId
+        statusLine = "Connecting to \(name)…"
         connectRelay()
         activateOwnAudio()
     }
@@ -524,7 +536,7 @@ final class ConversationController: NSObject, ObservableObject {
         refineClockOffset()
         if current.outgoing {
             phase = .live
-            statusLine = "Talking to \(current.peerName)"
+            statusLine = "Live with \(current.peerName)"
             startBurstIfReady()
             resetIdleTimer()
         }
@@ -568,7 +580,7 @@ final class ConversationController: NSObject, ObservableObject {
             conversation?.joined = true
             conversation?.timeline.mark("joined", detail: "\(message.replayBursts ?? 0) buffered bursts")
             phase = .live
-            statusLine = "With \(name)"
+            statusLine = "Live with \(name)"
         case "burst-start":
             incomingBurstId = message.burstId
             let prefetched = message.burstId.flatMap { prefetchedFrames[$0] }
@@ -592,7 +604,7 @@ final class ConversationController: NSObject, ObservableObject {
             // ignores this device's leave, since it's no longer the one in the conversation.)
             audio.endCapture {}
             burstId = nil
-            finish(status: "Continued on your iPhone")
+            finish(status: "With \(name) on your iPhone")
         case "conversation-ended":
             // A block, an unfriending or a deleted account: the relay dropped the conversation.
             guard message.conversationId == conversation?.conversationId else { return }
@@ -649,7 +661,7 @@ final class ConversationController: NSObject, ObservableObject {
     private func friendStoppedTalkingIfDone() {
         guard remoteTalking, incomingBurstEnded, speakerIdle else { return }
         remoteTalking = false
-        statusLine = "With \(conversation?.peerName ?? "Your friend")"
+        statusLine = "Live with \(conversation?.peerName ?? "your friend")"
     }
 
     // MARK: Conversation window
@@ -867,6 +879,7 @@ extension ConversationController: UNUserNotificationCenterDelegate {
                 guard self.incomingRing == ring else { return }
                 self.declineIncomingRing()
                 self.statusLine = "Missed \(ring.fromName)"
+                self.statusPeerId = ring.from
             }
         }
     }
