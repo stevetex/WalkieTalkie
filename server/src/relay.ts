@@ -745,6 +745,7 @@ export class Relay {
     conversation.floor = null;
     this.byId.delete(conversation.id);
     this.byPair.delete(pairKey(...conversation.members));
+    this.opts.metrics.server(conversation.id, "conversationEnded", this.opts.now(), "revoked");
   }
 
   private armRingTimer(conversation: Conversation, to: string, ms: number): void {
@@ -825,6 +826,8 @@ export class Relay {
       this.clearRing(conversation);
       this.byId.delete(conversation.id);
       this.byPair.delete(pairKey(...conversation.members));
+      // The telemetry record is written now (telemetry.ts).
+      this.opts.metrics.server(conversation.id, "conversationEnded", this.opts.now());
     }
   }
 }

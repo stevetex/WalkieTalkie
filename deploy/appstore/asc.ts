@@ -11,6 +11,18 @@
 //   node deploy/appstore/asc.ts add-tester <email> [first name] [last name]
 //       Adds someone to the internal group. Internal testers must already be users on the
 //       App Store Connect team (Users and Access), with any role.
+//
+//   node deploy/appstore/asc.ts feedback [--days 14]
+//       TestFlight screenshot feedback: when, which build, device and OS, the tester, the comment.
+//
+//   node deploy/appstore/asc.ts crashes [--days 14] [--log <id>]
+//       Crashes testers sent from TestFlight (iPhone, watch and extension); --log prints one's
+//       crash log.
+//
+//   node deploy/appstore/asc.ts diagnostics [build]
+//       Hang, launch and disk-write signatures Apple collected for a build (default: the newest).
+//
+// These print testers' comments and emails, so they stay on this Mac (the Beta telemetry spec).
 
 import { createPrivateKey, sign } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
@@ -29,7 +41,10 @@ if (!existsSync(keyPath)) fail(`No API key at ${keyPath}`);
 const privateKey = createPrivateKey(readFileSync(keyPath, "utf8"));
 const groupName = config.ASC_GROUP || "House";
 
-const { positionals, values } = parseArgs({ allowPositionals: true, options: { notes: { type: "string" } } });
+const { positionals, values } = parseArgs({
+  allowPositionals: true,
+  options: { notes: { type: "string" }, days: { type: "string" }, log: { type: "string" } },
+});
 const [command, ...args] = positionals;
 
 // Tokens last at most 20 minutes; a fresh one per request keeps long waits simple.
@@ -155,8 +170,49 @@ switch (command) {
     console.log(`Added ${email} to "${groupName}".`);
     break;
   }
+  case "feedback":
+  case "crashes": {
+    const app = await appId();
+    if (command === "crashes" && values.log) {
+      const log = await api("GET", `/v1/betaFeedbackCrashSubmissions/${values.log}/crashLog`);
+      console.log(log.data?.attributes?.logText ?? "No crash log.");
+      break;
+    }
+    const since = Date.now() - Number(values.days ?? 14) * 86_400_000;
+    const kind = command === "feedback" ? "betaFeedbackScreenshotSubmissions" : "betaFeedbackCrashSubmissions";
+    const items = await api("GET", `/v1/apps/${app}/${kind}?sort=-createdDate&limit=100&include=build,tester`);
+    const included = new Map<string, any>((items.included ?? []).map((i: any) => [`${i.type}/${i.id}`, i]));
+    const rows = items.data.filter((f: any) => Date.parse(f.attributes.createdDate) >= since);
+    if (!rows.length) console.log(`No TestFlight ${command === "feedback" ? "feedback" : "crashes"} in the last ${values.days ?? 14} days.`);
+    for (const f of rows) {
+      const a = f.attributes;
+      const build = included.get(`builds/${f.relationships?.build?.data?.id}`)?.attributes?.version ?? "?";
+      const tester = included.get(`betaTesters/${f.relationships?.tester?.data?.id}`)?.attributes;
+      const who = tester ? [tester.firstName, tester.lastName].filter(Boolean).join(" ") || tester.email : a.email ?? "?";
+      const watch = a.pairedAppleWatch ? `, watch ${a.pairedAppleWatch}` : "";
+      console.log(`${a.createdDate.slice(0, 16).replace("T", " ")}  build ${build}  ${a.deviceModel ?? "?"} iOS ${a.osVersion ?? "?"}${watch}  ${who}  (${f.id})`);
+      if (a.comment) console.log(`    "${a.comment}"`);
+    }
+    break;
+  }
+  case "diagnostics": {
+    const app = await appId();
+    const build = args[0]
+      ? await findBuild(app, args[0])
+      : (await api("GET", `/v1/builds?filter[app]=${app}&sort=-uploadedDate&limit=1`)).data[0];
+    if (!build) fail(`No build ${args[0] ?? ""}`);
+    // A build Apple has no diagnostics for yet answers 404.
+    const signatures = await api("GET", `/v1/builds/${build.id}/diagnosticSignatures?limit=50`)
+      .catch((err: Error) => (err.message.includes("HTTP 404") ? { data: [] } : Promise.reject(err)));
+    if (!signatures.data.length) console.log(`No diagnostics for build ${build.attributes.version} yet (Apple needs enough devices and days).`);
+    for (const s of signatures.data) {
+      const a = s.attributes;
+      console.log(`${a.diagnosticType}  weight ${Number(a.weight ?? 0).toFixed(1)}%  ${a.signature}  (${s.id})`);
+    }
+    break;
+  }
   default:
-    fail("usage: node deploy/appstore/asc.ts status | release <build> [--notes …] | add-tester <email> [first] [last]");
+    fail("usage: node deploy/appstore/asc.ts status | release <build> [--notes …] | add-tester <email> [first] [last] | feedback [--days N] | crashes [--days N] [--log <id>] | diagnostics [build]");
 }
 
 // config.sh's KEY="value" lines.

@@ -86,6 +86,7 @@ final class AppModel: ObservableObject {
             Task { await self.registerDevice() }
             talk.pushToTalkChanged()
         }
+        Telemetry.shared.send = { [client] events, device in try await client.sendEvents(events, device: device) }
         pushToTalk.onLeftUnexpectedly = { [weak self] _ in
             guard let self else { return }
             // On screen, Friends and Settings show it; otherwise say so at once (run 54).
@@ -177,6 +178,11 @@ final class AppModel: ObservableObject {
             blocks = loadedBlocks
             friendsLoaded = true
             if platforms.contains(.watch), platforms.contains(.iphone), !askedRingOn { askingRingOn = true }
+            // The server asked for this iPhone's diagnostics log (tools/beta.ts pull).
+            let client = client
+            await Telemetry.shared.uploadIfRequested(requestedAt: user.diagnosticsRequestedAt) { data in
+                try await client.uploadDiagnostics(data, platform: .iphone)
+            }
         } catch {
             if session != nil { errorMessage = describe(error) }
         }
@@ -196,6 +202,23 @@ final class AppModel: ObservableObject {
         pushToTalk.rejoinIfWanted()
         let status = await UNUserNotificationCenter.current().notificationSettings().authorizationStatus
         notificationsUndetermined = status == .notDetermined
+        if session != nil { await Telemetry.shared.flush() }
+    }
+
+    /// Settings → Report a Problem. With diagnostics, this iPhone sends its log at once; the
+    /// server asks the watch for its own.
+    func reportProblem(note: String, diagnostics: Bool) async -> Bool {
+        do {
+            try await client.sendFeedback(note: note, diagnostics: diagnostics, platform: .iphone)
+            if diagnostics, let data = Telemetry.shared.log?.compressed() {
+                try? await client.uploadDiagnostics(data, platform: .iphone)
+                UserDefaults.standard.set(Clock.nowMs(), forKey: "diagnosticsUploadedAt")
+            }
+            return true
+        } catch {
+            errorMessage = describe(error)
+            return false
+        }
     }
 
     func allowNotifications() async {
@@ -248,6 +271,7 @@ final class AppModel: ObservableObject {
             } catch {
                 reachability = "Not registered: \(describe(error))"
                 print("[oao] Device registration failed: \(error)")
+                Telemetry.shared.event("registrationFailed", ["pushType": pushType ?? "app", "error": Self.errorCode(error)])
                 break
             }
         }
@@ -406,6 +430,13 @@ final class AppModel: ObservableObject {
             pendingInvite?.error = describe(error)
         }
         pendingInvite?.accepting = false
+    }
+
+    /// A short, name-free code for telemetry: the API's error code, or the error's domain and code.
+    static func errorCode(_ error: Error) -> String {
+        if let api = error as? AccountAPIError { return api.code }
+        let ns = error as NSError
+        return "\(ns.domain) \(ns.code)"
     }
 
     func describe(_ error: Error) -> String {

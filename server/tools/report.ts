@@ -5,6 +5,8 @@
 //   node tools/report.ts --all        every conversation, plus medians
 //
 // Server and token come from SPIKE_SERVER (default http://localhost:8080) and SPIKE_TOKEN.
+// A relay node keeps a conversation's events (its own and the devices' uploads) for about 10
+// minutes after it ends; older ones are in Cloud Logging: node tools/beta.ts conversation <id>.
 
 import { formatTimeline } from "../src/report.ts";
 import type { RingAttempt } from "../src/report.ts";

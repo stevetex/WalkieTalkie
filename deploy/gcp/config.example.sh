@@ -21,8 +21,11 @@ APNS_KEY_ID=""
 APNS_TEAM_ID=""
 APNS_BUNDLE_ID=""  # must match the watch app's bundle ID
 
-# Option E relay nodes: setup-uptime.sh emails alerts here.
+# Option E relay nodes: setup-uptime.sh emails alerts here (and setup-telemetry.sh's alerts).
 ALERT_EMAIL="you@example.com"
+# Accounts whose devices' whole timelines go to Cloud Logging, not only summaries
+# (deploy-relay.sh): comma-separated account IDs, for measurement runs.
+FULL_TIMELINE_USERS=""
 
 # The account API (setup-api.sh, deploy-api.sh). APPLE_TEAM_ID defaults to APNS_TEAM_ID.
 # The Sign in with Apple key revokes a user's Apple tokens when they delete their account:

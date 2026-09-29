@@ -40,6 +40,13 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const MAX_NAME = 40;
 const MAX_NOTE = 1000;
 export const MAX_PHOTO_BYTES = 100 * 1024;
+// A device's gzipped diagnostics log (the Beta telemetry spec); a Firestore document holds 1 MiB.
+export const MAX_DIAGNOSTICS_BYTES = 900 * 1024;
+const DIAGNOSTICS_TTL_MS = 30 * DAY_MS;
+const FEEDBACK_TTL_MS = 90 * DAY_MS;
+// A pull stays open this long, so a device opened later still answers it.
+const DIAGNOSTICS_REQUEST_MS = 7 * DAY_MS;
+const MAX_FEEDBACK = 2000;
 // Firestore's limit on writes per commit.
 const MAX_WRITES = 500;
 
@@ -53,6 +60,9 @@ export interface User {
   avatar?: string;
   // Which device rings (design decision 2026-09-27); absent = the watch if there is one.
   ringOn?: Platform;
+  // When Steve asked for this account's device logs (tools/beta.ts pull, or a problem report),
+  // while the request is open; the devices upload theirs once.
+  diagnosticsRequestedAt?: number;
 }
 
 export interface Friend {
@@ -614,18 +624,85 @@ export class Accounts {
     return sender !== undefined && friendship !== undefined && recipient !== undefined;
   }
 
+  // Diagnostics (the Beta telemetry spec): the devices see the request in GET /v1/me and
+  // upload their own logs. During the TestFlight Beta they don't ask the person first.
+  async requestDiagnostics(userId: string): Promise<void> {
+    try {
+      await this.docs.commit([{ set: `users/${requireUserId(userId)}`, data: { diagnosticsRequestedAt: new Date(this.opts.now()) }, fields: ["diagnosticsRequestedAt"], exists: true }]);
+    } catch (err) {
+      if (err instanceof PreconditionFailed) throw new AccountError(404, "no-account");
+      throw err;
+    }
+  }
+
+  // One device's compressed log, kept 30 days (a TTL policy on expireAt): gzip, or raw DEFLATE
+  // as Apple's NSData .zlib compression makes it.
+  async saveDiagnostics(userId: string, deviceId: string, meta: { platform?: string; build?: string }, gzip: Buffer): Promise<string> {
+    requireUserId(userId);
+    checkId(deviceId, "device");
+    if (!gzip.length) throw new AccountError(400, "empty-diagnostics");
+    const now = this.opts.now();
+    const id = `${userId}_${deviceId}_${now}`;
+    await this.docs.commit([{
+      set: `diagnostics/${id}`,
+      data: {
+        userId,
+        deviceId,
+        platform: meta.platform ?? null,
+        build: meta.build ?? null,
+        size: gzip.length,
+        encoding: gzip[0] === 0x1f && gzip[1] === 0x8b ? "gzip" : "deflate-raw",
+        log: new Uint8Array(gzip),
+        createdAt: new Date(now),
+        expireAt: new Date(now + DIAGNOSTICS_TTL_MS),
+      },
+    }]);
+    return id;
+  }
+
+  // A problem report from the app, kept 90 days. With diagnostics, the account's devices are
+  // asked for their logs too.
+  async saveFeedback(
+    userId: string,
+    feedback: { note: string; platform?: string; build?: string; conversationId?: string; diagnostics: boolean },
+  ): Promise<string> {
+    requireUserId(userId);
+    const note = feedback.note.replace(/[\u0000-\u0009\u000B-\u001F\u007F]/g, "").trim().slice(0, MAX_FEEDBACK);
+    const id = randomId(12);
+    const now = this.opts.now();
+    await this.docs.commit([{
+      set: `feedback/${id}`,
+      data: {
+        userId,
+        note,
+        platform: feedback.platform ?? null,
+        build: feedback.build ?? null,
+        conversationId: feedback.conversationId?.slice(0, 64) ?? null,
+        diagnostics: feedback.diagnostics,
+        status: "open",
+        createdAt: new Date(now),
+        expireAt: new Date(now + FEEDBACK_TTL_MS),
+      },
+      exists: false,
+    }]);
+    if (feedback.diagnostics) await this.requestDiagnostics(userId);
+    return id;
+  }
+
   // Everything under the user, the friend entries on the other side, their open invites and
   // the Apple ID mapping. The user document goes last, so a failed deletion can be retried.
   // Reports stay (IDs only). Returns the Apple ID, whose tokens the caller revokes.
   async deleteAccount(userId: string): Promise<{ appleSub: string | null }> {
     requireUserId(userId);
-    const [[user], friends, blocks, devices, sessions, invites] = await Promise.all([
+    const [[user], friends, blocks, devices, sessions, invites, diagnostics, feedback] = await Promise.all([
       this.docs.getAll([`users/${userId}`]),
       this.docs.list(`users/${userId}/friends`),
       this.docs.list(`users/${userId}/blocks`),
       this.docs.list(`users/${userId}/devices`),
       this.docs.list(`users/${userId}/sessions`),
       this.docs.query("invites", { where: { field: "from", op: "EQUAL", value: userId } }),
+      this.docs.query("diagnostics", { where: { field: "userId", op: "EQUAL", value: userId } }),
+      this.docs.query("feedback", { where: { field: "userId", op: "EQUAL", value: userId } }),
     ]);
     if (!user) throw new AccountError(404, "no-account");
     const appleSub = typeof user.appleSub === "string" ? user.appleSub : null;
@@ -636,6 +713,8 @@ export class Accounts {
       ...(await this.pointerDeletes(userId, devices)),
       ...sessions.map((s): Write => ({ delete: `users/${userId}/sessions/${s.id}` })),
       ...invites.map((i): Write => ({ delete: `invites/${i.id}` })),
+      ...diagnostics.map((d): Write => ({ delete: `diagnostics/${d.id}` })),
+      ...feedback.map((f): Write => ({ delete: `feedback/${f.id}` })),
       ...(appleSub ? [{ delete: `appleSubs/${appleSub}` }] : []),
       { delete: `photos/${userId}` },
     ];
@@ -721,6 +800,8 @@ function toUser(id: string, data: FirestoreData): User {
   if (typeof data.photoVersion === "number") user.photoVersion = data.photoVersion;
   if (isAvatar(data.avatar)) user.avatar = data.avatar;
   if (isPlatform(data.ringOn)) user.ringOn = data.ringOn;
+  const requested = millis(data.diagnosticsRequestedAt);
+  if (requested && Date.now() - requested < DIAGNOSTICS_REQUEST_MS) user.diagnosticsRequestedAt = requested;
   return user;
 }
 

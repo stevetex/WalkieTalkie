@@ -1,3 +1,4 @@
+import OverAndOutKit
 import SwiftUI
 
 /// Makes the model, and so the PushToTalk channel manager, as the app launches, including
@@ -5,6 +6,11 @@ import SwiftUI
 final class AppDelegate: NSObject, UIApplicationDelegate {
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
         TalkController.logger.notice("Launched, state \(application.applicationState.rawValue)")
+        // Telemetry first, so the model's launch (and a PushToTalk push) is recorded.
+        let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        Telemetry.shared.configure(platform: .iphone, directory: support.appendingPathComponent("Diagnostics"), maxBytes: 2_000_000)
+        Telemetry.shared.event("appLaunched")
+        Diagnostics.shared.start()
         _ = AppModel.shared
         // Enables the app's push topics (including its .voip-ptt one) on this device's APNs
         // connection. No permission prompt: that's only for showing notifications.
@@ -50,6 +56,7 @@ struct OverAndOutApp: App {
                         }
                     case .background:
                         model.talk.appEnteredBackground()
+                        Task { await Telemetry.shared.flush() }
                     default:
                         break
                     }

@@ -130,6 +130,9 @@ final class ConversationController: NSObject, ObservableObject {
                 return rejoinOnFreshStream("relay closed before joining: \(reason)")
             }
             log("Relay closed: \(reason)")
+            // The stream ended without the app closing it, mid-conversation.
+            conversation?.timeline.mark("relayClosed", detail: String(reason.prefix(80)), once: false)
+            Telemetry.shared.event("relayDropped", ["reason": String(reason.prefix(80)), "conversationId": current.conversationId ?? ""])
             finish()
         }
         relay.onPostFinished = { [unowned self] started, finished, bytes, status in
@@ -287,10 +290,17 @@ final class ConversationController: NSObject, ObservableObject {
         answer(ring, via: "in app", delivered: incomingRingDelivered)
     }
 
-    /// The relay abandons an unanswered ring by itself; nothing to tell it.
+    /// The relay abandons an unanswered ring by itself; nothing to tell it. The decline is
+    /// uploaded as a short timeline, so the relay's summaries can tell it from a missed ring.
     func declineIncomingRing() {
+        let ring = incomingRing
         clearIncomingRing()
         closePreconnect()
+        guard let ring else { return }
+        var timeline = Timeline(role: .receiver)
+        if let sentAt = ring.pushSentAt { timeline.mark("pushSentAtServer", detail: String(Int(sentAt))) }
+        timeline.mark("ringDeclined", detail: "in app")
+        uploadTimeline(timeline, conversationId: ring.conversationId, clockOffsetMs: clockOffsetMs)
     }
 
     private func clearIncomingRing() {
@@ -719,7 +729,15 @@ final class ConversationController: NSObject, ObservableObject {
         statusLine = status
 
         guard let conversationId = ended.conversationId else { return }
-        let body = ended.timeline.upload(conversationId: conversationId, userId: account.session?.userId ?? "", clockOffsetMs: offset)
+        uploadTimeline(ended.timeline, conversationId: conversationId, clockOffsetMs: offset)
+    }
+
+    /// The relay turns the timeline into a summary (outcome, latencies) and keeps only that
+    /// (the Beta telemetry spec); the whole timeline stays in the watch's diagnostics log.
+    private func uploadTimeline(_ timeline: Timeline, conversationId: String, clockOffsetMs: Double) {
+        Telemetry.shared.timeline(timeline, conversationId: conversationId)
+        var body = timeline.upload(conversationId: conversationId, userId: account.session?.userId ?? "", clockOffsetMs: clockOffsetMs)
+        body["device"] = Telemetry.shared.device
         let api = APIClient(settings: settings, token: account.session?.token)
         Task { @MainActor in
             do {
@@ -727,6 +745,7 @@ final class ConversationController: NSObject, ObservableObject {
             } catch {
                 log("Metrics upload failed: \(error.localizedDescription)")
             }
+            await Telemetry.shared.flush()
         }
     }
 

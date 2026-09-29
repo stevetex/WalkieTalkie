@@ -20,6 +20,9 @@ final class NotificationService: UNNotificationServiceExtension {
     private var task: URLSessionDataTask?
     private var meta: [String: Any] = [:]
     private var files: (records: URL, meta: URL)?
+    /// This run, for its started and finished lines (the watch reports runs that never finish).
+    private let requestId = UUID().uuidString
+    private var conversationId = ""
 
     override func didReceive(_ request: UNNotificationRequest,
                              withContentHandler contentHandler: @escaping (UNNotificationContent) -> Void) {
@@ -27,6 +30,8 @@ final class NotificationService: UNNotificationServiceExtension {
         content = request.content
         meta["receivedAt"] = Self.nowMs()
         let info = request.content.userInfo
+        conversationId = info["conversationId"] as? String ?? ""
+        diagnostics(["name": "nseStarted", "prefetch": info["prefetch"] != nil])
         guard info["prefetch"] != nil,
               let conversationId = info["conversationId"] as? String,
               let group = Bundle.main.object(forInfoDictionaryKey: "OAOAppGroup") as? String,
@@ -75,6 +80,11 @@ final class NotificationService: UNNotificationServiceExtension {
     private func deliver() {
         guard let contentHandler, let content else { return }
         self.contentHandler = nil
+        var finished: [String: Any] = ["name": "nseFinished"]
+        if let status = meta["status"] { finished["status"] = status }
+        if let error = meta["error"] as? String { finished["error"] = String(error.prefix(80)) }
+        if let bytes = meta["bytes"] { finished["bytes"] = bytes }
+        diagnostics(finished)
         if let files, let data = try? JSONSerialization.data(withJSONObject: meta) {
             try? data.write(to: files.meta, options: .atomic)
         }
@@ -92,6 +102,29 @@ final class NotificationService: UNNotificationServiceExtension {
     }
 
     private static func nowMs() -> Double { Date().timeIntervalSince1970 * 1000 }
+
+    /// One line in the app group's diagnostics/extension.jsonl, which the watch app moves into
+    /// its own log (Watch/WatchDiagnostics.swift). IDs and times only.
+    private func diagnostics(_ fields: [String: Any]) {
+        guard let group = Bundle.main.object(forInfoDictionaryKey: "OAOAppGroup") as? String,
+              let container = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: group) else { return }
+        var line = fields
+        line["t"] = Self.nowMs()
+        line["requestId"] = requestId
+        line["conversationId"] = conversationId
+        guard var data = try? JSONSerialization.data(withJSONObject: line) else { return }
+        data.append(0x0A)
+        let directory = container.appendingPathComponent("diagnostics", isDirectory: true)
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let file = directory.appendingPathComponent("extension.jsonl")
+        if let handle = try? FileHandle(forWritingTo: file) {
+            handle.seekToEndOfFile()
+            handle.write(data)
+            try? handle.close()
+        } else {
+            try? data.write(to: file)
+        }
+    }
 
     /// The watch's session. An expired token is left to the app to refresh: without it the
     /// ring still works, just without the prefetch.

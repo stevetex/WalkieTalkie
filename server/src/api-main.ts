@@ -28,6 +28,7 @@ import { Firestore, gcloudAccessToken, metadataAccessToken, metadataProjectId } 
 import { loadSecrets } from "./secrets.ts";
 import { SessionSigner, SessionVerifier, generateSigningKey, parsePublicKeys, parseSigningKey, type SigningKey } from "./session.ts";
 import { ensureDir } from "./store.ts";
+import { FileSink, StdoutSink } from "./telemetry.ts";
 
 export const DEFAULT_APPLE_AUDIENCE = "com.cypressoakstudios.overandout";
 
@@ -87,6 +88,8 @@ export function apiFromEnv(env: NodeJS.ProcessEnv, docs: Docs, dataDir: string |
     apple,
     revoker,
     inviteBaseUrl: env.INVITE_BASE_URL || "https://overandout.app/i/",
+    // Cloud Run turns JSON lines on stdout into structured entries; local runs keep a file.
+    telemetry: dataDir ? new FileSink(dataDir) : new StdoutSink(),
   });
   notes.push(`session key ${signer.kid}, Apple audiences ${audiences.join(", ")}`);
   return { handler, accounts, verifier, notes };
