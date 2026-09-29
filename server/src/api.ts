@@ -62,6 +62,10 @@ export function createApi(options: ApiOptions): ApiHandler {
   const { accounts, signer, verifier } = options;
   const log = options.log ?? ((line: string) => console.log(line));
   const telemetry = options.telemetry ?? new StdoutSink();
+  // What people do, for usage analytics (the Beta telemetry spec): the account and the action's
+  // fields, never names.
+  const act = (action: string, userId: string, fields: Record<string, string | number | boolean | null> = {}) =>
+    telemetry.write({ kind: "oao.action", action, userId, ...fields });
 
   // The token's claims, checked only for its signature and expiry. Refresh and sign-out, which
   // check the session themselves, use this directly; every other route uses authorize.
@@ -105,6 +109,7 @@ export function createApi(options: ApiOptions): ApiHandler {
       const { user, created } = await accounts.signInWithApple(identity.sub, typeof name === "string" ? name : undefined);
       const sid = await accounts.createSession(user.id, deviceId, platform);
       log(`[api] ${user.id} signed in on a ${platform}${created ? " (new account)" : ""}`);
+      act(created ? "account_created" : "signed_in", user.id, { platform });
       return [200, { ...issue(user.id, sid, deviceId), user: userJSON(user), created }];
     }],
     ["POST", /^\/v1\/auth\/refresh$/, async (req) => {
@@ -119,11 +124,13 @@ export function createApi(options: ApiOptions): ApiHandler {
       if (deviceId === claims.dev) throw new AccountError(400, "same-device");
       const sid = await accounts.createSession(claims.sub, deviceId, platform);
       log(`[api] ${claims.sub} added a ${platform}`);
+      act("device_added", claims.sub, { platform });
       return [200, issue(claims.sub, sid, deviceId)];
     }],
     ["POST", /^\/v1\/auth\/signout$/, async (req) => {
       const claims = authenticate(req, REFRESH_GRACE_MS);
       await accounts.endSession(claims.sub, claims.sid, claims.dev);
+      act("signed_out", claims.sub);
       return [200, {}];
     }],
     ["GET", /^\/v1\/me$/, async (req) => {
@@ -142,9 +149,18 @@ export function createApi(options: ApiOptions): ApiHandler {
       if (ringOn !== undefined && ringOn !== null && !isPlatform(ringOn)) throw new AccountError(400, "bad-ring-on");
       let user: User | undefined;
       if (avatar !== undefined && avatar !== null && !isAvatar(avatar)) throw new AccountError(400, "bad-avatar");
-      if (typeof name === "string") user = await accounts.rename(claims.sub, name);
-      if (ringOn !== undefined) user = await accounts.setRingOn(claims.sub, ringOn as Platform | null);
-      if (avatar !== undefined) user = await accounts.setAvatar(claims.sub, avatar as string | null);
+      if (typeof name === "string") {
+        user = await accounts.rename(claims.sub, name);
+        act("renamed", claims.sub);
+      }
+      if (ringOn !== undefined) {
+        user = await accounts.setRingOn(claims.sub, ringOn as Platform | null);
+        act("ring_on", claims.sub, { ringOn: (ringOn as string | null) ?? "default" });
+      }
+      if (avatar !== undefined) {
+        user = await accounts.setAvatar(claims.sub, avatar as string | null);
+        act("avatar_set", claims.sub, { avatar: (avatar as string | null) ?? "default" });
+      }
       return [200, userJSON(user!)];
     }],
     ["DELETE", /^\/v1\/me$/, async (req) => {
@@ -169,6 +185,7 @@ export function createApi(options: ApiOptions): ApiHandler {
       }
       await accounts.deleteAccount(claims.sub);
       log(`[api] ${claims.sub} deleted their account`);
+      act("account_deleted", claims.sub);
       return [200, {}];
     }],
     ["PUT", /^\/v1\/me\/device$/, async (req) => {
@@ -203,10 +220,13 @@ export function createApi(options: ApiOptions): ApiHandler {
       const jpeg = await readBytes(req, MAX_PHOTO_BYTES);
       const photoVersion = await accounts.setPhoto(claims.sub, jpeg);
       log(`[api] ${claims.sub} set a photo (${jpeg.length} bytes)`);
+      act("photo_set", claims.sub);
       return [200, { photoVersion }];
     }],
     ["DELETE", /^\/v1\/me\/photo$/, async (req) => {
-      await accounts.removePhoto((await authorize(req)).sub);
+      const id = (await authorize(req)).sub;
+      await accounts.removePhoto(id);
+      act("photo_removed", id);
       return [200, {}];
     }],
     ["GET", /^\/v1\/users\/([\w.-]+)\/photo$/, async (req, [id]) => {
@@ -219,25 +239,38 @@ export function createApi(options: ApiOptions): ApiHandler {
       const { favorite } = await readBody(req);
       if (typeof favorite !== "boolean") throw new AccountError(400, "bad-request", "favorite is required");
       await accounts.setFavorite(claims.sub, id, favorite);
+      act("favorite", claims.sub, { on: favorite });
       return [200, {}];
     }],
     ["DELETE", /^\/v1\/friends\/([\w.-]+)$/, async (req, [id]) => {
-      await accounts.removeFriend((await authorize(req)).sub, id);
+      const me = (await authorize(req)).sub;
+      await accounts.removeFriend(me, id);
+      act("friend_removed", me);
       return [200, {}];
     }],
     ["POST", /^\/v1\/invites$/, async (req) => {
-      const { code, expiresAt } = await accounts.createInvite((await authorize(req)).sub);
+      const me = (await authorize(req)).sub;
+      const { code, expiresAt } = await accounts.createInvite(me);
+      act("invite_created", me);
       return [200, { code, url: `${options.inviteBaseUrl}${code}`, expiresAt }];
     }],
     ["GET", /^\/v1\/invites\/([\w.-]+)$/, async (req, [code]) => [200, await accounts.invite(code, (await authorize(req)).sub)]],
     ["POST", /^\/v1\/invites\/([\w.-]+)\/accept$/, async (req, [code]) => {
       const claims = await authorize(req);
+      // How long the invite waited, from when it expires (read before accepting uses it up).
+      const expiresAt = await accounts.invite(code, claims.sub).then((i) => i.expiresAt, () => undefined);
       const friend = await accounts.acceptInvite(code, claims.sub);
       log(`[api] ${claims.sub} and ${friend.id} are friends`);
+      act("invite_accepted", claims.sub, {
+        inviter: friend.id,
+        ...(expiresAt ? { inviteAgeMs: Math.max(0, Math.round(accounts.inviteTtlMs - (expiresAt - Date.now()))) } : {}),
+      });
       return [200, { friend }];
     }],
     ["DELETE", /^\/v1\/invites\/([\w.-]+)$/, async (req, [code]) => {
-      await accounts.cancelInvite(code, (await authorize(req)).sub);
+      const me = (await authorize(req)).sub;
+      await accounts.cancelInvite(code, me);
+      act("invite_cancelled", me);
       return [200, {}];
     }],
     ["GET", /^\/v1\/blocks$/, async (req) => [200, { blocks: await accounts.blocks((await authorize(req)).sub) }]],
@@ -246,10 +279,13 @@ export function createApi(options: ApiOptions): ApiHandler {
       const { userId } = await readBody(req);
       await accounts.block(claims.sub, String(userId));
       log(`[api] ${claims.sub} blocked ${userId}`);
+      act("blocked", claims.sub);
       return [200, {}];
     }],
     ["DELETE", /^\/v1\/blocks\/([\w.-]+)$/, async (req, [id]) => {
-      await accounts.unblock((await authorize(req)).sub, id);
+      const me = (await authorize(req)).sub;
+      await accounts.unblock(me, id);
+      act("unblocked", me);
       return [200, {}];
     }],
     ["POST", /^\/v1\/reports$/, async (req) => {
@@ -265,6 +301,7 @@ export function createApi(options: ApiOptions): ApiHandler {
       if (body.block === true) await accounts.block(claims.sub, report.userId);
       // A log-based alert on "[report]" emails the operator (deploy/gcp/setup-api.sh).
       log(`[report] ${id}: ${claims.sub} reported ${report.userId} for ${report.reason}${body.block === true ? ", and blocked them" : ""}`);
+      act("reported", claims.sub, { reason: report.reason, block: body.block === true });
       return [200, { id }];
     }],
     ["POST", /^\/v1\/events$/, async (req) => {

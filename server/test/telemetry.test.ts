@@ -30,7 +30,12 @@ test("a conversation's outcome, rings and intervals come from the relay's events
     server("pushSent", 1070, "watch"),
     server("pushAccepted", 1120, "alert: status 200 in 50 ms"),
     server("floorGrantSent", 1125, "u_bob"),
+    server("burstEnded", 3600, "u_bob 2600 ms, 130 frames"),
     server("receiverJoined", 9000, "3 buffered"),
+    server("talkStart", 11000, "u_alice -> u_bob"),
+    server("burstEnded", 12500, "u_alice 1500 ms, 75 frames"),
+    server("talkStart", 13000, "u_bob -> u_alice"),
+    server("burstEnded", 14000, "u_bob 1000 ms, 50 frames"),
   ]);
   assert.equal(answered.outcome, "answered");
   assert.equal(answered.from, "u_bob");
@@ -39,6 +44,10 @@ test("a conversation's outcome, rings and intervals come from the relay's events
   assert.equal(answered.ringPlatform, "watch");
   assert.deepEqual(answered.rings, [{ at: 1070, platform: "watch", devices: 1, results: [{ ok: true, kind: "alert", status: 200, ms: 50 }] }]);
   assert.deepEqual(answered.intervals, { talkToPushMs: 70, apnsAcceptMs: 50, pushToJoinMs: 7930 });
+  assert.deepEqual(
+    [answered.bursts, answered.callerBursts, answered.callerTalkMs, answered.calleeBursts, answered.calleeTalkMs],
+    [3, 2, 3600, 1, 1500],
+  );
 
   const outcome = (...names: Array<[string, string?]>) =>
     conversationRecord("c", [server("talkStart", 0, "a -> b"), ...names.map(([n, d], i) => server(n, i + 1, d))]).outcome;
@@ -295,6 +304,13 @@ test("through the relay and API: a record and summary per conversation, events, 
     await call("PATCH", "/v1/friends/u_nobody", alice.token, { favorite: true });
     const error = sink.of("oao.api").find((e) => e.status === 404 && e.route === "/v1/friends/{id}")!;
     assert.deepEqual([error.method, error.error, error.userId], ["PATCH", "not-friends", alice.user.id]);
+
+    // Usage actions: IDs and fields, never names.
+    const actions = sink.of("oao.action");
+    assert.deepEqual(actions.map((a) => a.action), ["account_created", "device_added", "account_created", "invite_created", "invite_accepted"]);
+    const accepted = actions.find((a) => a.action === "invite_accepted")!;
+    assert.deepEqual([accepted.userId, accepted.inviter, typeof accepted.inviteAgeMs], [bob.user.id, alice.user.id, "number"]);
+    assert.doesNotMatch(JSON.stringify(actions), /Alice|Bob/);
 
     // Deleting the account deletes its diagnostics and problem reports.
     assert.equal((await call("DELETE", "/v1/me", alice.token, {})).status, 200);

@@ -425,6 +425,8 @@ export class Relay {
       this.memberPeer(conversation, member)?.sendJSON({ type: "burst-end", conversationId: conversation.id, burstId: burst.id });
     }
     if (conversation.prefetch && burst.from !== conversation.prefetch.to) this.sendPrefetchPush(conversation);
+    // For usage analytics (telemetry.ts): who talked and for how long.
+    this.opts.metrics.server(conversation.id, "burstEnded", this.opts.now(), `${burst.from} ${Math.round(this.opts.now() - burst.startedAt)} ms, ${burst.frameCount} frames`);
     this.prune(conversation);
   }
 

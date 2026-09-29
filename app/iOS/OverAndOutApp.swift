@@ -48,6 +48,7 @@ struct OverAndOutApp: App {
                 .onChange(of: scenePhase) { phase in
                     switch phase {
                     case .active:
+                        Telemetry.shared.foreground()
                         model.talk.appBecameActive()
                         Task {
                             await model.becameActive()

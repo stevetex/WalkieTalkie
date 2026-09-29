@@ -26,6 +26,7 @@ enum WatchDiagnostics {
 
     static func becameActive() {
         UserDefaults.standard.set(Clock.nowMs(), forKey: activeKey)
+        Telemetry.shared.foreground()
     }
 
     static func enteredBackground() {

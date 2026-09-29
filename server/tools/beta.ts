@@ -22,6 +22,14 @@
 //   node tools/beta.ts feedback [--all] | feedback resolve <id>
 //       Problem reports sent from the app.
 //
+//   node tools/beta.ts usage [--days 7]
+//       How Over&Out is used (the spec's usage analytics): the accounts now (pictures, friends,
+//       devices, Ring Me On) and what people did in the last days (active accounts,
+//       conversations, talk time, invites, onboarding). Totals only.
+//
+//   node tools/beta.ts stats [--days 30]
+//       The daily rollup's documents (stats/{date}): DAU, WAU, MAU and the day's activity.
+//
 // --local <dir> reads a local relay's DATA_DIR (telemetry.jsonl and accounts.json) instead.
 // GCP_PROJECT is the project (default walkie-talkie-relay).
 
@@ -32,6 +40,7 @@ import { Accounts } from "../src/accounts.ts";
 import { MemoryDocs, type Docs } from "../src/docs.ts";
 import { Firestore, gcloudAccessToken } from "../src/firestore.ts";
 import { percentile, readEntries, type Entry } from "./telemetry-source.ts";
+import { ACTIVITY_KINDS, activity, usageSnapshot } from "../src/stats.ts";
 
 const { positionals, values } = parseArgs({
   allowPositionals: true,
@@ -226,8 +235,38 @@ switch (command) {
     }
     break;
   }
+  case "usage": {
+    const [usage, entries] = await Promise.all([usageSnapshot(docs), readEntries({ kinds: ACTIVITY_KINDS, since, local })]);
+    const line = (counts: Record<string, number>) => Object.entries(counts).sort((a, b) => b[1] - a[1]).map(([k, n]) => `${k} ${n}`).join(", ") || "none";
+    console.log(`Accounts now: ${usage.accounts} (${usage.newAccounts7d} new in 7 days), ${usage.friendships} friendships`);
+    console.log(`  pictures: ${line(usage.pictures)}`);
+    console.log(`  friends per account: ${["0", "1", "2-3", "4-9", "10+"].map((k) => `${k}: ${usage.friends[k] ?? 0}`).join(", ")}${usage.hoursToFirstFriendP50 !== undefined ? `; first friend after ${usage.hoursToFirstFriendP50} h (median)` : ""}`);
+    console.log(`  with favorites: ${usage.accountsWithFavorites}`);
+    console.log(`  devices: ${line(usage.devices)}; iPhones with walkie-talkie on ${usage.iphones.walkieTalkie}, app-only ${usage.iphones.appOnly}`);
+    console.log(`  Ring Me On: ${line(usage.ringOn)}`);
+    console.log(`  last heard from someone: ${line(usage.lastHeard)}`);
+    const a = activity(entries);
+    const conversations = Object.values(a.conversations).reduce((n, c) => n + c, 0);
+    console.log(`\nSince ${since.toISOString().slice(0, 10)}: ${a.activeAccounts} active accounts, ${a.talkers} rang someone, ${a.openedApp} opened the app`);
+    console.log(`  conversations ${conversations}: ${line(a.conversations)}; ${a.conversationsWithReplies} with a reply; ${a.talkMinutes} minutes of talk`);
+    console.log(`  rings went to: ${line(a.ringsTo)}; answered via: ${line(a.answeredVia)}; talked from: ${line(a.talkedFrom)}; declined ${a.declined}`);
+    console.log(`  sign-ups ${a.newAccounts}, deletions ${a.deletedAccounts}; invites created ${a.invitesCreated}, accepted ${a.invitesAccepted}${a.inviteAcceptHoursP50 !== undefined ? ` (after ${a.inviteAcceptHoursP50} h, median)` : ""}`);
+    console.log(`  picture changes: ${line(a.pictureChanges)}; favorites added ${a.favoritesAdded}; onboarding finished ${a.onboardingFinished} (walkie-talkie on ${a.onboardingWalkieTalkieOn})`);
+    break;
+  }
+  case "stats": {
+    const days = (await docs.list("stats")).map((d) => d.data as any).filter((d) => Date.parse(`${d.date}T00:00:00Z`) >= Date.now() - Number(values.days ?? 30) * 86_400_000);
+    days.sort((a, b) => String(a.date).localeCompare(String(b.date)));
+    if (!days.length) console.log("No daily stats yet (the rollup runs at 00:30 UTC; deploy/gcp/setup-stats.sh sets it up).");
+    else console.log("date         DAU  WAU  MAU  talkers  convs  replies  talk min  sign-ups  invites  accounts");
+    for (const d of days) {
+      const convs = Object.values(d.day.conversations ?? {}).reduce((n: number, c) => n + Number(c), 0);
+      console.log(`${d.date}  ${String(d.dau).padStart(4)} ${String(d.wau).padStart(4)} ${String(d.mau).padStart(4)}  ${String(d.day.talkers).padStart(7)}  ${String(convs).padStart(5)}  ${String(d.day.conversationsWithReplies).padStart(7)}  ${String(d.day.talkMinutes).padStart(8)}  ${String(d.day.newAccounts).padStart(8)}  ${String(`${d.day.invitesAccepted}/${d.day.invitesCreated}`).padStart(7)}  ${String(d.usage.accounts).padStart(8)}`);
+    }
+    break;
+  }
   default:
-    fail("usage: node tools/beta.ts summary | tester <who> | conversation <id> | pull <who> | logs <who> | feedback [--all] | feedback resolve <id>  [--days N] [--local <dir>]");
+    fail("usage: node tools/beta.ts summary | tester <who> | conversation <id> | pull <who> | logs <who> | feedback [--all] | feedback resolve <id> | usage | stats  [--days N] [--local <dir>]");
 }
 
 function fail(message: string): never {

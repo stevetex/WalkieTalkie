@@ -44,6 +44,16 @@ public final class Telemetry: @unchecked Sendable {
         }
     }
 
+    /// The app came to the front, at most once an hour: daily and monthly users who open the app
+    /// without talking (the spec's usage analytics).
+    public func foreground() {
+        let key = "telemetryForegroundAt"
+        let now = Clock.nowMs()
+        guard now - UserDefaults.standard.double(forKey: key) >= 3_600_000 else { return }
+        UserDefaults.standard.set(now, forKey: key)
+        event("appForeground")
+    }
+
     /// Only into the device's log (a conversation's timeline, details too long for an event).
     public func note(_ name: String, _ fields: [String: Any] = [:]) {
         log?.append(name, fields)

@@ -27,6 +27,8 @@ interface LogMetric {
   filter: string;
   labels: Record<string, string>; // label → field extracted from the entry
   value?: string; // a distribution's field; absent = a counter
+  unit?: string;
+  bounds?: number[];
 }
 
 const kind = (k: string) => `jsonPayload.kind="${k}"`;
@@ -64,6 +66,12 @@ const metrics: LogMetric[] = [
     labels: { name: "jsonPayload.name", platform: "jsonPayload.platform", build: "jsonPayload.build" },
   },
   {
+    name: "oao_actions",
+    description: "Usage actions from the API (oao.action): accounts created and deleted, invites, pictures, favorites, Ring Me On.",
+    filter: kind("oao.action"),
+    labels: { action: "jsonPayload.action" },
+  },
+  {
     name: "oao_api_errors",
     description: "API requests that ended in a 4xx or 5xx, by route template (oao.api).",
     filter: kind("oao.api"),
@@ -74,6 +82,15 @@ const metrics: LogMetric[] = [
     description: "Relay handler failures (oao.relay_error).",
     filter: kind("oao.relay_error"),
     labels: { what: "jsonPayload.what" },
+  },
+  {
+    name: "oao_daily",
+    description: "The daily usage rollup's measures (oao.daily from the stats job): dau, wau, mau, talkers, conversations.",
+    filter: kind("oao.daily"),
+    labels: { measure: "jsonPayload.measure" },
+    value: "jsonPayload.value",
+    unit: "1",
+    bounds: [1, 2, 3, 5, 8, 13, 20, 30, 50, 80, 130, 200, 300, 500, 800, 1300, 2000, 5000, 10000],
   },
   ...([
     ["oao_ring_delivery_ms", "ringDeliveryMs", "Push sent → notification delivered (watch) or PushToTalk push received (iPhone)."],
@@ -97,11 +114,11 @@ function metricBody(m: LogMetric): object {
     metricDescriptor: {
       metricKind: "DELTA",
       valueType: m.value ? "DISTRIBUTION" : "INT64",
-      unit: m.value ? "ms" : "1",
+      unit: m.unit ?? (m.value ? "ms" : "1"),
       labels: Object.keys(m.labels).map((key) => ({ key, valueType: "STRING" })),
     },
     labelExtractors: Object.fromEntries(Object.entries(m.labels).map(([k, field]) => [k, `EXTRACT(${field})`])),
-    ...(m.value ? { valueExtractor: `EXTRACT(${m.value})`, bucketOptions: { explicitBuckets: { bounds: LATENCY_BOUNDS } } } : {}),
+    ...(m.value ? { valueExtractor: `EXTRACT(${m.value})`, bucketOptions: { explicitBuckets: { bounds: m.bounds ?? LATENCY_BOUNDS } } } : {}),
   };
 }
 
@@ -143,7 +160,30 @@ function latencyChart(title: string, metric: string) {
   return { title, xyChart: { dataSets: [dataSet(50), dataSet(95)], yAxis: { label: "ms", scale: "LINEAR" } } };
 }
 
+// One value a day per measure from the rollup; the mean of a single value is the value.
+function dailyChart(title: string) {
+  return {
+    title,
+    xyChart: {
+      dataSets: [{
+        plotType: "LINE",
+        targetAxis: "Y1",
+        legendTemplate: "${metric.labels.measure}",
+        timeSeriesQuery: {
+          timeSeriesFilter: {
+            filter: `${userMetric("oao_daily")} AND metric.label.measure=one_of("dau","wau","mau")`,
+            aggregation: { alignmentPeriod: "86400s", perSeriesAligner: "ALIGN_DELTA", crossSeriesReducer: "REDUCE_MEAN", groupByFields: ["metric.label.measure"] },
+          },
+        },
+      }],
+      yAxis: { label: "accounts", scale: "LINEAR" },
+    },
+  };
+}
+
 const charts = [
+  dailyChart("Active accounts: DAU, WAU, MAU (daily rollup)"),
+  countChart("Usage actions: sign-ups, invites, pictures, favorites (per day)", `${userMetric("oao_actions")} AND resource.type="cloud_run_revision"`, ["metric.label.action"]),
   countChart("Conversations by outcome (per day)", userMetric("oao_conversations"), ["metric.label.outcome"]),
   countChart("Rings by device kind (per day)", userMetric("oao_conversations"), ["metric.label.ring_platform"]),
   latencyChart("Ring delivery: push sent → on the device (p50, p95)", "oao_ring_delivery_ms"),

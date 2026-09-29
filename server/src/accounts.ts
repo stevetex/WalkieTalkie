@@ -165,6 +165,11 @@ export class Accounts {
     throw new AccountError(409, "sign-in-conflict", "couldn't create the account");
   }
 
+  // How long an invite lasts, so its age can be worked out from when it expires.
+  get inviteTtlMs(): number {
+    return this.opts.inviteTtlMs;
+  }
+
   async user(id: string): Promise<User | undefined> {
     if (!isUserId(id)) return undefined;
     const [data] = await this.docs.getAll([`users/${id}`]);

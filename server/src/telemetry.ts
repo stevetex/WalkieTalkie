@@ -181,6 +181,11 @@ export interface ConversationRecord extends TelemetryEntry {
   ringPlatform?: string;
   rings: Ring[];
   bursts: number;
+  // Usage (the spec's usage analytics): bursts and talk time from each side; the callee's are replies.
+  callerBursts: number;
+  calleeBursts: number;
+  callerTalkMs: number;
+  calleeTalkMs: number;
   intervals: Record<string, number>;
   events: Array<{ name: string; t: number; detail?: string }>;
 }
@@ -214,6 +219,14 @@ export function conversationRecord(conversationId: string, events: TimelineEntry
   const between = (key: string, a?: TimelineEntry, b?: TimelineEntry) => {
     if (a && b && b.t >= a.t) intervals[key] = Math.round(b.t - a.t);
   };
+  const talked = { caller: { bursts: 0, ms: 0 }, callee: { bursts: 0, ms: 0 } };
+  for (const e of sorted.filter((e) => e.name === "burstEnded")) {
+    const match = e.detail?.match(/^(\S+) (\d+) ms/);
+    if (!match) continue;
+    const side = match[1] === from ? talked.caller : talked.callee;
+    side.bursts += 1;
+    side.ms += Number(match[2]);
+  }
   const push = first("pushSent");
   between("talkToPushMs", talk, push);
   between("apnsAcceptMs", push, sorted.find((e) => e.name === "pushAccepted" && push && e.t >= push.t));
@@ -229,6 +242,10 @@ export function conversationRecord(conversationId: string, events: TimelineEntry
     ...(rings.length ? { ringPlatform: rings[0].platform } : {}),
     rings,
     bursts: sorted.filter((e) => e.name === "talkStart").length,
+    callerBursts: talked.caller.bursts,
+    calleeBursts: talked.callee.bursts,
+    callerTalkMs: talked.caller.ms,
+    calleeTalkMs: talked.callee.ms,
     intervals,
     events: sorted.map((e) => ({ name: e.name, t: e.t, ...(e.detail ? { detail: e.detail } : {}) })),
   };

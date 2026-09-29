@@ -126,7 +126,7 @@ struct OnboardingView: View {
                 detail("Open Over&Out on your watch. It signs in with this account by itself, and you can talk from your wrist.")
             }
             Spacer(minLength: 24)
-            primaryButton("Done") { model.onboarded = true }
+            primaryButton("Done") { finish() }
         }
     }
 
@@ -171,8 +171,18 @@ struct OnboardingView: View {
         if step + 1 < stepCount {
             step += 1
         } else {
-            model.onboarded = true
+            finish()
         }
+    }
+
+    /// Usage analytics: what was turned on by the end of onboarding.
+    private func finish() {
+        Telemetry.shared.event("onboardingFinished", [
+            "walkieTalkieOn": ptt.isJoined || ptt.wanted == true,
+            "microphone": model.microphoneAllowed,
+            "watchStep": watch.isPaired,
+        ])
+        model.onboarded = true
     }
 
     private func saveName() {
