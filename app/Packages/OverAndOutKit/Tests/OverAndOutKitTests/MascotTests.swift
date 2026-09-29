@@ -5,11 +5,13 @@ final class MascotTests: XCTestCase {
     func testImageNamesMatchTheAssetCatalogs() {
         XCTAssertEqual(Mascot.hiFi.imageName, "MascotHiFi")
         XCTAssertEqual(Mascot.bowLashesCocoa.imageName, "MascotBowLashesCocoa")
-        XCTAssertEqual(Mascot.allCases.count, 17)
+        XCTAssertEqual(Mascot.pirate.imageName, "MascotPirate")
+        XCTAssertEqual(Mascot.allCases.count, 18)
     }
 
     func testUnknownOrMissingIDsHaveNoMascot() {
         XCTAssertEqual(Mascot(id: "fox"), .fox)
+        XCTAssertEqual(Mascot(id: "pirate"), .pirate)
         XCTAssertNil(Mascot(id: "unicorn"))
         XCTAssertNil(Mascot(id: nil))
     }

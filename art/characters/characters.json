@@ -168,5 +168,15 @@
       1254,
       1254
     ]
+  },
+  {
+    "id": "18-pirate",
+    "name": "Pirate",
+    "detail": "honey housing, black eyepatch on the viewer-right eye and a little Jolly Roger flying from the antenna",
+    "assetName": "OAOPirate",
+    "nativeSize": [
+      1254,
+      1254
+    ]
   }
 ]

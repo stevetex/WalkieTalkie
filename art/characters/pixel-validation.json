@@ -185,5 +185,16 @@
     ],
     "iconForegroundOutsideCircle": 0,
     "iconForegroundRadiusPx": 441.2
+  },
+  {
+    "id": "18-pirate",
+    "alphaBounds": [
+      200,
+      50,
+      1203,
+      1170
+    ],
+    "iconForegroundOutsideCircle": 0,
+    "iconForegroundRadiusPx": 492.27
   }
 ]

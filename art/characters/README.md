@@ -1,6 +1,6 @@
 # Over&Out character collection
 
-Seventeen characters based on the approved lineup and subsequent color updates. Open [preview.html](preview.html) to compare transparent artwork, iPhone and circular Watch previews, and 48-pixel icon exports. Each numbered folder is a self-contained asset set. This delivery adds art only; it does not wire the characters or an icon picker into the apps.
+Eighteen characters based on the approved lineup and subsequent additions. Open [preview.html](preview.html) to compare transparent artwork, iPhone and circular Watch previews, and 48-pixel icon exports. Each numbered folder is a self-contained asset set. All 18 characters are available in the iPhone avatar picker, with matching avatar artwork bundled in both apps.
 
 Character 04 has a dusty rose pink ribbon, and 05 uses the same pink in its rabbit ears. Characters 16 and 17 are honey and cocoa versions of 04, both with pink ribbons. The pink target is `#D982A2`; highlight and shadow targets are in `palette.json`. Orange side buttons are retained. The reference lineup records the earlier sketches and therefore predates these updates.
 
@@ -19,6 +19,8 @@ Character 04 has a dusty rose pink ribbon, and 05 uses the same pink in its rabb
 `characters.json` maps the stable folder IDs, names and unique Xcode asset names. `manifest.json` records PNG dimensions, alpha, DPI and SHA-256 hashes. The approved sketch sheet is preserved in `reference/approved-lineup.png`.
 
 ## App integration
+
+The shared `Mascot` enum supplies the avatar picker and stored IDs. Each app bundles a matching `Mascot<Name>` imageset under `Assets.xcassets/Mascots`. Character 18, Pirate, uses the stored ID `pirate` and image name `MascotPirate`. Its eyepatch covers the viewer-right eye beside the orange button. The iPhone avatar is 288 pixels at 3×; the Watch avatar is 96 pixels at 2×, matching the existing collection.
 
 Import the desired `CharacterArt.xcassets` catalogs into the appropriate app target. Every imageset has a unique name, such as `OAOBookworm`, so multiple character catalogs can coexist. Preserve aspect ratio and allow room for antennas and accessories. Use native accessible text to name a selectable character; the PNGs contain no labels.
 
