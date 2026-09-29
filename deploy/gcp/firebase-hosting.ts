@@ -10,7 +10,10 @@
 //
 //   PROJECT_ID, REGION   from config.sh
 //   SITE                 the Hosting site (default: PROJECT_ID)
-//   DOMAIN               the custom domain (default overandout.app)
+//   WEB_DOMAIN           the custom domain (default overandout.app; not DOMAIN, which config.sh
+//                        sets to the relay's hostname)
+//   REDIRECT_TO          setup only: create WEB_DOMAIN as a redirect to this domain instead, for
+//                        example WEB_DOMAIN=www.overandout.app REDIRECT_TO=overandout.app
 //   TEAM_ID              the Apple team ID, for apple-app-site-association
 //   SUPPORT_EMAIL        shown on the privacy and support pages
 
@@ -24,7 +27,8 @@ const env = process.env;
 const project = required("PROJECT_ID");
 const region = env.REGION || "us-central1";
 const site = env.SITE || project;
-const domain = env.DOMAIN || "overandout.app";
+const domain = env.WEB_DOMAIN || "overandout.app";
+const redirectTo = env.REDIRECT_TO || "";
 const publicDir = join(import.meta.dirname, "..", "..", "web", "public");
 const hosting = "https://firebasehosting.googleapis.com/v1beta1";
 
@@ -133,8 +137,9 @@ async function setup(): Promise<void> {
   }
   const custom = await call("GET", `${hosting}/projects/${project}/sites/${site}/customDomains/${domain}`, undefined, [404]);
   if (custom.status === 404) {
-    console.log(`Adding the custom domain ${domain}…`);
-    await waitForOperation(await call("POST", `${hosting}/projects/${project}/sites/${site}/customDomains?customDomainId=${domain}`, {}), hosting);
+    console.log(`Adding the custom domain ${domain}${redirectTo ? `, redirecting to ${redirectTo}` : ""}…`);
+    const body = redirectTo ? { redirectTarget: redirectTo } : {};
+    await waitForOperation(await call("POST", `${hosting}/projects/${project}/sites/${site}/customDomains?customDomainId=${domain}`, body), hosting);
   }
   await dns();
 }
