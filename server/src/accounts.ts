@@ -316,8 +316,6 @@ export class Accounts {
     checkId(deviceId, "device");
     const path = `users/${userId}/devices/${deviceId}`;
     const pointer = ownsToken(device.pushToken) ? pushTokenPath(device.pushToken) : null;
-    const devices = await this.docs.list(`users/${userId}/devices`);
-    const others = devices.filter((d) => d.id !== deviceId).map((d) => toDevice(d.id, d.data).platform);
     const now = this.opts.now();
     await this.docs.transaction(async (get) => {
       const [user, previous, owner] = await get([`users/${userId}`, path, ...(pointer ? [pointer] : [])]);
@@ -336,16 +334,12 @@ export class Accounts {
         const [old] = await get([oldPointer]);
         if (old?.userId === userId && old.deviceId === deviceId) writes.push({ delete: oldPointer });
       }
-      // The account's first device of this kind, next to one of the other kind, with no choice
-      // made: keep ringing the device that rang until now, and the iPhone asks which one to use
-      // (design decision 2026-09-28). Without this a new watch would silently take the rings.
-      const pin = user && !isPlatform(user.ringOn) && !others.includes(device.platform) && others.length > 0
-        ? others[0]
-        : undefined;
+      // No choice made means the watch rings when there is one (design decision 2026-09-29: the
+      // watch comes first), so a watch joining an iPhone's account takes the rings; the iPhone
+      // asks once, with the watch as the default.
       writes.push(
         { set: path, data: { ...device, pushType: device.pushType ?? "alert", updatedAt: now } },
         ...(pointer ? [{ set: pointer, data: { userId, deviceId, updatedAt: now } }] : []),
-        ...(pin ? [{ set: `users/${userId}`, data: { ringOn: pin }, fields: ["ringOn"], exists: true }] : []),
       );
       return { writes, result: undefined };
     });

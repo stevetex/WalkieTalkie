@@ -377,7 +377,7 @@ final class ConversationController: NSObject, ObservableObject {
         let error = (meta["error"] as? String).map { ", \($0)" } ?? ""
         if let t = meta["fetchEndedAt"] as? Double {
             conversation?.timeline.mark("nseFetchEnded", at: t,
-                                        detail: "HTTP \(meta["status"] ?? 0), \(meta["bytes"] ?? 0) bytes, \(prefetched.frameCount) frames\(error)")
+                                        detail: "HTTP \(meta["status"] ?? 0), \(meta["bytes"] ?? 0) bytes, \(prefetched.frameCount) frames\(meta["inApp"] != nil ? ", in app" : "")\(error)")
         } else if !error.isEmpty {
             conversation?.timeline.mark("nseFetchFailed", detail: String(error.dropFirst(2)))
         }
@@ -392,6 +392,32 @@ final class ConversationController: NSObject, ObservableObject {
             speakerIdle = false
             for frame in burst.frames { audio.enqueue(frame) }
             if burst.ended { audio.endPlayback() }
+        }
+    }
+
+    /// The held message, downloaded by the app when the prefetch push reached it directly
+    /// (see willPresent). Saved like the extension's download, so answering plays it at once.
+    private func prefetchInApp(_ ring: Ring, receivedAt: Double) {
+        guard let baseURL = settings.baseURL else { return }
+        account.withToken { session in
+            guard let session,
+                  var components = URLComponents(url: baseURL.appendingPathComponent("v1/rings/audio"), resolvingAgainstBaseURL: false) else { return }
+            components.queryItems = [URLQueryItem(name: "userId", value: session.userId),
+                                     URLQueryItem(name: "conversationId", value: ring.conversationId)]
+            guard let url = components.url else { return }
+            var request = URLRequest(url: url, timeoutInterval: 20)
+            request.setValue("Bearer \(session.token)", forHTTPHeaderField: "Authorization")
+            let startedAt = Clock.nowMs()
+            URLSession.shared.dataTask(with: request) { data, response, error in
+                let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+                var meta: [String: Any] = ["receivedAt": receivedAt, "fetchStartedAt": startedAt, "fetchEndedAt": Clock.nowMs(),
+                                           "userId": session.userId, "status": status, "inApp": true]
+                if let sentAt = ring.pushSentAt { meta["pushSentAt"] = sentAt }
+                if let error { meta["error"] = String(error.localizedDescription.prefix(80)) }
+                if status == 200, let data { meta["bytes"] = data.count }
+                Prefetched.save(conversationId: ring.conversationId, records: status == 200 ? data : nil, meta: meta)
+                Telemetry.shared.event("prefetchInApp", ["status": status, "bytes": data?.count ?? 0])
+            }.resume()
         }
     }
 
@@ -812,12 +838,24 @@ extension ConversationController: UNUserNotificationCenterDelegate {
     /// A ring while the app is on screen: ring in the app instead of showing the banner.
     func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification,
                                 withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
-        guard let ring = Ring(userInfo: notification.request.content.userInfo) else {
+        let info = notification.request.content.userInfo
+        guard let ring = Ring(userInfo: info) else {
             return completionHandler([.banner, .sound])
         }
+        let receivedAt = Clock.nowMs()
+        let isPrefetch = info["prefetch"] != nil
         DispatchQueue.main.async {
             defer { completionHandler([]) }
+            // Which path each ring takes, for the frontmost case (run 60).
+            Telemetry.shared.event("ringInApp", ["prefetch": isPrefetch, "state": WKApplication.shared().applicationState.rawValue])
             guard self.conversation?.conversationId != ring.conversationId else { return }
+            // The prefetch push reached the app itself: watchOS skips the notification service
+            // extension while the app is frontmost, even with the screen off. Download the held
+            // message here, as the extension would, and never ring again for it.
+            if isPrefetch {
+                self.prefetchInApp(ring, receivedAt: receivedAt)
+                return
+            }
             // The prefetch push for a ring that's already ringing in the app: don't ring again.
             guard self.incomingRing?.conversationId != ring.conversationId else { return }
             self.incomingRing = ring
