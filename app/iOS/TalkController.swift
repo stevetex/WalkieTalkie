@@ -118,7 +118,12 @@ final class TalkController: ObservableObject {
         audio.onFirstCapturedFrame = { [weak self] t in
             DispatchQueue.main.async { self?.conversation?.timeline.mark("micFirstFrame", at: t, once: false) }
         }
-        audio.onRestart = { [weak self] detail in self?.log("Audio: \(detail), route \(Self.routeDescription())") }
+        audio.onRestart = { [weak self] detail in
+            let route = Self.routeDescription()
+            self?.log("Audio: \(detail), route \(route)")
+            self?.conversation?.timeline.mark("audioRestarted", detail: String(detail.prefix(60)), once: false)
+            Telemetry.shared.event("audioRestarted", ["detail": String(detail.prefix(80)), "route": String(route.prefix(60))])
+        }
         ptt.onEvent = { [unowned self] event in handle(event) }
         NotificationCenter.default.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: .main) { [weak self] note in
             let raw = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt

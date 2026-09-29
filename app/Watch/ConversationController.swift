@@ -158,7 +158,11 @@ final class ConversationController: NSObject, ObservableObject {
         audio.onFirstCapturedFrame = { [weak self] t in
             DispatchQueue.main.async { self?.conversation?.timeline.mark("micFirstFrame", at: t, once: false) }
         }
-        audio.onRestart = { [unowned self] detail in log("Audio: \(detail)") }
+        audio.onRestart = { [unowned self] detail in
+            log("Audio: \(detail)")
+            conversation?.timeline.mark("audioRestarted", detail: String(detail.prefix(60)), once: false)
+            Telemetry.shared.event("audioRestarted", ["detail": String(detail.prefix(80))])
+        }
 
         NotificationCenter.default.addObserver(
             forName: AVAudioSession.interruptionNotification, object: nil, queue: .main
