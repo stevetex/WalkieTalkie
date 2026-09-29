@@ -54,6 +54,11 @@ and matching light/dark semantic colors. `ASSETCATALOG_COMPILER_APPICON_NAME` is
 set for Debug and Release on both app targets. Source artwork and print exports
 live in [`../art`](../art); refresh the copies in both targets when artwork changes.
 
+The profile picture picker lists all 18 cases in `OverAndOutKit/Mascot.swift`,
+including Pirate. Each case has a matching `Mascot<Name>` imageset under both
+targets' `Assets.xcassets/Mascots`. These profile avatars are separate from the
+app's primary icon and Talk-screen mascot.
+
 `OverAndOutKit/Brand.swift` provides the shared palette and screen modifier.
 Light mode uses ivory and ink; dark mode uses indigo and ivory. Orange is the
 Talk/primary-button fill, with ink labels for contrast. Text/link accents use a

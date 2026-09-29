@@ -95,3 +95,15 @@ undefined
 ### Updated icon composition prompt (04, 05, 16, 17)
 
 undefined
+
+## 18-pirate
+
+Generated with the built-in image generation tool from the approved honey pirate comp, after moving the eyepatch to the viewer-right eye. The comp is a derivative of character 02 Honey. The pirate was approved separately and is not on the earlier reference lineup. Native output: 1254 × 1254 pixels. `sips` produced the size and DPI exports and the app avatar copies.
+
+### Transparent master prompt
+
+Production transparent master from the approved pirate radio comp. Preserve the exact character, honey golden body, bold black outline, silver-rimmed circular black speaker mouth, orange side button, viewer-RIGHT black eyepatch beside the orange button with diagonal strap, viewer-LEFT knob eye with white pointer, and the little Jolly Roger flying from upper-right antenna. Remove only the ivory background and replace with genuine alpha transparency. No label or shadow outside character. Do not flip, redesign or add details. Center full character including entire flag with clear transparent margin on every edge in square canvas. Match original linework, proportions and colors precisely.
+
+### Icon adaptation prompt
+
+Create a square opaque app icon adaptation of this exact approved honey pirate radio mascot. Preserve design and proportions, the black eyepatch on viewer RIGHT next to orange button, exposed knob eye on viewer LEFT, silver speaker rim and small Jolly Roger flag on upper-right antenna. Place entire character centered on uniform solid indigo #272D50 extending to all four canvas edges. CRITICAL: reduce character to fit ALL details including far upper-right flag INSIDE a centered circular safe region of diameter 84% of square canvas. Character overall height about 72% of canvas and centered as a complete silhouette; use generous indigo padding. No cropping of flag or antenna in circular Watch mask. No drawn circle, no rounded corners, no border, no text, no added props, no drop shadow. Preserve crisp bold cartoon linework and honey palette. Output opaque square image.

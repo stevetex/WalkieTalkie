@@ -1,0 +1,12 @@
+# 18-pirate — Pirate
+
+honey housing, black eyepatch on the viewer-right eye and a little Jolly Roger flying from the antenna.
+
+- `master.png`: native transparent master.
+- `app/CharacterArt.xcassets`: importable 1×/2×/3× imageset named `OAOPirate`, at 256 points.
+- `merch/color-300dpi.png`: same native pixels with 300 DPI metadata.
+- `icons/icon-1024.png`: opaque square icon source for both platforms.
+- `icons/iPhone.xcassets` and `icons/Watch.xcassets`: target-specific catalogs; app icon set `OAOPirateIcon`.
+- `icons/exports`: convenience sizes for previews.
+
+See the parent README for integration, print limits and provenance.

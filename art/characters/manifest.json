@@ -2159,6 +2159,133 @@
     ]
   },
   {
+    "path": "18-pirate/app/CharacterArt.xcassets/OAOPirate.imageset/OAOPirate@1x.png",
+    "width": 256,
+    "height": 256,
+    "mode": "RGBA",
+    "dpi": null,
+    "sha256": "06285b6ff00ed28bbce3adeef88db655910c79f64ac8e2d777c8cdf74dfa983c",
+    "alphaExtrema": [
+      0,
+      255
+    ]
+  },
+  {
+    "path": "18-pirate/app/CharacterArt.xcassets/OAOPirate.imageset/OAOPirate@2x.png",
+    "width": 512,
+    "height": 512,
+    "mode": "RGBA",
+    "dpi": null,
+    "sha256": "abe7a2e438d51f629084c8e95c3e3c6e5fe43e8110427d3e1096f8fe318c4e93",
+    "alphaExtrema": [
+      0,
+      255
+    ]
+  },
+  {
+    "path": "18-pirate/app/CharacterArt.xcassets/OAOPirate.imageset/OAOPirate@3x.png",
+    "width": 768,
+    "height": 768,
+    "mode": "RGBA",
+    "dpi": null,
+    "sha256": "3cd4c8e26c59aa6828115666cca974b8e4018535ebba35c222d1919dae8250ed",
+    "alphaExtrema": [
+      0,
+      255
+    ]
+  },
+  {
+    "path": "18-pirate/icons/Watch.xcassets/OAOPirateIcon.appiconset/icon-1024.png",
+    "width": 1024,
+    "height": 1024,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "944b7aee0254f732baa772b6a4cfc369bd460b2edcc0fbeba629e4fc0b1ecd09"
+  },
+  {
+    "path": "18-pirate/icons/exports/icon-180.png",
+    "width": 180,
+    "height": 180,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "80bdc02a04d0d4f0047232b41d551dd1b3f9c52a9c7ca376b6c2b231cc2d2924"
+  },
+  {
+    "path": "18-pirate/icons/exports/icon-256.png",
+    "width": 256,
+    "height": 256,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "e4cf413dc617c87ebd20b717dae77170a10033352fb8ff796df9461ed5736f92"
+  },
+  {
+    "path": "18-pirate/icons/exports/icon-48.png",
+    "width": 48,
+    "height": 48,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "83aac9b5e94904fa123d0c5a614674a6004b9efaf379b13752e186c5e90fbd24"
+  },
+  {
+    "path": "18-pirate/icons/exports/icon-512.png",
+    "width": 512,
+    "height": 512,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "108bee97394fd868f926c5b40bb0475600ef708c0ef0db50c2cc196b30012269"
+  },
+  {
+    "path": "18-pirate/icons/exports/icon-96.png",
+    "width": 96,
+    "height": 96,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "34c091aa3877eaedefea266c2634cc99bd65ddb299c74d3c352f81fd8af18613"
+  },
+  {
+    "path": "18-pirate/icons/iPhone.xcassets/OAOPirateIcon.appiconset/icon-1024.png",
+    "width": 1024,
+    "height": 1024,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "944b7aee0254f732baa772b6a4cfc369bd460b2edcc0fbeba629e4fc0b1ecd09"
+  },
+  {
+    "path": "18-pirate/icons/icon-1024.png",
+    "width": 1024,
+    "height": 1024,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "944b7aee0254f732baa772b6a4cfc369bd460b2edcc0fbeba629e4fc0b1ecd09"
+  },
+  {
+    "path": "18-pirate/master.png",
+    "width": 1254,
+    "height": 1254,
+    "mode": "RGBA",
+    "dpi": null,
+    "sha256": "4b251717d3417ff26bcf72e91c6d60b0e4d33c09530b5590dfafcc2f475d0e5b",
+    "alphaExtrema": [
+      0,
+      255
+    ]
+  },
+  {
+    "path": "18-pirate/merch/color-300dpi.png",
+    "width": 1254,
+    "height": 1254,
+    "mode": "RGBA",
+    "dpi": [
+      299.9994,
+      299.9994
+    ],
+    "sha256": "3de000f56eceb2a52debc5514812112266785b1265c2cb09df8db09be80e3e22",
+    "alphaExtrema": [
+      0,
+      255
+    ]
+  },
+  {
     "path": "reference/approved-lineup.png",
     "width": 1536,
     "height": 1024,
