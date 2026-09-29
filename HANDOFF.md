@@ -1,36 +1,55 @@
-# Handoff: Over&Out — the first TestFlight build (2026-09-28, evening)
+# Handoff: Over&Out — the Leave fix (TestFlight build 76) and Beta telemetry (2026-09-28, night)
 
-Read this first. Over&Out: Watch Walkie Talkie replaces Apple's Watch Walkie-Talkie app, which Apple removed in watchOS 27. The watch and iPhone apps work end to end through relay nodes on Google Cloud. **New today: build 0.1 (69) is on TestFlight for internal testing** (group "House": Steve, Helen, Cooper), uploaded through the App Store Connect API. On production push a locked iPhone plays a friend's message **0.89–1.17 s after the push is sent** (runs 53, 55), and a watch tap plays it in 0.67 s (run 51). There are no secrets in this file; tokens and keys live in gitignored files, Secret Manager and `~/.appstoreconnect`, listed under Local config.
+Read this first. Over&Out: Watch Walkie Talkie replaces Apple's Watch Walkie-Talkie app, which Apple removed in watchOS 27. The watch and iPhone apps work end to end through relay nodes on Google Cloud. **TestFlight build 0.1 (76)** (the Leave fix) is out to the internal group "House" (Steve, Helen, Cooper). **Beta telemetry is built and tested in the simulators but not deployed** (branch `telemetry`, `5d5fafd`): it needs Steve's OK for the relay, API and web deploys, `setup-telemetry.sh`, and TestFlight build 3 (numbered by the commit count: 78 on this branch now). On production push a locked iPhone plays a message 0.89–1.17 s after the push is sent (runs 53, 55), and a watch tap plays it in 0.67 s (run 51). There are no secrets in this file; tokens and keys live in gitignored files, Secret Manager and `~/.appstoreconnect`, listed under Local config.
 
 ## Start here
 
-1. Read this file, then the backlog doc (its **Beta plan** section and the **Beta** column: 1 blocks the Beta, 2 before it, 3 after it) and the feasibility doc's 2026-09-28 Design decisions and Prototype results runs 51–55.
-2. **Next session's goal (Steve): the right telemetry for a multi-user Beta.** See **Telemetry today** below for what exists. **Also a must-fix (Steve, 2026-09-28):** the system's **Leave** button beside Talk on the iPhone's Lock Screen and Dynamic Island turns walkie-talkie off, and nothing tells the person: their iPhone silently stops ringing (run 54; backlog row "The system's Leave button silently turns the iPhone's walkie-talkie off"). Fix, test in the simulator's in-app path as far as it goes, then ship build 2 with `deploy/appstore/testflight.sh` and test on Steve's iPhone. Build 2 also answers "does a TestFlight update leave the channel?" (backlog).
-3. **The 2026-09-28 work is in a PR from `beta-server`** (rebased onto `main` after PR #8, the pirate mascot): check whether Steve has merged it. All of it is already live: the relay, API and website run it, and TestFlight build 69 was built from it.
-4. Ask Steve before anything outward-facing or billed: Google Cloud resources, deploying the relay or the API, DNS (he adds GoDaddy records himself), App Store Connect or developer-portal changes Xcode doesn't make itself, and deletions. TestFlight uploads for internal testing with `testflight.sh` are approved (Steve asked for the automation), but say before each one.
+1. Read this file, the **Over&Out Beta telemetry spec** (Links), then the backlog doc's Beta plan and the feasibility doc's newest Design decisions (two 2026-09-28 rows at the end: the Leave fix and Beta telemetry).
+2. **Waiting on Steve, in this order** (ask before each; none has run):
+   1. **Build 76 on Steve's iPhone** (the Leave fix; see Next job 1 for the steps). It also answers "does a TestFlight update leave the channel?" and gives the first watch ring on a TestFlight build.
+   2. **Deploy the telemetry server side:** `deploy/gcp/deploy-web.sh` (the privacy policy first), `deploy/gcp/deploy-api.sh`, `deploy/gcp/deploy-relay.sh` (about 2 minutes without the relay) from the `telemetry` branch. `FULL_TIMELINE_USERS` in `config.sh` (Steve and the Test Bot) is already set.
+   3. **`deploy/gcp/setup-telemetry.sh`:** Firestore TTL policies on `diagnostics` and `feedback`, 11 log-based metrics, the "Over&Out Beta" dashboard and 6 alert policies (free until 1 September 2027, then about $2 a month).
+   4. **TestFlight build 3 (0.1 (78) if nothing else is committed):** `deploy/appstore/testflight.sh --notes "…"` from `telemetry`. Then re-measure watch tap → first audio and iPhone push → first audio (both apps' conversation code changed, off the ring path), and check events, a pull and Report a Problem on devices.
+   5. **Steve, in App Store Connect:** Users and Access → Notifications → TestFlight feedback emails.
+3. **Branches:** `main` has the Leave fix (`703c449`, pushed at Steve's request). `telemetry` (`5d5fafd`, local, not pushed) is on top of it. Nothing else is open.
+4. Ask Steve before anything outward-facing or billed: Google Cloud resources, deploying the relay, API or website, DNS (he adds GoDaddy records himself), App Store Connect or developer-portal changes Xcode doesn't make itself, TestFlight uploads (say before each), and deletions.
 
 ## Links
 
+- **Beta telemetry spec (Claude Docs):** https://claude.ai/code/artifact/bbafed21-49d1-4086-af39-305d378e3463. The design Steve approved on 2026-09-28, updated to what was built.
 - **Feasibility doc (Claude Docs):** https://claude.ai/code/artifact/59ab6e47-6e5d-4698-8bd1-173293953df9. Design decisions (date, decision, why, revisit if) and Prototype results (runs 1–55).
 - **Backlog (Claude Docs):** https://claude.ai/code/artifact/30273f1c-2795-4fd7-b15a-370b1a177118. Every item has a Beta tier and a triage note saying what needs Steve; the Beta plan section above the table has the agreed order.
-- **Repo:** https://github.com/stevetex/WalkieTalkie. `main` has PR #7 (review fixes) and PR #8 (the pirate mascot, `89e6f19`). **`beta-server`**, rebased onto that and opened as a PR: the shared token for diagnostics only, one registration per push token and the reports script; privacy manifests and the export compliance key; the App Store Connect scripts; the branded website; Hosting redirect domains; this file. Commit hashes before the rebase (`342b8c8`, `1dd112d`) appear in the docs; the relay and API report `342b8c8`, the same code.
-- **App Store Connect:** app 6816474706, internal group "House" (every build). `node deploy/appstore/asc.ts status` lists groups, testers and builds.
+- **Repo:** https://github.com/stevetex/WalkieTalkie. `main` = PR #9 (merged by Steve) plus the Leave fix `703c449`.
+- **App Store Connect:** app 6816474706, internal group "House" (every build). `node deploy/appstore/asc.ts status` lists groups, testers and builds; `asc.ts feedback`, `crashes [--log <id>]` and `diagnostics [build]` read TestFlight's reports.
 - **App name and domain:** "Over&Out: Watch Walkie Talkie", overandout.app (DNS at GoDaddy). Bundle IDs `com.cypressoakstudios.overandout` (iPhone), `…overandout.watchkitapp` (watch) and `…overandout.watchkitapp.notificationservice`. Team `A39XNKNDPX`.
 
-## Next job: telemetry for a multi-user Beta and the Leave must-fix, then the rest of the Beta plan
+## Next job: test build 76, deploy telemetry, build 3
 
-Beta plan steps 1–4 are done except the items below; the backlog has details. Telemetry (see **Telemetry today**) is the next session's goal.
-1. **The Leave button** (above). Ideas in the backlog row: a local notification when the channel is left by the user ("Walkie-talkie is off; friends ring your watch"), a note on the Friends screen, and a line in onboarding. The watch is untouched, so no watch re-measure; re-measure push → first audio on the iPhone if its PushToTalk path changes.
-2. **Build 2 on TestFlight:** whether the update leaves the channel (backlog "Reinstalling sometimes leaves the PushToTalk channel"), and a watch ring on the TestFlight build (not yet tried).
-3. **Before testers beyond the house:** the monthly node replacement job (a Cloud Scheduler job, ask Steve), rejoin fallbacks on a device, answering mid-message on the watch, and for external TestFlight the review notes, an always-on Test Bot and the invite page's TestFlight link (backlog rows).
-4. **Older OS versions:** iOS 16 and watchOS 9 need devices (their simulators don't run on macOS 27). iOS 17.0 and watchOS 10.2 simulators launch the apps and pass the codec tests; taps don't reach them, so rings weren't tried.
+1. **Build 76 on Steve's iPhone** (TestFlight, production push):
+   1. Before opening the updated app, lock the phone and ring it from the bot (`bot.ts send --account`). If it plays, the update kept the PushToTalk channel.
+   2. Open the app: walkie-talkie is on, or turns itself back on; Friends offers "Allow Notifications": allow.
+   3. Ring, reply from the Lock Screen, tap **Leave**: "Walkie-talkie is off on this iPhone" should appear at once.
+   4. Ring again: the watch rings (Ring Me On: iPhone falls back to the watch). That's the first watch ring on a TestFlight build; tap it and time tap → first audio.
+   5. Tap the notice (the app opens and rejoins), lock, ring once more: the iPhone plays; re-measure push → first audio.
+   Record the runs as 56+ in the feasibility doc and close the backlog row (it's In progress).
+2. **Deploy telemetry and build 3** (Start here, step 2). After the deploy, `node server/tools/beta.ts summary --days 1` should show the day's conversations, and the dashboard fills within a day.
+3. **Then the rest of the Beta plan:** the monthly node replacement job (a Cloud Scheduler job, ask Steve), rejoin fallbacks on a device, answering mid-message on the watch, and for external TestFlight the review notes, an always-on Test Bot and the invite page's TestFlight link (backlog rows).
+4. **Older OS versions:** iOS 16 and watchOS 9 need devices (their simulators don't run on macOS 27).
 
-## Telemetry today (the starting point for the next session)
+## Telemetry (built 2026-09-28; not deployed)
 
-- **Conversation timelines:** each device uploads its events when a conversation ends (`POST /v1/metrics`; about 36 app event types such as `pushReceived`, `joinSent`, `firstAudioScheduled`, `audioActivated`, plus the relay's `talkStart`, `pushSent`, `pushAccepted`, `receiverJoined`), stored in Firestore `timelines` with a 30-day TTL (the privacy policy says so). `node tools/report.ts <conversationId>` prints one with intervals (SPIKE_TOKEN from config.sh); `GET /v1/metrics` lists conversations. Only single conversations are readable; there's no aggregate view, no per-user success rate, no dashboard.
-- **Logs:** the relay logs to journald and Cloud Logging (`[relay]`, `[api]`, push failures, `talk-refused`); the API logs to Cloud Run. Reports log `[report]`, which a log-based alert emails to Steve.
-- **Uptime:** two uptime checks on `/healthz` with email alerts; Cloud Run's own metrics.
-- **Not there:** crash reports beyond what TestFlight and Xcode's Organizer collect by themselves, MetricKit, ring outcome rates (delivered, answered, missed, refused, unavailable), APNs failure rates, alerting on error rates, and tester feedback beyond TestFlight's screenshot feedback. Any new collection must stay within the privacy policy (account IDs and times, no audio) or update it.
+The spec has the design; this is where things are.
+- **Server** (`server/src/telemetry.ts`): the relay writes `oao.conversation` (outcome, rings, APNs results, intervals, its events) 2 s after it forgets a conversation (`conversationEnded`, a new relay event), and turns each uploaded device timeline into an `oao.device` summary; timelines are kept in memory for 10 minutes (so `tools/report.ts` and `bot.ts --ring-until-answered` still work) and in Cloud Logging only for `FULL_TIMELINE_USERS`. Also `oao.apns`, `oao.relay_error`, `oao.api` (4xx/5xx with the route template), `oao.registration`, `oao.event` (`POST /v1/events`), `oao.diagnostics`, `oao.feedback`. Nodes write through the Logging API (the container's stdout arrives as plain text); Cloud Run writes JSON to stdout; local runs write `DATA_DIR/telemetry.jsonl`.
+- **API:** `POST /v1/events`, `POST /v1/diagnostics` (gzip or raw DEFLATE, up to 900 KB, Firestore `diagnostics`, 30-day TTL), `POST /v1/feedback` (Firestore `feedback`, 90 days, logs `[feedback]`), `diagnosticsRequestedAt` on `GET /v1/me`; account deletion deletes both.
+- **Apps:** the kit's `Telemetry`/`DiagnosticsLog` (a rolling JSONL file: 2 MB on the iPhone, 1 MB on the watch, 14 days; "log" lines, which can name friends, stay out). iPhone: MetricKit (`iOS/Diagnostics.swift`), PushToTalk events (`pttJoined`, `pttLeft` with reason, `pttRestored`, `pttRejoin`, `pttJoinFailed`), `registrationFailed`, `relayDropped`, Report a Problem (`iOS/ReportProblemView.swift`). Watch: `Watch/WatchDiagnostics.swift` (unclean-exit marker, the extension's started/finished lines), the pull check and event flush at its idle reload (one extra `GET /v1/me`). Both upload a short timeline on Decline.
+- **Tools:** `node server/tools/beta.ts summary | tester <name> | conversation <id> | pull <name> | logs <name> | feedback` (Cloud Logging and Firestore with Steve's gcloud credentials, or `--local <DATA_DIR>`); `deploy/gcp/telemetry-monitoring.ts print | validate | apply` (the dashboard passed Monitoring's `validateOnly`).
+- **Tested:** 103 server tests + 25 on the Firestore emulator; kit 32; in the simulators on a local relay: answered and declined rings, their records and summaries, events, Report a Problem, and pulls from the iPhone and the watch.
+
+## Done on 2026-09-28 (night): the Leave fix, and telemetry
+
+- **Leave fix (`703c449`, TestFlight build 76, on `main`):** `PushToTalkChannel` keeps `wanted` (defaults `walkieTalkieWanted`) apart from `isJoined`; `turnOff()` for Settings and sign-out; any other leave posts `WalkieTalkieOffNotice` (a local notification) when the app isn't on screen; `rejoinIfWanted()` when the app becomes active. Friends has a "Walkie-talkie is off" row (Turn On) and an "Allow Notifications" row; onboarding explains Leave. Debug-only `OAO_PREVIEW_LEFT_CHANNEL=1` fakes a left channel in the simulator. Not yet tried on the iPhone.
+- **Telemetry (`5d5fafd`, branch `telemetry`):** above. The spec is its own Claude Doc; the feasibility doc has a Design decisions row for each.
+- **Backlog:** the Leave row is In progress; new rows: ask before sending diagnostics in the App Store build, remove `FirestoreMetricsStore`, watch unclean exits from Xcode, poll TestFlight crashes on a schedule.
 
 ## Done on 2026-09-28 (evening): toward the Beta (runs 51–55)
 
@@ -111,7 +130,8 @@ On the local branch **`ui-polish`** (`b0e9e18`, committed to deploy, not pushed)
 - **WatchConnectivity handoff** worked once on hardware (run 36). If it proves unreliable, the fallbacks are the watch asking again on reachability changes (already there), Settings → "Sign In on Watch Again" on the iPhone, or Sign in with Apple on the watch.
 - **App Review:** report/block and account deletion are in; the listing, privacy label and review notes aren't written yet.
 - **iOS 16 and watchOS 9–10 are untested on devices.** Their simulators: iOS 16 and watchOS 9 don't run on macOS 27; iOS 17.0 and watchOS 10.2 launch the apps and encode Opus. The extension and background behaviour need a device.
-- **The system's Leave button** turns the iPhone's walkie-talkie off without telling the person (run 54). Must-fix, above.
+- **The system's Leave button** turned the iPhone's walkie-talkie off without telling the person (run 54). Fixed in build 76 (a notice, a Friends row, rejoin on open), not yet tried on a device.
+- **Telemetry isn't deployed yet,** so testers beyond Steve would still be invisible: deploy it before adding testers.
 - **App Review and the audio background mode:** the iPhone declares `audio` alongside `push-to-talk` because PushToTalk can't activate its audio in the background without it. It's ordinary playback (guideline 2.5.4); explain it in the review notes.
 - **One relay node:** a deploy or a node failure means about 2 minutes without the relay until option E's failover and a second node exist.
 
@@ -147,6 +167,7 @@ On the local branch **`ui-polish`** (`b0e9e18`, committed to deploy, not pushed)
 - `deploy/gcp/config.sh`: `PROJECT_ID`, `DOMAIN` (the relay's hostname; the web tool uses `WEB_DOMAIN`), the relay's diagnostics token `SPIKE_TOKEN` (rotated 2026-09-28), the `APNS_*` settings, `ALERT_EMAIL`, `SUPPORT_EMAIL` (support@cypressoakstudios.com, on the site's pages), and the Sign in with Apple key: `APPLE_SIWA_KEY_FILE` (`AuthKey_2SAVY539QZ.p8` in the repo root), `APPLE_SIWA_KEY_ID` and `APPLE_TEAM_ID`.
 - **Secret Manager** holds the node and API copies (above). To rotate one, add a new version (`gcloud secrets versions add … --data-file=-`) and redeploy. The old relay token was printed in session transcripts on 2026-09-26 and 2026-09-28; it's rotated, and it gets 401.
 - `deploy/appstore/config.sh`: `ASC_KEY_ID` (`77DKLP5RCG`, an Admin team key), `ASC_ISSUER_ID`, `ASC_GROUP` ("House"). The key itself is `~/.appstoreconnect/private_keys/AuthKey_77DKLP5RCG.p8` (mode 600), where Apple's tools look. The repo root's `AuthKey_2SAVY539QZ.p8` is the Sign in with Apple key and `AuthKey_KDWRDCFK7K.p8` the APNs key (both gitignored).
+- `deploy/gcp/config.sh` also has `FULL_TIMELINE_USERS` (Steve's and the Test Bot's account IDs), which `deploy-relay.sh` passes to the relay.
 - `server/data/bot-token.json`: the Test Bot's session token (created by `tools/test-account.ts`, mode 600). `server/data/` is gitignored.
 - `app/Config/Local.xcconfig`: the paid `DEVELOPMENT_TEAM`. Its `OAO_SERVER_TOKEN` is no longer used by builds.
 - `watch/Config/Local.xcconfig`: the spike's settings (Personal Team). The spike is kept for reference only.
@@ -203,6 +224,8 @@ Then:
 4. `OAO_API=http://localhost:8080 node tools/test-account.ts create` makes a local bot; befriend it with an invite, then `SPIKE_SERVER=http://localhost:8080 node tools/bot.ts send --account` (or `listen --account`).
 
 Details:
+- Telemetry locally: the relay writes `DATA_DIR/telemetry.jsonl`; read it with `node tools/beta.ts summary --local <DATA_DIR>` (and `tester`, `logs`, `feedback`, `pull`). `OAO_BOT_TOKEN_FILE=<file>` keeps a local bot; befriend it by signing in as `dev:<name>` with curl for an invite (the 2026-09-28 session did this on port 8091).
+- The simulator has no PushToTalk; `SIMCTL_CHILD_OAO_PREVIEW_LEFT_CHANNEL=1` fakes a left channel so Friends shows "Walkie-talkie is off".
 - The watch simulator has no microphone, so it sends a 440 Hz test tone.
 - The Claude Code iOS Simulator tool: taps on the iPhone simulator register more reliably with `duration: 0.1`; on the watch use a short `touch_path`. The iPhone 18 Pro Max is 440×956 points (screenshots are about 2.09× that).
 - The server hosts are read from the build on every launch.
@@ -239,6 +262,12 @@ Details:
 - **The kit's account tests fail on watchOS 10.2** because their URLProtocol stub isn't used there; run `-only-testing:OverAndOutKitTests/VoiceCodecTests` on old watch runtimes.
 - **`deploy-web.sh` sources `config.sh`,** whose `DOMAIN` is the relay's hostname; the Hosting tool reads `WEB_DOMAIN` (`REDIRECT_TO` for a redirect domain). The Firebase Hosting REST API needs `x-goog-user-project: walkie-talkie-relay` with user credentials.
 - **The permission checker blocks Secret Manager writes and destroys** in some forms; give Steve the command instead.
+
+- **The iPhone simulator kills Over&Out as soon as it leaves the screen** (Home or Lock; SIGKILL from runningboard, `main` too), so anything that should happen in the background (the walkie-talkie-off notice) can only be checked on a device.
+- **Simulator typing right after navigation can arrive late,** into the field once it has focus; screenshot before sending a form.
+- **Cloud Monitoring's percentile reducers are 5, 50, 95 and 99** (no p90), so the dashboard and `beta.ts` show p50 and p95.
+- **The relay container's stdout reaches Cloud Logging as text** (`jsonPayload.message` in `cos_containers`), so the relay writes structured entries with the Logging API instead.
+- **App Store Connect answers 404** for a build's `diagnosticSignatures` until Apple has any; `asc.ts diagnostics` says "none yet".
 
 ## Steve's preferences
 
