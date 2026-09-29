@@ -37,7 +37,7 @@ mkdir -p "$out"
 
 auth=(-allowProvisioningUpdates -authenticationKeyPath "$key" -authenticationKeyID "$ASC_KEY_ID" -authenticationKeyIssuerID "$ASC_ISSUER_ID")
 
-echo "Archiving build $build from $rev…"
+echo "Archiving build $build from ${rev}…"
 xcodebuild -project "$repo/app/OverAndOut.xcodeproj" -scheme OverAndOut -configuration Release \
   -destination generic/platform=iOS -archivePath "$out/OverAndOut.xcarchive" \
   CURRENT_PROJECT_VERSION="$build" "${auth[@]}" -quiet archive
