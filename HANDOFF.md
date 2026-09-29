@@ -1,27 +1,45 @@
-# Handoff: Over&Out — the iPhone talks too (2026-09-28)
+# Handoff: Over&Out — the first TestFlight build (2026-09-28, evening)
 
-Read this first. Over&Out: Watch Walkie Talkie replaces Apple's Watch Walkie-Talkie app, which Apple removed in watchOS 27. The watch app works end to end on Steve's watch with real APNs pushes, through relay nodes on Google Cloud: a ring's message plays about **0.5–0.8 s after the tap** (runs 36–48) and 0.3 s after an in-app answer (run 42). Accounts, the iPhone app, profile photos and the branding are built and live. **New on 2026-09-28: the iPhone talks too** (iPhone ↔ watch and iPhone ↔ iPhone) through Apple's PushToTalk framework: on Steve's locked iPhone a friend's message plays with no tap, **1.2–1.5 s after the push is sent** (runs 45, 47), and he replies from the Lock Screen. It's on the `iphone-talk` branch, committed locally, not pushed; the relay and API it needs are deployed. There are no secrets in this file. Tokens and keys live in gitignored files and Secret Manager, listed under Local config.
+Read this first. Over&Out: Watch Walkie Talkie replaces Apple's Watch Walkie-Talkie app, which Apple removed in watchOS 27. The watch and iPhone apps work end to end through relay nodes on Google Cloud. **New today: build 0.1 (69) is on TestFlight for internal testing** (group "House": Steve, Helen, Cooper), uploaded through the App Store Connect API. On production push a locked iPhone plays a friend's message **0.89–1.17 s after the push is sent** (runs 53, 55), and a watch tap plays it in 0.67 s (run 51). There are no secrets in this file; tokens and keys live in gitignored files, Secret Manager and `~/.appstoreconnect`, listed under Local config.
 
 ## Start here
 
-1. Read this file, then the feasibility doc's **Design decisions** (the five 2026-09-27 iPhone-talk rows and the 2026-09-28 PushToTalk requirements row) and **Prototype results** runs 44–48.
-2. Ask Steve whether to push `iphone-talk` and open a PR (nothing is pushed yet), then do the **Next job** below.
-3. Ask Steve before anything outward-facing or billed: creating Google Cloud resources, deploying to the live relay or the API, DNS changes (he adds GoDaddy records by hand), App Store Connect or developer-portal changes Xcode doesn't make itself (for example a new capability or push certificate), and deleting VMs or data.
+1. Read this file, then the backlog doc (its **Beta plan** section and the **Beta** column: 1 blocks the Beta, 2 before it, 3 after it) and the feasibility doc's 2026-09-28 Design decisions and Prototype results runs 51–55.
+2. **Next session's goal (Steve): the right telemetry for a multi-user Beta.** See **Telemetry today** below for what exists. **Also a must-fix (Steve, 2026-09-28):** the system's **Leave** button beside Talk on the iPhone's Lock Screen and Dynamic Island turns walkie-talkie off, and nothing tells the person: their iPhone silently stops ringing (run 54; backlog row "The system's Leave button silently turns the iPhone's walkie-talkie off"). Fix, test in the simulator's in-app path as far as it goes, then ship build 2 with `deploy/appstore/testflight.sh` and test on Steve's iPhone. Build 2 also answers "does a TestFlight update leave the channel?" (backlog).
+3. **The 2026-09-28 work is in a PR from `beta-server`** (rebased onto `main` after PR #8, the pirate mascot): check whether Steve has merged it. All of it is already live: the relay, API and website run it, and TestFlight build 69 was built from it.
+4. Ask Steve before anything outward-facing or billed: Google Cloud resources, deploying the relay or the API, DNS (he adds GoDaddy records himself), App Store Connect or developer-portal changes Xcode doesn't make itself, and deletions. TestFlight uploads for internal testing with `testflight.sh` are approved (Steve asked for the automation), but say before each one.
 
 ## Links
 
-- **Feasibility doc (Claude Docs):** https://claude.ai/code/artifact/59ab6e47-6e5d-4698-8bd1-173293953df9. Log design decisions in its Design decisions table (date, decision, why, revisit if), and measured results in Prototype results (runs 1–50 so far).
-- **Backlog (Claude Docs):** https://claude.ai/code/artifact/30273f1c-2795-4fd7-b15a-370b1a177118. Small follow-ups with a Status column. New on 2026-09-28: eleven iPhone-talk items (testing PushToTalk with production push, warming the iPhone's relay connection, sharing the conversation core with the watch, and more). Older open items include retiring the shared relay token, blocks ending an open conversation, the API accepting tokens of ended sessions, a device's registration under a previous account, invites across the App Store install, session key rotation, reviewing reports, and the invite sheet's double lookup.
-- **Repo:** https://github.com/stevetex/WalkieTalkie. `main` has accounts (`665153a`, `c22cbc2`, `8537f6c`), branding (PR #1) and the device-test fixes and mascot watch screen (PR #2, `8037234`, `ba813ab`). photos, About and "Screen name" (PR #3, `3880fac`). **`iphone-talk`** (local, not pushed): `adf12b9` (the relay, API and iPhone talk), then device fixes `fa3b44d`, `6b88915`, `4f21ec9`, `c063527`, `ee6f3ad`, `11cb2eb`, `e37b124`, `c53578d`, `cedc40e`, `7d7b300`.
-- **App name and domain:** "Over&Out: Watch Walkie Talkie", overandout.app (DNS at GoDaddy, nameservers `ns61/ns62.domaincontrol.com`). Bundle IDs `com.cypressoakstudios.overandout` (iPhone), `…overandout.watchkitapp` (watch) and `…overandout.watchkitapp.notificationservice`. Team `A39XNKNDPX`.
+- **Feasibility doc (Claude Docs):** https://claude.ai/code/artifact/59ab6e47-6e5d-4698-8bd1-173293953df9. Design decisions (date, decision, why, revisit if) and Prototype results (runs 1–55).
+- **Backlog (Claude Docs):** https://claude.ai/code/artifact/30273f1c-2795-4fd7-b15a-370b1a177118. Every item has a Beta tier and a triage note saying what needs Steve; the Beta plan section above the table has the agreed order.
+- **Repo:** https://github.com/stevetex/WalkieTalkie. `main` has PR #7 (review fixes) and PR #8 (the pirate mascot, `89e6f19`). **`beta-server`**, rebased onto that and opened as a PR: the shared token for diagnostics only, one registration per push token and the reports script; privacy manifests and the export compliance key; the App Store Connect scripts; the branded website; Hosting redirect domains; this file. Commit hashes before the rebase (`342b8c8`, `1dd112d`) appear in the docs; the relay and API report `342b8c8`, the same code.
+- **App Store Connect:** app 6816474706, internal group "House" (every build). `node deploy/appstore/asc.ts status` lists groups, testers and builds.
+- **App name and domain:** "Over&Out: Watch Walkie Talkie", overandout.app (DNS at GoDaddy). Bundle IDs `com.cypressoakstudios.overandout` (iPhone), `…overandout.watchkitapp` (watch) and `…overandout.watchkitapp.notificationservice`. Team `A39XNKNDPX`.
 
-## Next job: finish iPhone talk, then the MVP list
+## Next job: telemetry for a multi-user Beta and the Leave must-fix, then the rest of the Beta plan
 
-iPhone talk works on Steve's devices (runs 45–48). Before the Beta:
-1. **Push and PR** `iphone-talk` when Steve says so.
-2. **Test PushToTalk with production push** (backlog): development builds get pushes through the APNs sandbox, whose connection on the phone can die unnoticed. Pushes were then accepted (200) and silently dropped until Airplane Mode was toggled (see Gotchas). Apple DTS advises testing PushToTalk with production push, which means a TestFlight build: an App Store Connect upload, so ask Steve first.
-3. **The iPhone-talk backlog items**, especially warming the relay connection (the cold connection is ~0.95 s of the 1.2–1.5 s), the stale watch registration that can take an iPhone's rings, and sharing the conversation core and mascot with the watch.
-4. **Still to do for the MVP:** the App Store listing (screenshots, description, privacy label: identifiers, name, usage data, and User Content → Photos or Videos for profile photos; review notes should explain PushToTalk and the audio background mode), the website in the new branding (`web/public`), retiring the shared relay token (backlog), and the watchOS 9–11 checks (backlog).
+Beta plan steps 1–4 are done except the items below; the backlog has details. Telemetry (see **Telemetry today**) is the next session's goal.
+1. **The Leave button** (above). Ideas in the backlog row: a local notification when the channel is left by the user ("Walkie-talkie is off; friends ring your watch"), a note on the Friends screen, and a line in onboarding. The watch is untouched, so no watch re-measure; re-measure push → first audio on the iPhone if its PushToTalk path changes.
+2. **Build 2 on TestFlight:** whether the update leaves the channel (backlog "Reinstalling sometimes leaves the PushToTalk channel"), and a watch ring on the TestFlight build (not yet tried).
+3. **Before testers beyond the house:** the monthly node replacement job (a Cloud Scheduler job, ask Steve), rejoin fallbacks on a device, answering mid-message on the watch, and for external TestFlight the review notes, an always-on Test Bot and the invite page's TestFlight link (backlog rows).
+4. **Older OS versions:** iOS 16 and watchOS 9 need devices (their simulators don't run on macOS 27). iOS 17.0 and watchOS 10.2 simulators launch the apps and pass the codec tests; taps don't reach them, so rings weren't tried.
+
+## Telemetry today (the starting point for the next session)
+
+- **Conversation timelines:** each device uploads its events when a conversation ends (`POST /v1/metrics`; about 36 app event types such as `pushReceived`, `joinSent`, `firstAudioScheduled`, `audioActivated`, plus the relay's `talkStart`, `pushSent`, `pushAccepted`, `receiverJoined`), stored in Firestore `timelines` with a 30-day TTL (the privacy policy says so). `node tools/report.ts <conversationId>` prints one with intervals (SPIKE_TOKEN from config.sh); `GET /v1/metrics` lists conversations. Only single conversations are readable; there's no aggregate view, no per-user success rate, no dashboard.
+- **Logs:** the relay logs to journald and Cloud Logging (`[relay]`, `[api]`, push failures, `talk-refused`); the API logs to Cloud Run. Reports log `[report]`, which a log-based alert emails to Steve.
+- **Uptime:** two uptime checks on `/healthz` with email alerts; Cloud Run's own metrics.
+- **Not there:** crash reports beyond what TestFlight and Xcode's Organizer collect by themselves, MetricKit, ring outcome rates (delivered, answered, missed, refused, unavailable), APNs failure rates, alerting on error rates, and tester feedback beyond TestFlight's screenshot feedback. Any new collection must stay within the privacy policy (account IDs and times, no audio) or update it.
+
+## Done on 2026-09-28 (evening): toward the Beta (runs 51–55)
+
+- **Triage:** every backlog item and HANDOFF's MVP list sorted into blocks / before / after the Beta, with sizes and what needs Steve; Steve chose an internal Beta first and kept the iOS 16 / watchOS 9 minimums.
+- **Server (`342b8c8`, deployed by Steve's OK):** the shared relay token only reads diagnostics (GET `/v1/users`, `/v1/status`, `/v1/metrics`); relay clients without accounts need `SHARED_TOKEN_CLIENTS=1`, which nodes don't set. The token was rotated (`relay-token` version 2) and the legacy `devices` collection deleted. `pushTokens/{sha256}` names the one registration each push token belongs to, so a device signed into another account or reinstalled can't take rings meant for another; the iPhone's shared `"app:"` token is exempt. `server/tools/reports.ts` lists, shows and resolves reports and deletes accounts. PR #7 (review fixes) was already live (Steve deployed `4835083`).
+- **Apps (`6be6f1b`):** privacy manifests (iPhone: UserDefaults CA92.1; watch: UserDefaults and file timestamps C617.1) and `ITSAppUsesNonExemptEncryption = NO` in all three Info.plists (confirmed by Steve).
+- **TestFlight (`1dd112d`):** `deploy/appstore/testflight.sh [--notes …]` archives in Release and uploads for internal testing through the App Store Connect API; the build number is the commit count, and it refuses uncommitted `app/` changes. `deploy/appstore/asc.ts` waits for processing, sets What to Test, keeps "House" on every build and adds testers (`add-tester <email>`; internal testers must be App Store Connect users). Build 69 processed in about 3 minutes.
+- **Website (`20d7a34`, deployed):** every page has the mascot masthead on indigo, the apps' palette, iPhone-and-watch wording, support@cypressoakstudios.com spelled out and a Cypress Oak Studios LLC footer; the privacy policy covers mascots, favorites, "last messaged you", both devices' push tokens and the watch's prefetched message. `www.overandout.app` redirects to the root (Firebase Hosting; Steve's CNAME to `walkie-talkie-relay.web.app`).
+- **Measured:** run 51 watch tap → first audio 0.67 s; run 52 iPhone (sandbox) push → first audio 2.33 s, of which 1.64 s sandbox delivery; run 53 iPhone on production push 1.17 s and a Lock Screen reply; run 55 with Do Not Disturb on 0.89 s (Focus doesn't silence PushToTalk). No double buzz from the prefetch push (run 51).
 
 ## Done on 2026-09-28 (later): UI polish (runs 49–50)
 
@@ -58,8 +76,8 @@ On the local branch **`ui-polish`** (`b0e9e18`, committed to deploy, not pushed)
 - **Accounts (2026-09-27):**
   - **API** (`server/src/api.ts`, `accounts.ts`, `session.ts`, `apple.ts`; `api-main.ts` for Cloud Run): Sign in with Apple with a nonce; Ed25519 JWT session tokens (30 days, refreshed when a day old, refreshable up to a year past expiry while the session exists); the iPhone mints the watch's session (`POST /v1/auth/device`); profile, friends, single-use 7-day invites, blocks, reports (logged as `[report]`, emailed by an alert), push registration (`PUT /v1/me/device`), account deletion with Apple token revocation.
   - **Firestore model:** `users/{uid}` (with `photoVersion`) with `friends`, `blocks`, `devices` and `sessions` subcollections; `appleSubs/{sub}`; `invites/{code}` (TTL on `expireAt`); `reports/{id}`; `photos/{uid}`. The account logic runs on a small `Docs` interface: Firestore REST with atomic commits and preconditions, or `MemoryDocs` locally.
-  - **Relay:** accepts session tokens (user and device from the token) and the shared token (user ID from the request, never an account's). An account can only ring a friend (`ringLookup`, one Firestore batch read per ring); one kind of device rings (see Done on 2026-09-28); otherwise `talk-refused`. Diagnostics and `POST /v1/devices` are shared-token only.
-  - **Tests:** `npm test` runs 73 (17 skip without the emulator); `npm run test:firestore` runs 17, including the whole account suite against the Firestore emulator. `swift test` in the kit runs 21.
+  - **Relay:** accepts session tokens (user and device from the token); the shared token only reads diagnostics (since `342b8c8`). An account can only ring a friend (`ringLookup`, one Firestore batch read per ring); one kind of device rings (see Done on 2026-09-28); otherwise `talk-refused`. Diagnostics are shared-token only; `POST /v1/devices` only works on a relay with `SHARED_TOKEN_CLIENTS=1`.
+  - **Tests:** `npm test` runs 119 (94 pass, 25 skip without the emulator); `npm run test:firestore` runs 25 against the Firestore emulator. The kit's tests: 24 (`swift test`, or `xcodebuild test -scheme OverAndOutKit` on a simulator).
 - **iPhone app (`app/iOS`):** sign-in, onboarding (screen name and optional photo, Focus step, watch), friends list with photos, invite via the share sheet, invite acceptance sheet (universal links), friend page (report with reasons and optional block, block, remove), settings (photo, screen name, watch status and re-send sign-in, Focus help, blocked people, privacy and support links, About Over&Out, sign out, the Delete Account screen), and now talking: a Talk screen per friend, PushToTalk, Settings → Walkie-Talkie.
 - **Branding (2026-09-27, `0e65ca9`):** the icon ("Chrome Tomorrow" mascot), the stacked wordmark and light/dark semantic colors are in each target's `Assets.xcassets`; `OverAndOutKit/Brand.swift` has the palette and `.brandScreen()`. The iPhone's Friends and sign-in screens have a masthead; the watch's main screen is the mascot (above). Source art, exports and usage notes are in `art/` (see `art/README.md`). The website (`web/public`) doesn't use it yet.
 - **Watch app:** its session comes from the iPhone (`Watch/WatchAccount.swift`), stored in the Keychain under the app group; friends from the API, cached, with a picker when there's more than one; push token registered under the account; token refresh and friends reload 5 s after coming to the front and only when idle (never on the ring path). The shared token is gone from the builds.
@@ -78,37 +96,37 @@ On the local branch **`ui-polish`** (`b0e9e18`, committed to deploy, not pushed)
 | Do Not Disturb | Rings break through only if Over&Out is on the Focus's allowed apps. Onboarding now guides users to that |
 | Talk → relay's "go ahead" | 0.2–0.48 s |
 
-### Measured on Steve's iPhone (no debugger, PushToTalk, sandbox APNs)
+### Measured on Steve's iPhone (no debugger, PushToTalk; runs 45–52 sandbox APNs, 53–55 production)
 
 | What | Result |
 | --- | --- |
-| Push sent → PushToTalk push received | 0.19–0.35 s (runs 45, 47) |
+| Push sent → PushToTalk push received | 0.28–0.32 s on production (runs 53, 55); 0.17–1.64 s on the sandbox |
 | Push received → audio session active | 0.46–0.65 s |
 | Push received → relay stream joined | 0.97–1.18 s (the cold connection is the longest step) |
-| **Push sent → first audio (no tap)** | **1.16 s** (run 45); 1.54 s over a Bluetooth headset (run 47) |
+| **Push sent → first audio (no tap)** | **0.89–1.17 s** on production over Bluetooth (runs 53, 55); 1.02–1.54 s on the sandbox |
 | Lock Screen Talk → first frame sent / relay's go-ahead | 1.14 s / 1.28 s (run 47) |
 
 ## Open risks
 
 - **WatchConnectivity handoff** worked once on hardware (run 36). If it proves unreliable, the fallbacks are the watch asking again on reachability changes (already there), Settings → "Sign In on Watch Again" on the iPhone, or Sign in with Apple on the watch.
 - **App Review:** report/block and account deletion are in; the listing, privacy label and review notes aren't written yet.
-- **watchOS 9–11 is untested** (Opus encoder, background behaviour, the extension). In the backlog, needed before the Beta.
-- **PushToTalk on production push is unmeasured.** Every iPhone run used the APNs sandbox, which silently dropped pushes until Airplane Mode was toggled. Production should be steadier (Apple DTS), but it needs a TestFlight build to confirm (backlog).
+- **iOS 16 and watchOS 9–10 are untested on devices.** Their simulators: iOS 16 and watchOS 9 don't run on macOS 27; iOS 17.0 and watchOS 10.2 launch the apps and encode Opus. The extension and background behaviour need a device.
+- **The system's Leave button** turns the iPhone's walkie-talkie off without telling the person (run 54). Must-fix, above.
 - **App Review and the audio background mode:** the iPhone declares `audio` alongside `push-to-talk` because PushToTalk can't activate its audio in the background without it. It's ordinary playback (guideline 2.5.4); explain it in the review notes.
 - **One relay node:** a deploy or a node failure means about 2 minutes without the relay until option E's failover and a second node exist.
 
 ## Deployment today (Google Cloud)
 
 - **Resources** (project `walkie-talkie-relay`, owned by stevelt@gmail.com; all in us-central1):
-  - instance group `relay` (zone us-central1-a) with one node, `relay-1` (e2-micro, COS, 10 GB boot disk, 10 GB data disk `relay-1-1`), template `relay-<commit>`, **running `b0e9e18`** (UI polish: records "last messaged you"; deployed by Steve 2026-09-28);
+  - instance group `relay` (zone us-central1-a) with one node, `relay-1` (e2-micro, COS, 10 GB boot disk, 10 GB data disk `relay-1-1`), template `relay-<commit>`, **running `342b8c8`** (deployed 2026-09-28 evening);
   - static IP `walkie-relay-ip` `35.209.96.216` (Standard tier), on `relay-1`;
   - Firestore (default) database, TTL policies on `timelines.expireAt` and `invites.expireAt`;
   - service accounts `relay-node` (Firestore, logs, metrics, image pull, its secrets) and `account-api` (Firestore, the API's secrets);
-  - Cloud Run service `api` (`https://api-yqgprbu3ja-uc.a.run.app`, scales to zero, max 4 instances, running `b0e9e18`);
-  - Firebase added to the project (Steve accepted the terms in the console); Hosting site `walkie-talkie-relay` (`walkie-talkie-relay.web.app`) with the custom domain overandout.app; `/v1/*` rewritten to `api`;
-  - Artifact Registry repo `relay` (images `relay` and `api`); Secret Manager secrets `relay-token`, `apns-key`, `acme-eab`, `session-signing-key`, `session-public-keys` (key ID `k20260927`) and `apple-siwa-key`;
+  - Cloud Run service `api` (`https://api-yqgprbu3ja-uc.a.run.app`, scales to zero, max 4 instances, running `342b8c8`);
+  - Firebase added to the project (Steve accepted the terms in the console); Hosting site `walkie-talkie-relay` (`walkie-talkie-relay.web.app`) with the custom domains overandout.app and www.overandout.app (a redirect to the root); `/v1/*` rewritten to `api`;
+  - Artifact Registry repo `relay` (images `relay` and `api`); Secret Manager secrets `relay-token` (version 2 since 2026-09-28; Steve destroyed version 1, the leaked value), `apns-key`, `acme-eab`, `session-signing-key`, `session-public-keys` (key ID `k20260927`) and `apple-siwa-key`;
   - health check `relay-health`, firewall rule `walkie-web` (80/443), two uptime checks and alert policies, and the alert policy "Over&Out: user report".
-- **DNS** at GoDaddy: `relay-1.overandout.app` and `walkie.cypressoakstudios.com` A → `35.209.96.216`; `overandout.app` A → `199.36.158.100` and TXT `hosting-site=walkie-talkie-relay` (Firebase Hosting; the parked A record was replaced on 2026-09-27); `www` is a CNAME to the root (not served by Firebase yet).
+- **DNS** at GoDaddy: `relay-1.overandout.app` and `walkie.cypressoakstudios.com` A → `35.209.96.216`; `overandout.app` A → `199.36.158.100` and TXT `hosting-site=walkie-talkie-relay` (Firebase Hosting; the parked A record was replaced on 2026-09-27); `www` is a CNAME to `walkie-talkie-relay.web.app` (a Firebase redirect to the root).
 - **Deploy:** commit, then `deploy/gcp/deploy-relay.sh` (about 2 minutes of downtime with one node), `deploy/gcp/deploy-api.sh` and `deploy/gcp/deploy-web.sh`. `gcloud` is at `~/google-cloud-sdk/bin`, which isn't on the agent shell's PATH, so prefix `export PATH=$HOME/google-cloud-sdk/bin:$PATH`.
 - **Logs:**
 
@@ -121,13 +139,14 @@ On the local branch **`ui-polish`** (`b0e9e18`, committed to deploy, not pushed)
   ```
 
   After a node is replaced, SSH refuses its new host key; see the deploy README's Everyday commands.
-- **Data:** accounts in Firestore: Steve (`u_lddgnN9Qtcspo663` since 2026-09-27 run 40; the earlier `u_gNuPMeGUZQe1GC5A` was deleted in run 39) and the Test Bot (`u_NvlyGM47nb3JKca_`, Apple ID stand-in `test-bot.overandout`), who are friends. Legacy `devices`: `watch-0d34` (the product app on Steve's watch, old build), `watch-abee` (the spike), `bot`, and the test users `smoke-listener`, `smoke-sender` and `smoke-http`. Deleting them is in the backlog (with retiring the shared token).
+- **Data:** accounts in Firestore: Steve (`u_lddgnN9Qtcspo663` since 2026-09-27 run 40; the earlier `u_gNuPMeGUZQe1GC5A` was deleted in run 39) and the Test Bot (`u_NvlyGM47nb3JKca_`, Apple ID stand-in `test-bot.overandout`), who are friends. The legacy `devices` collection was deleted on 2026-09-28. `pushTokens/{sha256}` documents name each push token's registration. Local simulator accounts live in the local relay's `DATA_DIR`, not Firestore.
 - **Project list lag:** the project may not show in `gcloud projects list`, but it works by ID.
 
 ## Local config (gitignored; don't commit or print)
 
-- `deploy/gcp/config.sh`: `PROJECT_ID`, `DOMAIN`, the relay's shared `SPIKE_TOKEN`, the `APNS_*` settings, `ALERT_EMAIL`, `SUPPORT_EMAIL` (support@cypressoakstudios.com, on the site's pages), and the Sign in with Apple key: `APPLE_SIWA_KEY_FILE` (`AuthKey_2SAVY539QZ.p8` in the repo root), `APPLE_SIWA_KEY_ID` and `APPLE_TEAM_ID`.
-- **Secret Manager** holds the node and API copies (above). To rotate one, add a new version (`gcloud secrets versions add … --data-file=-`) and redeploy. The relay token was printed in a session transcript on 2026-09-26; retiring it is in the backlog.
+- `deploy/gcp/config.sh`: `PROJECT_ID`, `DOMAIN` (the relay's hostname; the web tool uses `WEB_DOMAIN`), the relay's diagnostics token `SPIKE_TOKEN` (rotated 2026-09-28), the `APNS_*` settings, `ALERT_EMAIL`, `SUPPORT_EMAIL` (support@cypressoakstudios.com, on the site's pages), and the Sign in with Apple key: `APPLE_SIWA_KEY_FILE` (`AuthKey_2SAVY539QZ.p8` in the repo root), `APPLE_SIWA_KEY_ID` and `APPLE_TEAM_ID`.
+- **Secret Manager** holds the node and API copies (above). To rotate one, add a new version (`gcloud secrets versions add … --data-file=-`) and redeploy. The old relay token was printed in session transcripts on 2026-09-26 and 2026-09-28; it's rotated, and it gets 401.
+- `deploy/appstore/config.sh`: `ASC_KEY_ID` (`77DKLP5RCG`, an Admin team key), `ASC_ISSUER_ID`, `ASC_GROUP` ("House"). The key itself is `~/.appstoreconnect/private_keys/AuthKey_77DKLP5RCG.p8` (mode 600), where Apple's tools look. The repo root's `AuthKey_2SAVY539QZ.p8` is the Sign in with Apple key and `AuthKey_KDWRDCFK7K.p8` the APNs key (both gitignored).
 - `server/data/bot-token.json`: the Test Bot's session token (created by `tools/test-account.ts`, mode 600). `server/data/` is gitignored.
 - `app/Config/Local.xcconfig`: the paid `DEVELOPMENT_TEAM`. Its `OAO_SERVER_TOKEN` is no longer used by builds.
 - `watch/Config/Local.xcconfig`: the spike's settings (Personal Team). The spike is kept for reference only.
@@ -153,9 +172,10 @@ On the local branch **`ui-polish`** (`b0e9e18`, committed to deploy, not pushed)
 
 ## Testing on the iPhone
 
-- **Hardware:** Steve's iPhone 17 Pro Max ("Tex iPhone 17", UDID `00008150-000215EA3E02401C`), iOS 27. Install as for the watch: the **OverAndOut** scheme, then **Stop**. After a reinstall, check Settings → Walkie-Talkie: it can leave the channel (backlog), and then rings go to the watch.
+- **Hardware:** Steve's iPhone 17 Pro Max ("Tex iPhone 17", UDID `00008150-000215EA3E02401C`), iOS 27. It runs **TestFlight build 69** now (production push); an Xcode install (the **OverAndOut** scheme, then **Stop**) replaces it with a sandbox build. After a reinstall, check Settings → Walkie-Talkie: it can leave the channel (backlog), and then rings go to the watch.
 - **Ring it with the bot:** set Ring Me On to iPhone, lock the phone, then `bot.ts send --account` as above. The message plays with no tap; `--stay 60` leaves time to reply from the Lock Screen's Talk button (tap the blue waveform in the Dynamic Island). The iPhone uploads its timeline when it leaves the conversation, which it does by itself once the audio stops.
-- **If nothing plays** and the timeline has no `pttPushReceived`, toggle Airplane Mode on the iPhone (the sandbox push connection; see Gotchas), then ring again.
+- **If a ring goes to the watch** with Ring Me On: iPhone, the iPhone left its channel: check Settings → Walkie-Talkie, and the phone's log for "Left the channel, reason N" (1 = the person, for example the system's Leave button).
+- **If nothing plays** on a sandbox (Xcode) build and the timeline has no `pttPushReceived`, toggle Airplane Mode on the iPhone (see Gotchas), then ring again.
 - **The phone's own log** (the app logs to subsystem `com.cypressoakstudios.overandout`, PushToTalk to `com.apple.pushtotalk.framework`, the system side is `callservicesd`, pushes are `apsd`): connect the iPhone by cable, then Steve runs in a terminal tab (it needs his password)
 
   ```bash
@@ -213,6 +233,12 @@ Details:
 - **Deploy scripts under a non-UTF-8 locale:** macOS's bash 3.2 read the "…" after `$template` as part of the variable name ("template…: unbound variable"). Variables next to non-ASCII text are now braced (`${template}…`).
 - **Simulator taps:** the first tap after typing or navigation often doesn't register; repeat it, or wait a second.
 - **Stale device registrations win rings:** a simulator watch signed in under an earlier account stayed registered there and took the ring meant for that account's iPhone (backlog).
+
+- **The system's Leave button** (beside Talk on the iPhone's Lock Screen and Dynamic Island) leaves the PushToTalk channel: InCallService logs "PTT Leave Button Tapped" and the app gets reason 1. Don't tap it to end a conversation during tests; it ends by itself a few seconds after the audio stops.
+- **Old simulator runtimes:** iOS 16 and watchOS 9 runtimes don't run on macOS 27 ("not supported on hosts after macOS 26.99.99"). Xcode 27's command line won't fetch older runtimes; Steve downloads them from developer.apple.com and `xcrun simctl runtime add <dmg>` imports them. The simulator tool's taps don't reach iOS 17 or watchOS 10 simulators. Created: "iPhone 15 Pro (iOS 17)" and "Apple Watch Series 9 (watchOS 10)", paired.
+- **The kit's account tests fail on watchOS 10.2** because their URLProtocol stub isn't used there; run `-only-testing:OverAndOutKitTests/VoiceCodecTests` on old watch runtimes.
+- **`deploy-web.sh` sources `config.sh`,** whose `DOMAIN` is the relay's hostname; the Hosting tool reads `WEB_DOMAIN` (`REDIRECT_TO` for a redirect domain). The Firebase Hosting REST API needs `x-goog-user-project: walkie-talkie-relay` with user credentials.
+- **The permission checker blocks Secret Manager writes and destroys** in some forms; give Steve the command instead.
 
 ## Steve's preferences
 
