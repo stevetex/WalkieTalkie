@@ -2,6 +2,7 @@ import AVFoundation
 import Foundation
 import OverAndOutKit
 import SwiftUI
+import UserNotifications
 
 /// The iPhone app's state: the account, friends and blocks, and an invite link being
 /// opened. Everything else goes through AccountClient (OverAndOutKit).
@@ -42,6 +43,8 @@ final class AppModel: ObservableObject {
     @Published var errorMessage: String?
     /// Set by a deletion, so the root shows "Your account is deleted" before signing in again.
     @Published var accountDeleted = false
+    /// Notifications not yet asked for, so Friends offers them (the walkie-talkie off notice).
+    @Published private(set) var notificationsUndetermined = false
     @AppStorage("onboarded") var onboarded = false
 
     let client: AccountClient
@@ -82,6 +85,13 @@ final class AppModel: ObservableObject {
             guard let self else { return }
             Task { await self.registerDevice() }
             talk.pushToTalkChanged()
+        }
+        pushToTalk.onLeftUnexpectedly = { [weak self] _ in
+            guard let self else { return }
+            // On screen, Friends and Settings show it; otherwise say so at once (run 54).
+            if UIApplication.shared.applicationState != .active {
+                WalkieTalkieOffNotice.post(ringsWatch: platforms.contains(.watch))
+            }
         }
         pushToTalk.start()
         watch.makeSession = { [client] deviceId in
@@ -132,7 +142,7 @@ final class AppModel: ObservableObject {
 
     private func didSignOut() {
         talk.signedOut()
-        pushToTalk.leave()
+        pushToTalk.turnOff()
         registered = nil
         session = nil
         photoVersion = nil
@@ -179,6 +189,19 @@ final class AppModel: ObservableObject {
     }
 
     // MARK: Walkie-talkie on the iPhone
+
+    /// On screen: back into the channel if the system's Leave button (or an update) left it,
+    /// and whether notifications are still to be asked for.
+    func becameActive() async {
+        pushToTalk.rejoinIfWanted()
+        let status = await UNUserNotificationCenter.current().notificationSettings().authorizationStatus
+        notificationsUndetermined = status == .notDetermined
+    }
+
+    func allowNotifications() async {
+        _ = try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound])
+        await becameActive()
+    }
 
     /// The device that rings for this account, as the server decides it: the choice, or the
     /// watch if one is registered, else this iPhone.

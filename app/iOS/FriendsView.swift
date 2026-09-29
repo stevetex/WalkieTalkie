@@ -4,12 +4,14 @@ import SwiftUI
 /// The friends list, with inviting a friend over Messages.
 struct FriendsView: View {
     @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var ptt: PushToTalkChannel
     @State private var sharing: InviteLink?
     @State private var creatingInvite = false
 
     var body: some View {
         List {
             Group {
+                walkieTalkieStatus
                 if model.friends.isEmpty {
                     Section {
                         VStack(spacing: 12) {
@@ -77,6 +79,41 @@ struct FriendsView: View {
         .sheet(item: $sharing) { link in
             ShareSheet(items: [InviteMessage(link: link, from: model.displayName)])
                 .presentationDetents([.medium, .large])
+        }
+    }
+
+    /// Walkie-talkie off though not turned off in Settings (the system's Leave button, run 54),
+    /// or on without permission to say when that happens.
+    @ViewBuilder
+    private var walkieTalkieStatus: some View {
+        if ptt.isAvailable, !ptt.isJoined, ptt.wanted != false {
+            Section {
+                VStack(alignment: .leading, spacing: 10) {
+                    Label("Walkie-talkie is off", systemImage: "iphone.slash")
+                        .font(.headline)
+                    Text(model.platforms.contains(.watch)
+                         ? "Friends' messages ring your Apple Watch instead of playing on this iPhone."
+                         : "Friends' messages won't play on this iPhone until you turn it on.")
+                        .font(.callout)
+                        .foregroundStyle(Brand.secondary)
+                    Button("Turn On Walkie-Talkie") { ptt.join() }
+                        .buttonStyle(.borderedProminent)
+                        .tint(Brand.orange)
+                        .foregroundStyle(Brand.ink)
+                }
+                .padding(.vertical, 6)
+            }
+        } else if ptt.isJoined, model.notificationsUndetermined {
+            Section {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Allow notifications so Over&Out can tell you if walkie-talkie turns off, for example after the Leave button next to Talk.")
+                        .font(.callout)
+                        .foregroundStyle(Brand.secondary)
+                    Button("Allow Notifications") { Task { await model.allowNotifications() } }
+                        .buttonStyle(.bordered)
+                }
+                .padding(.vertical, 6)
+            }
         }
     }
 

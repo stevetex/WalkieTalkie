@@ -80,6 +80,7 @@ struct OnboardingView: View {
             point("mic.fill", "Hold the mascot's mouth to talk. Over&Out uses the microphone only while you hold it.")
             if ptt.isAvailable {
                 point("iphone.radiowaves.left.and.right", "With walkie-talkie on, friends' messages play on this iPhone right away, even when it's locked.")
+                point("xmark.circle", "A conversation ends by itself when you both stop talking. The Leave button next to Talk turns walkie-talkie off.")
             }
             if watch.isPaired {
                 VStack(alignment: .leading, spacing: 12) {

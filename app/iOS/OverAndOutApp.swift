@@ -44,6 +44,7 @@ struct OverAndOutApp: App {
                     case .active:
                         model.talk.appBecameActive()
                         Task {
+                            await model.becameActive()
                             await model.registerDevice()
                             await model.refresh()
                         }

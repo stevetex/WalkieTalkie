@@ -187,7 +187,7 @@ struct WalkieTalkieSection: View {
             if ptt.isAvailable {
                 Toggle("Walkie-Talkie on This iPhone", isOn: Binding(
                     get: { ptt.isJoined },
-                    set: { $0 ? ptt.join() : ptt.leave() }
+                    set: { $0 ? ptt.join() : ptt.turnOff() }
                 ))
             }
             if model.canChooseRingOn {

@@ -251,6 +251,9 @@ final class TalkController: ObservableObject {
         case .audioActivated:
             log("PushToTalk audio activated")
             audioSessionActivated()
+        case let .left(reason, byApp):
+            log("Left the PushToTalk channel, reason \(reason)\(byApp ? ", by the app" : "")")
+            conversation?.timeline.mark("pttLeft", detail: "reason \(reason)\(byApp ? ", app" : "")", once: false)
         case .audioDeactivated:
             log("PushToTalk audio deactivated")
             audio.stop()
