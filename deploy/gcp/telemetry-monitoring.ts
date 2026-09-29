@@ -214,7 +214,7 @@ const policies = [
   },
   {
     displayName: "Over&Out: dropped conversations",
-    conditions: [thresholdCondition("3+ relay connections dropped mid-conversation in an hour", `${userMetric("oao_device_events")} AND metric.label.name="relayDropped"`, "3600s", 2)],
+    conditions: [thresholdCondition("3+ relay connections dropped mid-conversation in an hour", `${userMetric("oao_device_events")} AND resource.type="cloud_run_revision" AND metric.label.name="relayDropped"`, "3600s", 2)],
     doc: "Devices are losing the relay mid-conversation. `node tools/beta.ts summary --days 1`.",
   },
   {

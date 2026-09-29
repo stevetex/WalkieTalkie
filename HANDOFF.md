@@ -1,16 +1,15 @@
 # Handoff: Over&Out — the Leave fix (TestFlight build 76) and Beta telemetry (2026-09-28, night)
 
-Read this first. Over&Out: Watch Walkie Talkie replaces Apple's Watch Walkie-Talkie app, which Apple removed in watchOS 27. The watch and iPhone apps work end to end through relay nodes on Google Cloud. **TestFlight build 0.1 (76)** (the Leave fix) is out to the internal group "House" (Steve, Helen, Cooper). **Beta telemetry is built and tested in the simulators but not deployed** (branch `telemetry`, `5d5fafd`): it needs Steve's OK for the relay, API and web deploys, `setup-telemetry.sh`, and TestFlight build 3 (numbered by the commit count: 78 on this branch now). On production push a locked iPhone plays a message 0.89–1.17 s after the push is sent (runs 53, 55), and a watch tap plays it in 0.67 s (run 51). There are no secrets in this file; tokens and keys live in gitignored files, Secret Manager and `~/.appstoreconnect`, listed under Local config.
+Read this first. Over&Out: Watch Walkie Talkie replaces Apple's Watch Walkie-Talkie app, which Apple removed in watchOS 27. The watch and iPhone apps work end to end through relay nodes on Google Cloud. **TestFlight build 0.1 (76)** (the Leave fix) is out to the internal group "House" (Steve, Helen, Cooper). **Beta telemetry's server side is live** (2026-09-29, by Steve's OK: the privacy policy, the API and the relay run `a85b15a` from branch `telemetry`; `setup-telemetry.sh` made the metrics, dashboard and alerts). The apps' side waits for TestFlight build 3 (numbered by the commit count). On production push a locked iPhone plays a message 0.89–1.17 s after the push is sent (runs 53, 55), and a watch tap plays it in 0.67 s (run 51). There are no secrets in this file; tokens and keys live in gitignored files, Secret Manager and `~/.appstoreconnect`, listed under Local config.
 
 ## Start here
 
 1. Read this file, the **Over&Out Beta telemetry spec** (Links), then the backlog doc's Beta plan and the feasibility doc's newest Design decisions (two 2026-09-28 rows at the end: the Leave fix and Beta telemetry).
 2. **Waiting on Steve, in this order** (ask before each; none has run):
    1. **Build 76 on Steve's iPhone** (the Leave fix; see Next job 1 for the steps). It also answers "does a TestFlight update leave the channel?" and gives the first watch ring on a TestFlight build.
-   2. **Deploy the telemetry server side:** `deploy/gcp/deploy-web.sh` (the privacy policy first), `deploy/gcp/deploy-api.sh`, `deploy/gcp/deploy-relay.sh` (about 2 minutes without the relay) from the `telemetry` branch. `FULL_TIMELINE_USERS` in `config.sh` (Steve and the Test Bot) is already set.
-   3. **`deploy/gcp/setup-telemetry.sh`:** Firestore TTL policies on `diagnostics` and `feedback`, 11 log-based metrics, the "Over&Out Beta" dashboard and 6 alert policies (free until 1 September 2027, then about $2 a month).
-   4. **TestFlight build 3 (0.1 (78) if nothing else is committed):** `deploy/appstore/testflight.sh --notes "…"` from `telemetry`. Then re-measure watch tap → first audio and iPhone push → first audio (both apps' conversation code changed, off the ring path), and check events, a pull and Report a Problem on devices.
-   5. **Steve, in App Store Connect:** Users and Access → Notifications → TestFlight feedback emails.
+   2. ~~Deploy the telemetry server side~~ and ~~`setup-telemetry.sh`~~: done 2026-09-29 (see Deployment today). A synthetic upload as the Test Bot (`telemetry-check-…`) confirmed the relay writes to Cloud Logging.
+   3. **TestFlight build 3 (0.1 (78) if nothing else is committed):** `deploy/appstore/testflight.sh --notes "…"` from `telemetry`. Then re-measure watch tap → first audio and iPhone push → first audio (both apps' conversation code changed, off the ring path), and check events, a pull and Report a Problem on devices.
+   4. **Steve, in App Store Connect:** Users and Access → Notifications → TestFlight feedback emails.
 3. **Branches:** `main` has the Leave fix (`703c449`, pushed at Steve's request). `telemetry` (`5d5fafd`, local, not pushed) is on top of it. Nothing else is open.
 4. Ask Steve before anything outward-facing or billed: Google Cloud resources, deploying the relay, API or website, DNS (he adds GoDaddy records himself), App Store Connect or developer-portal changes Xcode doesn't make itself, TestFlight uploads (say before each), and deletions.
 
@@ -36,7 +35,7 @@ Read this first. Over&Out: Watch Walkie Talkie replaces Apple's Watch Walkie-Tal
 3. **Then the rest of the Beta plan:** the monthly node replacement job (a Cloud Scheduler job, ask Steve), rejoin fallbacks on a device, answering mid-message on the watch, and for external TestFlight the review notes, an always-on Test Bot and the invite page's TestFlight link (backlog rows).
 4. **Older OS versions:** iOS 16 and watchOS 9 need devices (their simulators don't run on macOS 27).
 
-## Telemetry (built 2026-09-28; not deployed)
+## Telemetry (built 2026-09-28; server side live 2026-09-29, apps in build 3)
 
 The spec has the design; this is where things are.
 - **Server** (`server/src/telemetry.ts`): the relay writes `oao.conversation` (outcome, rings, APNs results, intervals, its events) 2 s after it forgets a conversation (`conversationEnded`, a new relay event), and turns each uploaded device timeline into an `oao.device` summary; timelines are kept in memory for 10 minutes (so `tools/report.ts` and `bot.ts --ring-until-answered` still work) and in Cloud Logging only for `FULL_TIMELINE_USERS`. Also `oao.apns`, `oao.relay_error`, `oao.api` (4xx/5xx with the route template), `oao.registration`, `oao.event` (`POST /v1/events`), `oao.diagnostics`, `oao.feedback`. Nodes write through the Logging API (the container's stdout arrives as plain text); Cloud Run writes JSON to stdout; local runs write `DATA_DIR/telemetry.jsonl`.
@@ -138,14 +137,15 @@ On the local branch **`ui-polish`** (`b0e9e18`, committed to deploy, not pushed)
 ## Deployment today (Google Cloud)
 
 - **Resources** (project `walkie-talkie-relay`, owned by stevelt@gmail.com; all in us-central1):
-  - instance group `relay` (zone us-central1-a) with one node, `relay-1` (e2-micro, COS, 10 GB boot disk, 10 GB data disk `relay-1-1`), template `relay-<commit>`, **running `342b8c8`** (deployed 2026-09-28 evening);
+  - instance group `relay` (zone us-central1-a) with one node, `relay-1` (e2-micro, COS, 10 GB boot disk, 10 GB data disk `relay-1-1`), template `relay-<commit>`, **running `a85b15a`** (telemetry, deployed 2026-09-29);
   - static IP `walkie-relay-ip` `35.209.96.216` (Standard tier), on `relay-1`;
   - Firestore (default) database, TTL policies on `timelines.expireAt` and `invites.expireAt`;
   - service accounts `relay-node` (Firestore, logs, metrics, image pull, its secrets) and `account-api` (Firestore, the API's secrets);
-  - Cloud Run service `api` (`https://api-yqgprbu3ja-uc.a.run.app`, scales to zero, max 4 instances, running `342b8c8`);
+  - Cloud Run service `api` (`https://api-yqgprbu3ja-uc.a.run.app`, scales to zero, max 4 instances, running `a85b15a`);
   - Firebase added to the project (Steve accepted the terms in the console); Hosting site `walkie-talkie-relay` (`walkie-talkie-relay.web.app`) with the custom domains overandout.app and www.overandout.app (a redirect to the root); `/v1/*` rewritten to `api`;
   - Artifact Registry repo `relay` (images `relay` and `api`); Secret Manager secrets `relay-token` (version 2 since 2026-09-28; Steve destroyed version 1, the leaked value), `apns-key`, `acme-eab`, `session-signing-key`, `session-public-keys` (key ID `k20260927`) and `apple-siwa-key`;
-  - health check `relay-health`, firewall rule `walkie-web` (80/443), two uptime checks and alert policies, and the alert policy "Over&Out: user report".
+  - health check `relay-health`, firewall rule `walkie-web` (80/443), two uptime checks and alert policies, and the alert policy "Over&Out: user report";
+  - **telemetry (2026-09-29):** log `oao-telemetry` (the relay's entries; the API's are in its Cloud Run stdout), 11 log-based metrics `oao_*`, the dashboard "Over&Out Beta" (https://console.cloud.google.com/monitoring/dashboards/builder/8c95ff4a-8e0e-46cc-9855-3242ae13fe62?project=walkie-talkie-relay), alert policies "Over&Out: rings failing", "APNs setup", "API errors", "app crashed", "dropped conversations", "problem report", and TTL policies on `diagnostics.expireAt` and `feedback.expireAt`. The relay and the API run `a85b15a`.
 - **DNS** at GoDaddy: `relay-1.overandout.app` and `walkie.cypressoakstudios.com` A → `35.209.96.216`; `overandout.app` A → `199.36.158.100` and TXT `hosting-site=walkie-talkie-relay` (Firebase Hosting; the parked A record was replaced on 2026-09-27); `www` is a CNAME to `walkie-talkie-relay.web.app` (a Firebase redirect to the root).
 - **Deploy:** commit, then `deploy/gcp/deploy-relay.sh` (about 2 minutes of downtime with one node), `deploy/gcp/deploy-api.sh` and `deploy/gcp/deploy-web.sh`. `gcloud` is at `~/google-cloud-sdk/bin`, which isn't on the agent shell's PATH, so prefix `export PATH=$HOME/google-cloud-sdk/bin:$PATH`.
 - **Logs:**
@@ -265,6 +265,7 @@ Details:
 
 - **The iPhone simulator kills Over&Out as soon as it leaves the screen** (Home or Lock; SIGKILL from runningboard, `main` too), so anything that should happen in the background (the walkie-talkie-off notice) can only be checked on a device.
 - **Simulator typing right after navigation can arrive late,** into the field once it has focus; screenshot before sending a form.
+- **A metric-threshold alert needs `resource.type` in its filter:** `global` for the relay's entries, `cloud_run_revision` for the API's.
 - **Cloud Monitoring's percentile reducers are 5, 50, 95 and 99** (no p90), so the dashboard and `beta.ts` show p50 and p95.
 - **The relay container's stdout reaches Cloud Logging as text** (`jsonPayload.message` in `cos_containers`), so the relay writes structured entries with the Logging API instead.
 - **App Store Connect answers 404** for a build's `diagnosticSignatures` until Apple has any; `asc.ts diagnostics` says "none yet".
