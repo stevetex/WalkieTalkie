@@ -104,6 +104,7 @@ test("a relay on Firestore rings, relays and records a conversation", { skip }, 
     devices: new FirestoreDeviceStore(firestore),
     metrics,
     token: "secret",
+    sharedTokenClients: true,
     pusher: new DryRunPusher(),
   });
   try {

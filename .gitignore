@@ -16,3 +16,6 @@ app/Config/Local.xcconfig
 xcuserdata/
 DerivedData/
 build/
+
+# App Store Connect API key settings
+deploy/appstore/config.sh

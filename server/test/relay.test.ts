@@ -11,7 +11,7 @@ async function withServer(
   options: Partial<Pick<ServerOptions, "ringTimeoutMs" | "answerJoinTimeoutMs" | "devices" | "prefetchPushAfterMs" | "maxBurstMs" | "maxBufferedBytes">> = {},
 ): Promise<void> {
   const pusher = new DryRunPusher();
-  const running = await startServer({ port: 0, dataDir: null, token: "secret", pusher, ...options });
+  const running = await startServer({ port: 0, dataDir: null, token: "secret", sharedTokenClients: true, pusher, ...options });
   try {
     await fn(running, pusher);
   } finally {

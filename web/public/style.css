@@ -1,21 +1,23 @@
 :root {
-  --bg: #fbf8f3;
-  --text: #1d1b18;
-  --muted: #6b655c;
-  --accent: #d9480f;
+  /* The apps' palette (OverAndOutKit/Brand.swift and the BrandX colour assets). */
+  --bg: #fff6df;          /* ivory */
+  --text: #10161b;        /* ink */
+  --muted: #48566a;
+  --accent: #a64700;      /* talk orange, darkened for text on ivory */
   --card: #ffffff;
-  --line: #e6e0d6;
+  --line: #eadfc4;
+  --masthead: #252a51;    /* the art's indigo, so the mascot's panel meets it seamlessly */
   color-scheme: light dark;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #151412;
-    --text: #f3efe8;
-    --muted: #a39c91;
-    --accent: #ff8a4c;
-    --card: #1f1d1a;
-    --line: #34302b;
+    --bg: #272d50;        /* indigo */
+    --text: #fff6df;
+    --muted: #bed5df;     /* silver blue */
+    --accent: #ff8b1a;
+    --card: #333b60;
+    --line: #3f4870;
   }
 }
 
@@ -43,6 +45,23 @@ main {
   font-size: 15px;
   text-transform: uppercase;
 }
+
+/* The mascot and wordmark on indigo, as on the iPhone's sign-in screen. */
+.masthead {
+  background: var(--masthead);
+  text-align: center;
+  padding: 12px 20px 8px;
+}
+
+.masthead a { display: inline-block; }
+
+.masthead img {
+  display: block;
+  width: 176px;
+  height: 176px;
+}
+
+.masthead + main { padding-top: 32px; }
 
 h1 {
   font-size: 34px;
@@ -90,3 +109,4 @@ footer {
 }
 
 footer a { color: var(--muted); margin-right: 16px; }
+footer p { color: var(--muted); margin: 12px 0 0; }

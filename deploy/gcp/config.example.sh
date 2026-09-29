@@ -10,8 +10,8 @@ ZONE="us-central1-a"
 # Optional: Let's Encrypt sends certificate expiry notices here.
 ACME_EMAIL="you@example.com"
 
-# Shared bearer token for the API and relay; must match SPIKE_TOKEN in the watch's
-# Local.xcconfig. Generate one with: openssl rand -hex 24
+# Bearer token for the relay's diagnostics (timelines, status), used by tools/report.ts and
+# bot.ts --ring-until-answered. Generate one with: openssl rand -hex 24
 SPIKE_TOKEN=""
 
 # APNs token auth. Leave empty until your Apple Developer Program membership is

@@ -199,6 +199,22 @@ test("tokens: shared-token clients can't pose as accounts, and accounts can't us
   });
 });
 
+test("tokens: without shared-token clients, the shared token only reads diagnostics", async () => {
+  await withApi(async ({ url }) => {
+    for (const path of ["/v1/users", "/v1/status", "/v1/metrics"]) assert.equal((await call(url, "GET", path, "shared")).status, 200, path);
+    assert.equal((await call(url, "GET", "/v1/metrics/c1", "shared")).status, 200);
+    assert.equal((await call(url, "POST", "/v1/devices", "shared", { userId: "watch-1", pushToken: "poll:x" })).status, 403);
+    assert.equal((await call(url, "GET", "/v1/rings/poll?userId=watch-1", "shared")).status, 403);
+    assert.equal((await call(url, "POST", "/v1/rings/answer", "shared", { userId: "watch-1", conversationId: "c1" })).status, 403);
+    assert.equal((await call(url, "POST", "/v1/metrics", "shared", { conversationId: "c1", events: [] })).status, 403);
+    const stream = await fetch(new URL("/v1/relay/stream?userId=watch-1", url), { headers: { authorization: "Bearer shared" } });
+    assert.equal(stream.status, 403);
+    await stream.body?.cancel();
+    const legacy = new SpikeClient({ server: url, userId: "watch-1", token: "shared" });
+    await assert.rejects(legacy.connect());
+  });
+});
+
 test("refresh works past expiry until the session ends", async () => {
   await withApi(async ({ url, now }) => {
     const alice = await signIn(url, "apple.alice", "Alice", "alice-phone");

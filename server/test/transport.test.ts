@@ -19,7 +19,7 @@ test("record parser handles split and batched chunks", () => {
 });
 
 async function withServer(fn: (s: RunningServer) => Promise<void>): Promise<void> {
-  const running = await startServer({ port: 0, dataDir: null, token: "secret", pusher: new DryRunPusher() });
+  const running = await startServer({ port: 0, dataDir: null, token: "secret", sharedTokenClients: true, pusher: new DryRunPusher() });
   try {
     await fn(running);
   } finally {
