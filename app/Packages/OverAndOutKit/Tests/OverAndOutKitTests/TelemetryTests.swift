@@ -53,4 +53,35 @@ final class TelemetryTests: XCTestCase {
         XCTAssertFalse(info["model", default: ""].isEmpty)
         XCTAssertFalse(info["os", default: ""].isEmpty)
     }
+
+    func testQueuedEventsSurviveARelaunch() async throws {
+        let directory = tempDirectory()
+        let first = Telemetry()
+        first.configure(platform: .iphone, directory: directory, maxBytes: 100_000)
+        first.event("pttRestored", ["joined": true])
+        first.event("appLaunched")
+        // The process ends before a send; a new launch picks the events up and sends them.
+        try await Task.sleep(nanoseconds: 200_000_000)
+        let second = Telemetry()
+        second.configure(platform: .iphone, directory: directory, maxBytes: 100_000)
+        let sent = SentBox()
+        second.send = { events, _ in sent.add(events.compactMap { $0["name"] as? String }) }
+        await second.flush()
+        XCTAssertEqual(sent.names, ["pttRestored", "appLaunched"])
+        // Sent events don't come back.
+        try await Task.sleep(nanoseconds: 200_000_000)
+        let third = Telemetry()
+        third.configure(platform: .iphone, directory: directory, maxBytes: 100_000)
+        let again = SentBox()
+        third.send = { events, _ in again.add(events.compactMap { $0["name"] as? String }) }
+        await third.flush()
+        XCTAssertEqual(again.names, [])
+    }
+}
+
+private final class SentBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var all: [String] = []
+    func add(_ names: [String]) { lock.withLock { all += names } }
+    var names: [String] { lock.withLock { all } }
 }

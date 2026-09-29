@@ -22,6 +22,10 @@ public final class Telemetry: @unchecked Sendable {
     private let lock = NSLock()
     private var pending: [[String: Any]] = []
     private static let maxPending = 200
+    /// Events not yet sent, kept on disk: a PushToTalk push can launch the app in the background
+    /// and iOS can end it before the next send (run 56).
+    private var pendingFile: URL?
+    private let saveQueue = DispatchQueue(label: "com.cypressoakstudios.overandout.telemetry")
 
     public init() {}
 
@@ -29,6 +33,23 @@ public final class Telemetry: @unchecked Sendable {
     public func configure(platform: Platform, directory: URL, maxBytes: Int) {
         device = DeviceInfo.current(platform: platform)
         log = DiagnosticsLog(directory: directory, maxBytes: maxBytes)
+        let file = directory.appendingPathComponent("pending-events.json")
+        let saved = (try? Data(contentsOf: file)).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [[String: Any]] } ?? []
+        lock.withLock {
+            pendingFile = file
+            pending = saved + pending
+            if pending.count > Self.maxPending { pending.removeFirst(pending.count - Self.maxPending) }
+        }
+        savePending()
+    }
+
+    private func savePending() {
+        let (file, snapshot): (URL?, [[String: Any]]) = lock.withLock { (pendingFile, pending) }
+        guard let file else { return }
+        saveQueue.async {
+            guard JSONSerialization.isValidJSONObject(snapshot), let data = try? JSONSerialization.data(withJSONObject: snapshot) else { return }
+            try? data.write(to: file, options: .atomic)
+        }
     }
 
     /// An event for the server and the device's log. `fields` hold short values only: numbers,
@@ -42,6 +63,7 @@ public final class Telemetry: @unchecked Sendable {
             pending.append(event)
             if pending.count > Self.maxPending { pending.removeFirst(pending.count - Self.maxPending) }
         }
+        savePending()
     }
 
     /// The app came to the front, at most once an hour: daily and monthly users who open the app
@@ -78,6 +100,7 @@ public final class Telemetry: @unchecked Sendable {
         } catch {
             lock.withLock { pending.insert(contentsOf: batch, at: 0) }
         }
+        savePending()
     }
 
     /// The server asked for this device's log (GET /v1/me) after its last upload: sends it.

@@ -45,6 +45,8 @@ final class AppModel: ObservableObject {
     @Published var accountDeleted = false
     /// Notifications not yet asked for, so Friends offers them (the walkie-talkie off notice).
     @Published private(set) var notificationsUndetermined = false
+    /// Notifications turned off for Over&Out, so the walkie-talkie-off notice can't show.
+    @Published private(set) var notificationsDenied = false
     @AppStorage("onboarded") var onboarded = false
 
     let client: AccountClient
@@ -202,6 +204,7 @@ final class AppModel: ObservableObject {
         pushToTalk.rejoinIfWanted()
         let status = await UNUserNotificationCenter.current().notificationSettings().authorizationStatus
         notificationsUndetermined = status == .notDetermined
+        notificationsDenied = status == .denied
         if session != nil { await Telemetry.shared.flush() }
     }
 
