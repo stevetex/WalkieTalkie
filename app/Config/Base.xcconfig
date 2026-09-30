@@ -35,4 +35,14 @@ OAO_WATCH_ENTITLEMENTS_no = Config/Watch-NoPush.entitlements
 OAO_IOS_ENTITLEMENTS_yes = Config/iOS.entitlements
 OAO_IOS_ENTITLEMENTS_no = Config/iOS-NoPush.entitlements
 
+// Run builds compile only the assets the run destination needs, but the OverAndOutWatch scheme
+// also builds the iPhone app for a watch destination, and actool can't thin an iPhone catalog
+// for a watch model ("Could not get trait set for device Watch8,1"). So trim only when the
+// target's platform is the destination's; the other target gets its full catalog.
+OAO_ACTIVE_RESOURCES_iphoneos_iphoneos = YES
+OAO_ACTIVE_RESOURCES_iphonesimulator_iphonesimulator = YES
+OAO_ACTIVE_RESOURCES_watchos_watchos = YES
+OAO_ACTIVE_RESOURCES_watchsimulator_watchsimulator = YES
+ENABLE_ONLY_ACTIVE_RESOURCES = $(OAO_ACTIVE_RESOURCES_$(PLATFORM_NAME)_$(TARGET_DEVICE_PLATFORM_NAME))
+
 #include? "Local.xcconfig"
