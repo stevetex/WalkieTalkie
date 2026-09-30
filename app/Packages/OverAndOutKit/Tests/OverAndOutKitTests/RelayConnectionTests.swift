@@ -1,0 +1,193 @@
+import Foundation
+import os
+import Testing
+@testable import OverAndOutKit
+
+/// A relay served from a URLProtocol: the stream answers with hello-ack and then `streamRecords`
+/// and stays open; each send is recorded and answered with `sendStatus`, or held until
+/// `releaseHeldSends()` when `holdSends` is set.
+///
+/// `@unchecked Sendable`: URLProtocol isn't Sendable, and a held send finishes on the test's
+/// task. This subclass adds no stored state; the shared state is behind `state`.
+final class RelayStub: URLProtocol, @unchecked Sendable {
+    private struct State {
+        var streamRecords = Data()
+        var sendStatus = 200
+        var holdSends = false
+        var sends: [Data] = []
+        var held: [@Sendable () -> Void] = []
+    }
+
+    private static let state = OSAllocatedUnfairLock(initialState: State())
+
+    static func reset(streamRecords: Data = Data(), sendStatus: Int = 200, holdSends: Bool = false) {
+        state.withLock { $0 = State(streamRecords: streamRecords, sendStatus: sendStatus, holdSends: holdSends) }
+    }
+
+    /// The records in each send's body.
+    static var sends: [[(type: UInt8, payload: Data)]] {
+        state.withLock { $0.sends }.map { body in
+            var parser = RelayRecord.Parser()
+            return (try? parser.push(body)) ?? []
+        }
+    }
+
+    static var heldSends: Int { state.withLock { $0.held.count } }
+
+    static func releaseHeldSends() {
+        let held = state.withLock {
+            defer { $0.held = [] }
+            return $0.held
+        }
+        held.forEach { $0() }
+    }
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        let url = request.url!
+        if url.path.hasSuffix("/v1/relay/stream") {
+            let hello = RelayRecord.encode(RelayRecord.json, Data(#"{"type":"hello-ack","serverTime":1000}"#.utf8))
+            let records = Self.state.withLock { $0.streamRecords }
+            // As the relay sends it: with a type, so URLSession doesn't hold data back to sniff one.
+            let headers = ["Content-Type": "application/octet-stream", "X-Content-Type-Options": "nosniff"]
+            client?.urlProtocol(self, didReceive: HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: headers)!,
+                                cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: hello + records)
+            return // The stream stays open until the connection closes it.
+        }
+        let body = request.bodyStreamData()
+        let (status, hold) = Self.state.withLock { state in
+            if !body.isEmpty { state.sends.append(body) }
+            return (state.sendStatus, state.holdSends && !body.isEmpty)
+        }
+        let finish: @Sendable () -> Void = { [self] in
+            client?.urlProtocol(self, didReceive: HTTPURLResponse(url: url, statusCode: status, httpVersion: nil, headerFields: nil)!,
+                                cacheStoragePolicy: .notAllowed)
+            client?.urlProtocolDidFinishLoading(self)
+        }
+        if hold {
+            Self.state.withLock { $0.held.append(finish) }
+        } else {
+            finish()
+        }
+    }
+
+    override func stopLoading() {}
+}
+
+/// Waits on the main actor, so the connection's callbacks can run meanwhile.
+@MainActor
+private func waitUntil(_ condition: @MainActor () -> Bool, seconds: Double = 3) async throws {
+    let deadline = Date().addingTimeInterval(seconds)
+    while !condition() {
+        guard Date() < deadline else { throw CancellationError() }
+        try await Task.sleep(nanoseconds: 2_000_000)
+    }
+}
+
+@MainActor
+@Suite(.serialized)
+struct RelayConnectionTests {
+    let base = URL(string: "https://relay.test")!
+
+    func connection(stampsArrivals: Bool) -> RelayConnection {
+        let relay = RelayConnection(stampsArrivals: stampsArrivals)
+        relay.protocolClasses = [RelayStub.self]
+        return relay
+    }
+
+    static func json(_ text: String) -> Data { RelayRecord.encode(RelayRecord.json, Data(text.utf8)) }
+
+    /// Talk starts before the stream opens (the watch's first press): what's sent meanwhile is
+    /// held until hello-ack, then goes out in one POST, in order.
+    @Test(arguments: [false, true])
+    func sendsBeforeTheStreamOpensGoOutInOrderOnceItDoes(stampsArrivals: Bool) async throws {
+        RelayStub.reset()
+        let relay = connection(stampsArrivals: stampsArrivals)
+        var readyOnMain = false
+        relay.onReady = { _ in readyOnMain = Thread.isMainThread }
+        relay.connect(baseURL: base, token: "t", userId: "u")
+        relay.send(["type": "talk-start", "burstId": "b1"])
+        relay.send(frame: Data([1]))
+        relay.send(frame: Data([2]))
+        #expect(!relay.isReady)
+        try await waitUntil { RelayStub.sends.count == 1 }
+        #expect(relay.isReady)
+        #expect(readyOnMain)
+        let records = RelayStub.sends[0]
+        #expect(records.map(\.type) == [RelayRecord.json, RelayRecord.audio, RelayRecord.audio])
+        #expect(records.dropFirst().map(\.payload) == [Data([1]), Data([2])])
+        relay.close()
+    }
+
+    /// Records arrive on the main actor in the order the relay sent them, stamped when they arrived.
+    @Test(arguments: [false, true])
+    func downlinkRecordsArriveInOrderOnTheMainActor(stampsArrivals: Bool) async throws {
+        RelayStub.reset(streamRecords: Self.json(#"{"type":"burst-start","burstId":"b1"}"#)
+            + RelayRecord.encode(RelayRecord.audio, Data([7]))
+            + Self.json(#"{"type":"ping"}"#)
+            + RelayRecord.encode(RelayRecord.audio, Data([8]))
+            + Self.json(#"{"type":"burst-end","burstId":"b1"}"#))
+        let relay = connection(stampsArrivals: stampsArrivals)
+        var seen: [String] = []
+        var allOnMain = true
+        relay.onReady = { _ in seen.append("ready") }
+        relay.onMessage = { message in
+            allOnMain = allOnMain && Thread.isMainThread
+            seen.append(message.type)
+        }
+        relay.onFrame = { frame in
+            allOnMain = allOnMain && Thread.isMainThread
+            seen.append("frame \(frame[0])")
+        }
+        let before = Clock.nowMs()
+        relay.connect(baseURL: base, token: "t", userId: "u")
+        try await waitUntil { seen.count == 5 }
+        // "ping" is the relay's keepalive, handled inside the connection.
+        #expect(seen == ["ready", "burst-start", "frame 7", "frame 8", "burst-end"])
+        #expect(allOnMain)
+        #expect(relay.lastArrivalMs >= before)
+        relay.close()
+    }
+
+    /// A POST that fails closes the connection once; what it carried isn't retried.
+    @Test func aFailedSendClosesTheConnection() async throws {
+        RelayStub.reset(sendStatus: 500)
+        let relay = connection(stampsArrivals: true)
+        var closes: [String] = []
+        relay.onClose = { closes.append($0) }
+        relay.connect(baseURL: base, token: "t", userId: "u")
+        relay.send(["type": "talk-start", "burstId": "b1"])
+        try await waitUntil { !closes.isEmpty }
+        try await Task.sleep(nanoseconds: 50_000_000)
+        #expect(closes == ["send: HTTP 500"])
+        #expect(!relay.isReady && !relay.isConnecting)
+    }
+
+    /// Reconnecting cancels the old connection's POST, whose failure arrives after the new
+    /// stream opened: it's ignored, rather than closing the new connection or reporting.
+    @Test func aSendFromAnEarlierConnectionIsIgnored() async throws {
+        RelayStub.reset(holdSends: true)
+        let relay = connection(stampsArrivals: true)
+        var statuses: [Int] = []
+        var closes = 0
+        relay.onPostFinished = { _, _, _, status in statuses.append(status) }
+        relay.onClose = { _ in closes += 1 }
+        relay.connect(baseURL: base, token: "t", userId: "u")
+        relay.send(["type": "talk-start", "burstId": "old"])
+        try await waitUntil { RelayStub.heldSends == 1 }
+
+        relay.connect(baseURL: base, token: "t", userId: "u")
+        relay.send(["type": "talk-start", "burstId": "new"])
+        try await waitUntil { RelayStub.heldSends == 2 && relay.isReady }
+        RelayStub.releaseHeldSends()
+        try await waitUntil { statuses.count == 1 }
+        try await Task.sleep(nanoseconds: 100_000_000)
+        #expect(statuses == [200])
+        #expect(closes == 0)
+        #expect(relay.isReady)
+        relay.close()
+    }
+}

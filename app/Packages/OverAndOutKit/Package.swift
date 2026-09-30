@@ -16,11 +16,11 @@ let package = Package(
         .library(name: "OverAndOutKit", targets: ["OverAndOutKit"]),
     ],
     targets: [
-        .target(name: "OverAndOutKit", swiftSettings: [.swiftLanguageMode(.v5)]),
+        .target(name: "OverAndOutKit", swiftSettings: [.swiftLanguageMode(.v6)]),
         .testTarget(
             name: "OverAndOutKitTests",
             dependencies: ["OverAndOutKit"],
-            swiftSettings: [.swiftLanguageMode(.v5)]
+            swiftSettings: [.swiftLanguageMode(.v6)]
         ),
     ]
 )

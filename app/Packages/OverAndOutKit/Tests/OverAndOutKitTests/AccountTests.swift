@@ -1,32 +1,39 @@
 import Foundation
+import os
 import Testing
 @testable import OverAndOutKit
 
 /// Serves canned responses in order and records the requests. A `held` reply waits for
-/// `releaseHeld()`, to finish a request after something else has happened.
+/// `releaseHeld()`, to finish a request after something else has happened. The suite runs
+/// serialized, so one test's replies can't answer another's requests.
+///
+/// `@unchecked Sendable`: URLProtocol isn't Sendable, and a held reply finishes on the test's
+/// task. This subclass adds no stored state; the shared replies and requests are behind `state`.
 final class StubProtocol: URLProtocol, @unchecked Sendable {
-    struct Reply { let status: Int; let json: String; var held = false }
-    nonisolated(unsafe) static var replies: [Reply] = []
-    nonisolated(unsafe) static var requests: [URLRequest] = []
-    nonisolated(unsafe) static var held: [() -> Void] = []
-    static let lock = NSLock()
+    struct Reply: Sendable { let status: Int; let json: String; var held = false }
+
+    private struct State {
+        var replies: [Reply] = []
+        var requests: [URLRequest] = []
+        var held: [@Sendable () -> Void] = []
+    }
+
+    private static let state = OSAllocatedUnfairLock(initialState: State())
+
+    static var requests: [URLRequest] { state.withLock { $0.requests } }
 
     static func reset(_ replies: [Reply]) {
-        lock.withLock {
-            self.replies = replies
-            requests = []
-            held = []
-        }
+        state.withLock { $0 = State(replies: replies) }
     }
 
     static func waitUntilHeld() async {
-        while lock.withLock({ held.isEmpty }) { try? await Task.sleep(nanoseconds: 1_000_000) }
+        while state.withLock({ $0.held.isEmpty }) { try? await Task.sleep(nanoseconds: 1_000_000) }
     }
 
     static func releaseHeld() {
-        let replies = lock.withLock {
-            defer { held = [] }
-            return held
+        let replies = state.withLock {
+            defer { $0.held = [] }
+            return $0.held
         }
         replies.forEach { $0() }
     }
@@ -35,18 +42,19 @@ final class StubProtocol: URLProtocol, @unchecked Sendable {
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
 
     override func startLoading() {
-        let reply: Reply = Self.lock.withLock {
-            Self.requests.append(request)
-            return Self.replies.isEmpty ? Reply(status: 500, json: "{}") : Self.replies.removeFirst()
+        let request = request
+        let reply: Reply = Self.state.withLock {
+            $0.requests.append(request)
+            return $0.replies.isEmpty ? Reply(status: 500, json: "{}") : $0.replies.removeFirst()
         }
-        let finish = { [self] in
+        let finish: @Sendable () -> Void = { [self] in
             let response = HTTPURLResponse(url: request.url!, statusCode: reply.status, httpVersion: nil, headerFields: nil)!
             client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
             client?.urlProtocol(self, didLoad: Data(reply.json.utf8))
             client?.urlProtocolDidFinishLoading(self)
         }
         if reply.held {
-            Self.lock.withLock { Self.held.append(finish) }
+            Self.state.withLock { $0.held.append(finish) }
         } else {
             finish()
         }
@@ -119,7 +127,7 @@ struct AccountTests {
         #expect(upload.httpMethod == "PUT")
         #expect(upload.url?.path == "/v1/me/photo")
         #expect(upload.value(forHTTPHeaderField: "Content-Type") == "image/jpeg")
-        #expect(try upload.bodyStreamData() == jpeg)
+        #expect(upload.bodyStreamData() == jpeg)
         let friends = try await c.friends()
         #expect(friends.map(\.photoVersion) == [1_790_000_000_001, nil])
         #expect(try await c.photo(userId: "u_b") == Data("jpeg bytes".utf8))
@@ -235,7 +243,7 @@ struct AccountTests {
     }
 }
 
-private extension URLRequest {
+extension URLRequest {
     /// URLProtocol sees the body as a stream.
     func bodyStreamData() -> Data {
         if let httpBody { return httpBody }

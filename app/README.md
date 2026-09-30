@@ -45,6 +45,33 @@ The shared package's tests run on the Mac:
 cd Packages/OverAndOutKit && swift test
 ```
 
+`swift test --sanitize=thread` runs them under Thread Sanitizer too.
+
+## Swift 6
+
+Everything is in the Swift 6 language mode (2026-09-29; [SWIFT6_MIGRATION_PLAN.md](../SWIFT6_MIGRATION_PLAN.md)): `SWIFT_VERSION = 6.0` for all three targets in Debug and Release, and `.swiftLanguageMode(.v6)` for the package and its tests. Default main-actor isolation and the Approachable Concurrency switches are off. The builds are clean of warnings; keep them that way.
+
+Who owns what:
+- **Main actor:** `RelayConnection` (its URLSession delegate methods are nonisolated and hop in), `AudioPipeline`'s API and callbacks, and the controllers and account objects in both apps.
+- **`AudioPipeline`'s audio queue** (`AudioQueueState`): the codec, the capture and jitter buffers, and scheduling on the player. The input tap's block owns the capture converter.
+- **Locks** (`OSAllocatedUnfairLock`): `Telemetry`, the session stores, and the notification extension's request (delivered once, by the download or the expiry, whichever comes first).
+
+The unchecked boundaries left, each with its invariant in a comment: `AudioQueueState` (queue-confined), the extension's `Delivery` and `PhoneWatchLink.Reply` (framework handlers without Sendable annotations, called once), and the test stubs' URLProtocol subclasses.
+
+A closure written inside a main-actor type is main-actor too, unless its parameter type is `@Sendable`, and Swift 6 traps at run time if a framework calls it on another thread. Mark such closures `@Sendable` (`DispatchSource.setEventHandler`, `WCSession.sendMessage`'s handlers and `AVAudioSession.requestRecordPermission` need it), make delegate methods on main-actor types `nonisolated`, and use `MainActor.assumeIsolated` in callbacks delivered on the main queue (`NotificationCenter` with `queue: .main`, `Timer`).
+
+To check a change, from fresh build output:
+
+```bash
+xcodebuild -project OverAndOut.xcodeproj -scheme OverAndOut -configuration Debug -destination 'generic/platform=iOS Simulator' -derivedDataPath /tmp/oao-debug build
+```
+
+```bash
+xcodebuild -project OverAndOut.xcodeproj -scheme OverAndOut -configuration Release -destination 'generic/platform=iOS' -derivedDataPath /tmp/oao-release CODE_SIGNING_ALLOWED=NO build
+```
+
+Both should print no `warning:` or `error:` lines, apart from `appintentsmetadataprocessor`'s "Metadata extraction skipped" notes. Each module's compile command should carry `-swift-version 6`.
+
 Never measure timing under Xcode's debugger on the watch (see [HANDOFF.md](../HANDOFF.md), Gotchas).
 
 ## Artwork and appearance

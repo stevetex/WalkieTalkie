@@ -2,7 +2,9 @@
 
 Date: 2026-09-29
 
-Status: Planning only; implementation has not started.
+Status: Implemented on 2026-09-29 on branch `swift6-migration`, in a PR for review. Everything compiles in Swift 6
+mode without warnings, and the package tests and simulator checks pass. The device matrix and
+timing re-measurement are still to do; see "Implementation record" at the end.
 
 ## Objective and recommendation
 
@@ -214,14 +216,15 @@ or scheduling changes. No server deployment or data migration is planned.
 
 ## Completion checklist
 
-- [ ] Current audio fixes validated and baseline recorded.
-- [ ] Diagnostic inventory completed for every target and tests.
-- [ ] Ownership and callback boundaries reviewed, including unchecked code.
-- [ ] Shared package, tests, iPhone, Watch, and extension use Swift 6 mode.
-- [ ] Debug/Release builds and package tests pass without concurrency diagnostics.
-- [ ] Device/integration matrix completed; timing regressions resolved.
-- [ ] iOS 16/watchOS 9 support preserved; any untested coverage recorded.
-- [ ] Build documentation and rollback reference updated.
+- [ ] Current audio fixes validated and baseline recorded. (The build baseline is recorded below; the
+      audio fixes were already committed, in `f30d42c`. The device baseline is not done.)
+- [x] Diagnostic inventory completed for every target and tests.
+- [x] Ownership and callback boundaries reviewed, including unchecked code.
+- [x] Shared package, tests, iPhone, Watch, and extension use Swift 6 mode.
+- [x] Debug/Release builds and package tests pass without concurrency diagnostics.
+- [ ] Device/integration matrix completed; timing regressions resolved. (Simulator integration done.)
+- [x] iOS 16/watchOS 9 support preserved; any untested coverage recorded.
+- [x] Build documentation and rollback reference updated.
 - [ ] Release evidence ready for review; distribution separately authorized.
 
 ## References
@@ -235,3 +238,75 @@ or scheduling changes. No server deployment or data migration is planned.
 
 Toolchain facts and diagnostics above were checked on 2026-09-29. Reconfirm them
 against the intended implementation baseline before starting.
+
+## Implementation record (2026-09-29)
+
+**Baseline:** `main` at `f30d42c`. The uncommitted audio changes noted above had been committed by
+then; the tree was clean apart from the untracked `AGENTS.md`. Xcode 27.0 (27A266a), Swift 6.4. The
+package had 33 passing tests. A Debug iOS Simulator build (with the Watch app and extension) had 10
+Swift warnings: 8 in `PushToTalkChannel.swift` (main-actor statics used from nonisolated code), 1 in
+`ProfilePhotoPicker.swift`, and 1 in `TalkController.swift`. With `SWIFT_STRICT_CONCURRENCY=complete`
+there were 156 distinct diagnostics: `ConversationController` 68, `WatchAccount` 42, `AudioPipeline` 20,
+`PushToTalkChannel` 9, `PhoneWatchLink` 4, `TalkController` 3, `RelayConnection` 3,
+`ProfilePhotoPicker` 2, `AppModel` 2, and 1 each in `Diagnostics`, `Telemetry` and the extension. A strict macOS package build had 22 (20 `AudioPipeline`, 1
+`RelayConnection`, 1 `Telemetry`), plus one test warning (an unneeded `try`).
+
+**Approach:** the modes were switched at once, and each Swift 6 error was fixed at its boundary, rather
+than resolving warnings in Swift 5 mode first. The resulting code is the same either way, and the
+checkpoints below remain separately reviewable by file.
+
+**Ownership decisions:**
+
+| Area | Now | Why |
+| --- | --- | --- |
+| `RelayConnection` | `@MainActor`; URLSession delegate methods `nonisolated`, handing over through `onMain` (`assumeIsolated` when the session already delivers to the main queue) | Its callers were already main-queue; parser, outbox and stream stay serialized there |
+| `AudioPipeline` | `@MainActor` API and engine lifecycle; `AudioQueueState` (`@unchecked Sendable`, queue-confined, `dispatchPrecondition` in debug) for codec, buffers and player scheduling; the input tap's block is made in a nonisolated function and owns the converter | Frames come from the tap's real-time thread and the player's callbacks, where awaiting isn't possible; an actor on the audio queue needs iOS 17/watchOS 10 |
+| `AudioPipeline` callbacks | All delivered on the main actor, including `onFrame`, `onFirstPlayback`, `onFirstCapturedFrame` and `endCapture`'s completion | Both apps hopped to the main queue in each of them anyway: still one hop per frame, in order, with talk-end after the last frame |
+| `Telemetry`, session stores, test stubs | Checked `Sendable`, with state in `OSAllocatedUnfairLock` (iOS 16/watchOS 9) | Removes three `@unchecked Sendable` conformances; `send`, `log` and `device` were set without the lock before |
+| Telemetry fields, timeline uploads | `[String: any Sendable]` (`Telemetry.Fields`) | Call sites already passed literals; values can now cross to the API client |
+| Watch `ConversationController`, `WatchAccount` | `@MainActor`; notification and WatchConnectivity delegate methods `nonisolated`, copying what they need into Sendable values before the hop | Makes the existing main-queue convention checked |
+| Notification extension | Request state in one lock; the notification is delivered exactly once, by the download or the expiry, whichever comes first | The two used to race on `meta` and the content handler |
+| `PhoneWatchLink.Reply`, extension `Delivery` | `@unchecked Sendable` wrappers with invariants | Framework handlers without Sendable annotations, called once; replaces a `nonisolated(unsafe)` |
+
+**Runtime isolation:** in Swift 6 mode, a closure written in a main-actor context inherits that
+isolation unless its parameter type is `@Sendable`, and the runtime traps if a framework calls it on
+another thread. The first simulator run hit exactly this: the watch's stall watchdog
+(`DispatchSource.setEventHandler`) trapped a second after launch. A type-check probe against the iOS
+and watchOS SDKs found the other non-Sendable callback parameters in use:
+`AVAudioSession.requestRecordPermission` (iPhone onboarding; it would have trapped) and
+`WCSession.sendMessage`'s handlers. All three are now explicitly `@Sendable`. `NotificationCenter`,
+`Timer`, URLSession, UserNotifications, PushToTalk and `AVAudioSession.activate` completions are
+already `@Sendable`.
+
+**Validation done:**
+- Package: 39 tests (33 existing plus 6 new) pass in Swift 6 mode, from a clean build with no
+  warnings, and again under Thread Sanitizer. The new tests cover relay sends held until hello-ack and
+  sent in order (with and without `stampsArrivals`), downlink order and main-actor delivery, a failed
+  POST closing the connection once, a stale POST ignored after reconnecting, a held burst playing and
+  draining on the main actor, and concurrent telemetry events. The stale-POST test was checked by
+  removing the guard: it then fails.
+- Builds: clean Debug iOS Simulator and Release iOS device (`CODE_SIGNING_ALLOWED=NO`) from fresh
+  output, each including the watchOS app and extension. There are no compiler warnings;
+  `appintentsmetadataprocessor`'s notes were there in the baseline too. Every module compiles with
+  `-swift-version 6`; deployment targets remain iOS 16.0 and watchOS 9.0.
+- Simulators, on a local relay and API (iPhone 18 Pro Max and Watch Series 12, watchOS 27):
+  - Watch → Bot: 177 frames arrived in order with the burst's end; press → go-ahead 156 ms (0.16 s
+    before the migration).
+  - Bot → Watch: the in-app ring and Answer; answer → first audio 33 ms; playback drained; a reply
+    (116 frames).
+  - iPhone → Bot: 125 frames through the real input tap.
+  - Bot → iPhone: a live burst; first frame → first audio scheduled 53 ms (the jitter buffer).
+  - On watchOS 10.2 (Series 9), the app launched and ran with the watchdog firing, with no trap.
+    Input there didn't reach the notification permission alert, so talking wasn't tested.
+
+**Not done (needs Steve's devices, or authorization):**
+- The device matrix and timing in "Validation matrix": watch tap → first audio and iPhone push →
+  first audio, at least ten runs each without the debugger. AGENTS.md requires this, because the
+  migration touches the watch's ring and answer path and the iPhone's audio path.
+- PushToTalk (not in the simulator).
+- The extension's completion versus expiry race, beyond reasoning and the build.
+- Physical iOS 16/watchOS 9: their simulators don't run on macOS 27.
+- Merging the PR, and TestFlight.
+
+**Rollback:** `git revert` the migration commit (once committed), or check out `f30d42c` for the
+package and apps. Setting the language mode back to 5 alone does not undo the ownership changes.

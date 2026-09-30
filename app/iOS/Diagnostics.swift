@@ -5,8 +5,9 @@ import OverAndOutKit
 /// The iPhone's crash and hang reports (the Beta telemetry spec): MetricKit hands the app its
 /// diagnostics, usually at the next launch. Each becomes a short event for the server (the
 /// kind, the exception or signal, the top frames' binaries and offsets, nothing the person
-/// said or typed), and the whole payload goes into the device's diagnostics log.
-final class Diagnostics: NSObject, MXMetricManagerSubscriber {
+/// said or typed), and the whole payload goes into the device's diagnostics log. MetricKit
+/// calls it on a queue of its own; it keeps no state.
+final class Diagnostics: NSObject, MXMetricManagerSubscriber, Sendable {
     static let shared = Diagnostics()
 
     /// At launch, so reports held since the last run are delivered.
@@ -54,7 +55,7 @@ final class Diagnostics: NSObject, MXMetricManagerSubscriber {
         }
     }
 
-    private static func common(_ meta: MXMetaData) -> [String: Any] {
+    private static func common(_ meta: MXMetaData) -> Telemetry.Fields {
         ["appBuild": meta.applicationBuildVersion, "os": meta.osVersion, "model": meta.deviceType]
     }
 

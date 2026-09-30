@@ -1,7 +1,7 @@
 import Foundation
 
 /// Messages from the relay. See server/src/protocol.ts.
-public struct RelayMessage: Decodable {
+public struct RelayMessage: Decodable, Sendable {
     public let type: String
     public var clientTime: Double?
     public var serverTime: Double?
@@ -74,9 +74,12 @@ public enum RelayRecord {
 ///             retried, since a POST that failed may still have been applied, and resending
 ///             it would repeat its audio. Closing the stream also ends it on the relay.
 ///
-/// All callbacks and calls happen on the main queue. With `stampsArrivals`, the session
-/// delivers to a queue of its own first, so `lastArrivalMs` says when what a callback is
-/// handling actually arrived, however busy the main queue was (the watch's diagnostics).
+/// All callbacks and calls happen on the main actor, which owns the connection's state (the
+/// parser, the outbox and the stream), so they stay in order. The session's delegate methods
+/// are nonisolated and hand what they get to the main actor. With `stampsArrivals`, the
+/// session delivers to a queue of its own first, so `lastArrivalMs` says when what a callback
+/// is handling actually arrived, however busy the main queue was (the watch's diagnostics).
+@MainActor
 public final class RelayConnection: NSObject, URLSessionDataDelegate {
     public var onReady: ((_ clockOffsetMs: Double) -> Void)?
     public var onMessage: ((RelayMessage) -> Void)?
@@ -105,6 +108,8 @@ public final class RelayConnection: NSObject, URLSessionDataDelegate {
     private var outbox = Data()
     private var posting = false
     private let delegateQueue: OperationQueue
+    /// Tests serve the relay from a URLProtocol.
+    var protocolClasses: [AnyClass]?
 
     public init(stampsArrivals: Bool = false) {
         if stampsArrivals {
@@ -118,13 +123,15 @@ public final class RelayConnection: NSObject, URLSessionDataDelegate {
         super.init()
     }
 
-    /// Delegate work runs on the main queue, stamped with when it arrived: directly when the
+    /// Delegate work runs on the main actor, stamped with when it arrived: directly when the
     /// session delivers to the main queue, else after a hop.
-    private func onMain(_ work: @escaping () -> Void) {
+    private nonisolated func onMain(_ work: @escaping @MainActor @Sendable () -> Void) {
         let arrived = Clock.nowMs()
         if OperationQueue.current === OperationQueue.main {
-            lastArrivalMs = arrived
-            return work()
+            return MainActor.assumeIsolated {
+                lastArrivalMs = arrived
+                work()
+            }
         }
         DispatchQueue.main.async {
             self.lastArrivalMs = arrived
@@ -140,6 +147,7 @@ public final class RelayConnection: NSObject, URLSessionDataDelegate {
         let configuration = URLSessionConfiguration.default
         // Idle timeout for the stream; the relay sends a keepalive every 15 s.
         configuration.timeoutIntervalForRequest = 45
+        if let protocolClasses { configuration.protocolClasses = protocolClasses }
         let session = URLSession(configuration: configuration, delegate: self, delegateQueue: delegateQueue)
         self.session = session
 
@@ -239,8 +247,8 @@ public final class RelayConnection: NSObject, URLSessionDataDelegate {
 
     // MARK: Downlink (URLSessionDataDelegate)
 
-    public func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive response: URLResponse,
-                           completionHandler: @escaping (URLSession.ResponseDisposition) -> Void) {
+    public nonisolated func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive response: URLResponse,
+                                       completionHandler: @escaping @Sendable (URLSession.ResponseDisposition) -> Void) {
         onMain { [self] in
             guard dataTask === streamTask else { return completionHandler(.allow) }
             let status = (response as? HTTPURLResponse)?.statusCode ?? 0
@@ -253,7 +261,7 @@ public final class RelayConnection: NSObject, URLSessionDataDelegate {
         }
     }
 
-    public func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
+    public nonisolated func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
         onMain { [self] in
             guard dataTask === streamTask else { return }
             do {
@@ -270,12 +278,12 @@ public final class RelayConnection: NSObject, URLSessionDataDelegate {
         }
     }
 
-    public func urlSession(_ session: URLSession, task: URLSessionTask, didFinishCollecting metrics: URLSessionTaskMetrics) {
+    public nonisolated func urlSession(_ session: URLSession, task: URLSessionTask, didFinishCollecting metrics: URLSessionTaskMetrics) {
         let kind = task.taskDescription ?? "?"
         onMain { [self] in onTaskMetrics?(kind, metrics) }
     }
 
-    public func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+    public nonisolated func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
         onMain { [self] in
             guard task === streamTask else { return }
             finish(error?.localizedDescription ?? "stream ended")

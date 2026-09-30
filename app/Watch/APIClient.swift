@@ -28,12 +28,12 @@ struct APIClient {
         return (serverTime - (sentAt + receivedAt) / 2, receivedAt - sentAt)
     }
 
-    func uploadMetrics(_ body: [String: Any]) async throws {
+    func uploadMetrics(_ body: [String: any Sendable]) async throws {
         try await send("POST", "/v1/metrics", body: body)
     }
 
     @discardableResult
-    private func send(_ method: String, _ path: String, body: Any? = nil) async throws -> Data {
+    private func send(_ method: String, _ path: String, body: (any Sendable)? = nil) async throws -> Data {
         guard let base = settings.baseURL, let url = URL(string: path, relativeTo: base) else {
             throw APIError.notConfigured
         }
