@@ -48,6 +48,12 @@ const metrics: LogMetric[] = [
     labels: { outcome: "jsonPayload.outcome", platform: "jsonPayload.platform", role: "jsonPayload.role", build: "jsonPayload.build" },
   },
   {
+    name: "oao_silent_sends",
+    description: "Conversations where a device sent at least one nearly silent burst, usually a muted or blocked microphone (oao.device problems.silentBurstSent).",
+    filter: `${kind("oao.device")} AND jsonPayload.problems.silentBurstSent>0`,
+    labels: { platform: "jsonPayload.platform", build: "jsonPayload.build" },
+  },
+  {
     name: "oao_apns_failures",
     description: "Pushes APNs refused (oao.apns).",
     filter: `${kind("oao.apns")} AND jsonPayload.event!="pushAccepted"`,
@@ -191,6 +197,7 @@ const charts = [
   latencyChart("iPhone: push sent → first audio (p50, p95)", "oao_push_to_first_audio_ms"),
   latencyChart("Talk → go-ahead (p50, p95)", "oao_talk_to_go_ahead_ms"),
   countChart("Devices' outcomes: answered, missed, declined (per day)", userMetric("oao_device_outcomes"), ["metric.label.outcome", "metric.label.platform"]),
+  countChart("Silent sends: a nearly silent burst, likely a muted mic (conversations per day)", userMetric("oao_silent_sends"), ["metric.label.platform", "metric.label.build"]),
   countChart("Device events: PushToTalk leaves, crashes, unclean exits (per day)", userMetric("oao_device_events"), ["metric.label.name"]),
   countChart("Crashes, hangs and unclean exits by build (per day)", `${userMetric("oao_device_events")} AND metric.label.name=one_of("crash","hang","uncleanExit","extensionUnfinished")`, ["metric.label.build", "metric.label.name"]),
   countChart("APNs failures by reason (per hour)", userMetric("oao_apns_failures"), ["metric.label.reason", "metric.label.push_type"], "3600s"),

@@ -1,0 +1,127 @@
+# The server's tests, its Firestore tests on the emulator, and the relay perf suite
+# (server/perf). Pull requests run the base commit's relay and this one's in turn on the same
+# runner; main keeps a history of results in the perf-history artifact, one line per run, that
+# each run downloads, extends and uploads again. See the plan: "Over&Out CI performance and
+# audio tests".
+
+name: Server
+
+on:
+  push:
+    paths: ["server/**", ".github/workflows/server.yml"]
+  pull_request:
+    paths: ["server/**", ".github/workflows/server.yml"]
+  schedule:
+    # Weekly, so the history artifact never expires in a quiet spell and runner changes show.
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: server-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+defaults:
+  run:
+    working-directory: server
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+      - run: npm test
+
+  firestore:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: google-github-actions/setup-gcloud@v2
+        with:
+          install_components: cloud-firestore-emulator
+      - run: npm run test:firestore
+        env:
+          CLOUDSDK_CORE_PROJECT: demo-overandout
+
+  perf:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      ON_MAIN: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+
+      - name: Base commit's relay and this commit's, in turn
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          git worktree add --detach "$RUNNER_TEMP/base" "$BASE_SHA"
+          for round in 1 2 3 4 5; do
+            node perf/run.ts --label base --relay-dir "$RUNNER_TEMP/base/server" --out "perf-out/base/round-$round.json" > /dev/null
+            node perf/run.ts --label head --out "perf-out/head/round-$round.json" > /dev/null
+          done
+
+      - name: Full suite
+        run: node perf/run.ts --suite full --out perf-out/full.json
+
+      - name: History from the last main run
+        if: env.ON_MAIN == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p perf-out/history
+          run_id=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=perf-history&per_page=30" \
+            --jq '[.artifacts[] | select(.expired == false and .workflow_run.head_branch == "main")][0].workflow_run.id // empty')
+          if [ -n "$run_id" ]; then gh run download "$run_id" -n perf-history -D perf-out/history; fi
+          touch perf-out/history/perf-history.jsonl
+          echo "History: $(wc -l < perf-out/history/perf-history.jsonl) runs"
+
+      - name: Compare
+        env:
+          IS_PR: ${{ github.event_name == 'pull_request' }}
+        run: |
+          args=(--full perf-out/full.json --summary "$GITHUB_STEP_SUMMARY")
+          if [ "$IS_PR" = true ]; then args+=(--head-dir perf-out/head --base-dir perf-out/base); fi
+          if [ "$ON_MAIN" = true ]; then args+=(--history perf-out/history/perf-history.jsonl --append-history perf-out/perf-history.jsonl); fi
+          node perf/compare.ts "${args[@]}"
+
+      - name: Keep the results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: perf-results
+          path: |
+            server/perf-out/full.json
+            server/perf-out/head/
+            server/perf-out/base/
+          retention-days: 30
+          if-no-files-found: ignore
+
+      - name: Keep the history
+        if: always() && env.ON_MAIN == 'true' && hashFiles('server/perf-out/perf-history.jsonl') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: perf-history
+          path: server/perf-out/perf-history.jsonl
+          retention-days: 90

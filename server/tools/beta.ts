@@ -3,7 +3,8 @@
 // and never appear in the logs.
 //
 //   node tools/beta.ts summary [--days 7]
-//       Per tester: rings sent and received and how they ended; latencies (p50 / p95) by device.
+//       Per tester: rings sent and received and how they ended; latencies (p50 / p95) by device;
+//       audio levels by platform (silent and clipped bursts, how much quieter the listener played).
 //
 //   node tools/beta.ts tester <name or account ID> [--days 7]
 //       That account's conversations, device events and problem reports.
@@ -108,9 +109,37 @@ function count<T>(items: T[], key: (t: T) => string): string {
   return [...counts].sort((a, b) => b[1] - a[1]).map(([k, n]) => `${k} ${n}`).join(", ") || "none";
 }
 
+const db = (v: number | undefined) => (v === undefined ? "—" : `${v} dBFS`);
+
+// A device summary's levels, for one line: "sent -24 / played -26 dBFS".
+function levelsText(s: Entry): string {
+  const l = s.levels;
+  if (!l) return "";
+  return [l.sentRmsDb !== undefined ? `sent ${l.sentRmsDb}` : "", l.playedRmsDb !== undefined ? `played ${l.playedRmsDb}` : ""].filter(Boolean).join(" / ") + " dBFS";
+}
+
+// Per-burst audio levels (the plan's "Telemetry updates"): medians by platform, silent and
+// clipped bursts, and how much quieter the listener played than the talker sent.
+function levelsTable(summaries: Entry[], drops: Entry[]): string[] {
+  const lines: string[] = [];
+  for (const platform of ["watch", "iphone", "unknown"]) {
+    const mine = summaries.filter((s) => s.platform === platform && s.levels);
+    if (!mine.length) continue;
+    const values = (key: string) => mine.map((s) => s.levels[key]).filter((v): v is number => typeof v === "number");
+    const sent = values("sentRmsDb");
+    const played = values("playedRmsDb");
+    const problems = (name: string) => mine.reduce((n, s) => n + (s.problems?.[name] ?? 0), 0);
+    lines.push(`    ${platform.padEnd(7)} sent RMS p50 ${db(sent.length ? percentile(sent, 50) : undefined).padStart(10)}  played RMS p50 ${db(played.length ? percentile(played, 50) : undefined).padStart(10)}  n=${mine.length}` +
+      `  silent sent ${problems("silentBurstSent")}, silent played ${problems("silentBurstPlayed")}, clipped ${problems("clippedBurstSent")}`);
+  }
+  const dropValues = drops.map((d) => d.levelDropDb).filter((v): v is number => typeof v === "number");
+  if (dropValues.length) lines.push(`    level drop talker → listener: p50 ${percentile(dropValues, 50)} dB, p95 ${percentile(dropValues, 95)} dB, n=${dropValues.length}`);
+  return lines;
+}
+
 switch (command) {
   case "summary": {
-    const entries = await readEntries({ kinds: ["oao.conversation", "oao.device", "oao.event", "oao.apns", "oao.api"], since, local });
+    const entries = await readEntries({ kinds: ["oao.conversation", "oao.device", "oao.event", "oao.apns", "oao.api", "oao.levels"], since, local });
     const conversations = entries.filter((e) => e.kind === "oao.conversation" && e.to);
     const summaries = entries.filter((e) => e.kind === "oao.device");
     console.log(`Since ${since.toISOString().slice(0, 10)}: ${conversations.length} conversations (${count(conversations, (c) => c.outcome)})`);
@@ -127,6 +156,9 @@ switch (command) {
     }
     console.log("\n  Everyone:");
     for (const line of latencyTable(summaries)) console.log(line);
+    const levelLines = levelsTable(summaries, entries.filter((e) => e.kind === "oao.levels"));
+    if (levelLines.length) console.log("\n  Audio levels:");
+    for (const line of levelLines) console.log(line);
     const events = entries.filter((e) => e.kind === "oao.event");
     const apns = entries.filter((e) => e.kind === "oao.apns" && e.event !== "pushAccepted");
     const apiErrors = entries.filter((e) => e.kind === "oao.api" && e.status >= 500);
@@ -156,7 +188,8 @@ switch (command) {
       for (const s of summaries.get(c.conversationId) ?? []) {
         const intervals = Object.entries(s.intervals ?? {}).map(([k, v]) => `${k.replace(/Ms$/, "")} ${ms(v as number)}`).join(", ");
         const problems = Object.keys(s.problems ?? {}).length ? `  problems: ${Object.entries(s.problems).map(([k, v]) => `${k}×${v}`).join(", ")}` : "";
-        console.log(`      ${s.userId === id ? "their" : "friend's"} ${s.platform}${s.build ? ` (build ${s.build})` : ""}: ${s.outcome}${s.via ? ` via ${s.via}` : ""}${intervals ? `; ${intervals}` : ""}${problems}`);
+        const levels = levelsText(s);
+        console.log(`      ${s.userId === id ? "their" : "friend's"} ${s.platform}${s.build ? ` (build ${s.build})` : ""}: ${s.outcome}${s.via ? ` via ${s.via}` : ""}${intervals ? `; ${intervals}` : ""}${levels ? `; ${levels}` : ""}${problems}`);
       }
     }
     const others = entries.filter((e) => !["oao.conversation", "oao.device"].includes(e.kind));
@@ -169,7 +202,7 @@ switch (command) {
   }
   case "conversation": {
     if (!arg) fail("usage: conversation <id>");
-    const entries = await readEntries({ kinds: ["oao.conversation", "oao.device", "oao.timeline", "oao.apns"], since: new Date(Date.now() - 30 * 86_400_000), anyOf: [["conversationId", arg]], local });
+    const entries = await readEntries({ kinds: ["oao.conversation", "oao.device", "oao.timeline", "oao.apns", "oao.levels"], since: new Date(Date.now() - 30 * 86_400_000), anyOf: [["conversationId", arg]], local });
     if (!entries.length) fail(`Nothing logged for ${arg} in the last 30 days.`);
     const record = entries.find((e) => e.kind === "oao.conversation");
     const devices = entries.filter((e) => e.kind === "oao.timeline");
@@ -183,7 +216,11 @@ switch (command) {
     for (const s of entries.filter((e) => e.kind === "oao.device")) {
       console.log(`\n  ${await nameOf(s.userId)}'s ${s.platform} (${s.role}${s.build ? `, build ${s.build}` : ""}): ${s.outcome}${s.via ? ` via ${s.via}` : ""}${s.route ? `, ${s.route}` : ""}`);
       for (const [k, v] of Object.entries(s.intervals ?? {})) console.log(`    ${ms(v as number).padStart(9)}  ${k.replace(/Ms$/, "")}`);
+      if (s.levels) console.log(`    levels: ${JSON.stringify(s.levels)}`);
       if (Object.keys(s.problems ?? {}).length) console.log(`    problems: ${JSON.stringify(s.problems)}`);
+    }
+    for (const d of entries.filter((e) => e.kind === "oao.levels")) {
+      console.log(`\n  ${await nameOf(d.from)} → ${await nameOf(d.to)}: sent ${db(d.sentRmsDb)}, played ${db(d.playedRmsDb)}, ${d.levelDropDb} dB quieter`);
     }
     break;
   }
@@ -259,6 +296,7 @@ switch (command) {
       row("main-queue stalls ≥ 200 ms", String(stalls.length), stalls.length ? `longest ${Math.max(...stalls.map((s) => parseInt(s.detail ?? "0")))} ms` : "");
       for (const e of events.filter((e) => e.name.startsWith("net-"))) row(e.name, "", e.detail);
       for (const e of events.filter((e) => /^post\d$/.test(e.name))) row(e.name, "", e.detail);
+      for (const e of events.filter((e) => e.name === "burstLevelSent" || e.name === "burstLevelPlayed")) row(e.name === "burstLevelSent" ? "burst sent" : "burst played", "", e.detail);
       if (summary && Object.keys(summary.problems ?? {}).length) row("problems", "", JSON.stringify(summary.problems));
     }
     break;

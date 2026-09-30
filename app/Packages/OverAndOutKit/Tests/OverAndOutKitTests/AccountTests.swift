@@ -31,9 +31,10 @@ final class StubProtocol: URLProtocol, @unchecked Sendable {
     }
 
     static func releaseHeld() {
-        let replies = state.withLock {
-            defer { $0.held = [] }
-            return $0.held
+        // A named parameter: Swift 6.2 (Xcode 26) rejects $0 inside the defer.
+        let replies = state.withLock { locked in
+            defer { locked.held = [] }
+            return locked.held
         }
         replies.forEach { $0() }
     }

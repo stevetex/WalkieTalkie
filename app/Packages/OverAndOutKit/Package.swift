@@ -20,6 +20,8 @@ let package = Package(
         .testTarget(
             name: "OverAndOutKitTests",
             dependencies: ["OverAndOutKit"],
+            // The speech clip the audio tests measure (Fixtures/speech-16k.wav).
+            resources: [.copy("Fixtures")],
             swiftSettings: [.swiftLanguageMode(.v6)]
         ),
     ]

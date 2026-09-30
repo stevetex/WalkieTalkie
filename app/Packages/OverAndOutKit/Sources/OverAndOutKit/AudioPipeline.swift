@@ -25,6 +25,12 @@ public final class AudioPipeline {
     /// The engine was restarted after watchOS changed its configuration (for example
     /// another session took the audio hardware).
     public var onRestart: ((String) -> Void)?
+    /// A burst's capture ended: how loud the microphone's audio was (before encoding) and how
+    /// many frames it made. For Beta telemetry's per-burst levels.
+    public var onBurstCaptured: ((AudioLevel, Int) -> Void)?
+    /// A received burst ended: how loud the decoded audio handed to the speaker was, and how
+    /// many frames. For Beta telemetry's per-burst levels.
+    public var onBurstPlayed: ((AudioLevel, Int) -> Void)?
 
     public var codecDescription: String {
         codec == .opus16k ? "Opus 24 kbps" : "PCM 256 kbps (no Opus encoder)"
@@ -115,24 +121,30 @@ public final class AudioPipeline {
     /// real-time thread. It owns the converter; only the samples go to the audio queue.
     private nonisolated static func captureTap(converter: AVAudioConverter, state: AudioQueueState) -> AVAudioNodeTapBlock {
         { buffer, _ in
-            let ratio = VoiceFrame.sampleRate / buffer.format.sampleRate
-            let capacity = AVAudioFrameCount(Double(buffer.frameLength) * ratio) + 32
-            guard let output = AVAudioPCMBuffer(pcmFormat: VoiceFrame.pcmFormat, frameCapacity: capacity) else { return }
-            var consumed = false
-            var error: NSError?
-            _ = converter.convert(to: output, error: &error) { _, status in
-                if consumed {
-                    status.pointee = .noDataNow
-                    return nil
-                }
-                consumed = true
-                status.pointee = .haveData
-                return buffer
-            }
-            guard output.frameLength > 0 else { return }
-            let samples = Array(UnsafeBufferPointer(start: output.floatChannelData![0], count: Int(output.frameLength)))
+            guard let samples = convertCaptured(buffer, with: converter) else { return }
             state.async { $0.captured(samples) }
         }
+    }
+
+    /// One tap buffer, in the hardware's format, as 16 kHz mono samples. The converter keeps
+    /// its state from one buffer to the next. Internal so the tests can measure it.
+    nonisolated static func convertCaptured(_ buffer: AVAudioPCMBuffer, with converter: AVAudioConverter) -> [Float]? {
+        let ratio = VoiceFrame.sampleRate / buffer.format.sampleRate
+        let capacity = AVAudioFrameCount(Double(buffer.frameLength) * ratio) + 32
+        guard let output = AVAudioPCMBuffer(pcmFormat: VoiceFrame.pcmFormat, frameCapacity: capacity) else { return nil }
+        var consumed = false
+        var error: NSError?
+        _ = converter.convert(to: output, error: &error) { _, status in
+            if consumed {
+                status.pointee = .noDataNow
+                return nil
+            }
+            consumed = true
+            status.pointee = .haveData
+            return buffer
+        }
+        guard output.frameLength > 0 else { return nil }
+        return Array(UnsafeBufferPointer(start: output.floatChannelData![0], count: Int(output.frameLength)))
     }
 
     public func stop() {
@@ -217,6 +229,8 @@ public final class AudioPipeline {
         case .stalled(let buffers, let drained):
             onRestart?("playback stalled: \(buffers) buffers never reported played; counted as played")
             if drained { onPlaybackDrained?() }
+        case .captureLevel(let level, let frames): onBurstCaptured?(level, frames)
+        case .playbackLevel(let level, let frames): onBurstPlayed?(level, frames)
         }
     }
 }
@@ -238,6 +252,8 @@ private final class AudioQueueState: @unchecked Sendable {
         case firstCapturedFrame(Double)
         case drained
         case stalled(buffers: Int, drained: Bool)
+        case captureLevel(AudioLevel, frames: Int)
+        case playbackLevel(AudioLevel, frames: Int)
     }
 
     private let queue = DispatchQueue(label: "walkie.audio", qos: .userInteractive)
@@ -253,6 +269,10 @@ private final class AudioQueueState: @unchecked Sendable {
     private var capturing = false
     private var pendingSamples: [Float] = []
     private var sequence: UInt32 = 0
+    /// The current burst's levels, sent and received.
+    private var capturedLevel = AudioLevel()
+    private var playedLevel = AudioLevel()
+    private var playedFrames = 0
     private var held: [AVAudioPCMBuffer] = []
     private var prebuffering = false
     private var reportedFirstPlayback = false
@@ -315,6 +335,9 @@ private final class AudioQueueState: @unchecked Sendable {
         running = false
         capturing = false
         pendingSamples.removeAll()
+        capturedLevel = AudioLevel()
+        playedLevel = AudioLevel()
+        playedFrames = 0
         held.removeAll()
         scheduled = 0
         expectedDrainAt = 0
@@ -340,6 +363,7 @@ private final class AudioQueueState: @unchecked Sendable {
         encoder.reset()
         sequence = 0
         pendingSamples.removeAll()
+        capturedLevel = AudioLevel()
         capturing = true
     }
 
@@ -350,13 +374,17 @@ private final class AudioQueueState: @unchecked Sendable {
             pendingSamples.append(contentsOf: repeatElement(0, count: max(0, padding)))
             emitFrames()
         }
+        if capturing, sequence > 0 { send(.captureLevel(capturedLevel, frames: Int(sequence))) }
         capturing = false
         pendingSamples.removeAll()
+        capturedLevel = AudioLevel()
     }
 
     func captured(_ samples: [Float]) {
         onQueue()
         guard capturing else { return }
+        // Measured before the padding and the encoder: what the microphone gave.
+        capturedLevel.add(samples)
         pendingSamples.append(contentsOf: samples)
         emitFrames()
     }
@@ -391,6 +419,7 @@ private final class AudioQueueState: @unchecked Sendable {
                 0.3 * sin(self.tonePhase + Float(i) * step)
             }
             self.tonePhase = fmodf(self.tonePhase + Float(VoiceFrame.samplesPerFrame) * step, 2 * Float.pi)
+            self.capturedLevel.add(samples)
             self.pendingSamples.append(contentsOf: samples)
             self.emitFrames()
         }
@@ -406,12 +435,16 @@ private final class AudioQueueState: @unchecked Sendable {
         decoder.reset()
         prebuffering = true
         reportedFirstPlayback = false
+        playedLevel = AudioLevel()
+        playedFrames = 0
     }
 
     func enqueue(_ frame: Data) {
         onQueue()
         guard let (codec, _, payload) = VoiceFrame.decode(frame),
               let buffer = decoder.decode(codec: codec, payload: payload) else { return }
+        playedLevel.add(buffer)
+        playedFrames += 1
         held.append(buffer)
         if prebuffering, held.count >= Self.prebufferFrames { prebuffering = false }
         if !prebuffering { flushHeld() }
@@ -421,6 +454,9 @@ private final class AudioQueueState: @unchecked Sendable {
         onQueue()
         prebuffering = false
         flushHeld()
+        if playedFrames > 0 { send(.playbackLevel(playedLevel, frames: playedFrames)) }
+        playedLevel = AudioLevel()
+        playedFrames = 0
     }
 
     private func flushHeld() {

@@ -48,6 +48,13 @@ What matters most:
   means through the paired iPhone), each `net-*` request (new or reused connection, request →
   response), and `post1`–`post3`.
 - **Main-queue stalls** of 200 ms or more.
+- **Audio levels** (builds with per-burst levels): the `burst sent` and `burst played` rows
+  (`rms=-23.4,peak=-6.1,frames=150,clipped=0`, plus the microphone kind `in=` when sent and the
+  iPhone's system `volume=` when played), and `beta.ts conversation`'s "N dB quieter" lines. A sent
+  burst below about −50 dBFS RMS means a muted or covered microphone; a played burst below about
+  −60 dBFS means silence came out; clipped samples above 1% mean distortion; a drop of more than
+  a few dB from sent to played means audio got quieter on the way. Speech usually sits around
+  −20 to −30 dBFS RMS.
 
 ## Report
 

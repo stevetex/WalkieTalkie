@@ -1,0 +1,138 @@
+{
+  "//": "Budgets for perf/compare.ts. Relay counts, legs and sim times are written by `node perf/compare.ts --full <results> --update-budgets` after a deliberate change. The kit's (kit.*) are set by hand: level changes within ±1.5 dB (±0.5 dB for the capture converter), not silent (above −60 dBFS), no clipping; the SNR and pitch floors are first guesses to tune from the first weeks of runs. enforce turns warnings into failures once thresholds are tuned (phase 4 of the plan).",
+  "enforce": {
+    "network": false,
+    "time": false,
+    "kit": false
+  },
+  "baseVsHead": {
+    "relative": 0.2,
+    "absoluteMs": 3
+  },
+  "drift": {
+    "runs": 10,
+    "relative": 0.2,
+    "absoluteMs": 3
+  },
+  "metrics": {
+    "A.ring_to_start.http.answer_to_first_frame_legs": 4,
+    "A.ring_to_start.http.answer_to_replay_done_legs": 4,
+    "A.ring_to_start.http.press_to_grant_legs": 2,
+    "A.ring_to_start.http.receiver_bytes_down": 4523,
+    "A.ring_to_start.http.receiver_bytes_up": 293,
+    "A.ring_to_start.http.receiver_connections": 1,
+    "A.ring_to_start.http.receiver_messages": 4,
+    "A.ring_to_start.ws.answer_to_first_frame_legs": 8,
+    "A.ring_to_start.ws.answer_to_replay_done_legs": 8,
+    "A.ring_to_start.ws.press_to_grant_legs": 2,
+    "A.ring_to_start.ws.receiver_bytes_down": 3947,
+    "A.ring_to_start.ws.receiver_bytes_up": 534,
+    "A.ring_to_start.ws.receiver_connections": 1,
+    "A.ring_to_start.ws.receiver_messages": 4,
+    "B.live.ws.first_frame_latency_legs": 2,
+    "B.live.ws.press_to_grant_legs": 2,
+    "B.live.ws.receiver_bytes_per_burst": 3638,
+    "B.live.ws.receiver_messages_per_burst": 2,
+    "B.live.ws.release_to_burst_end_legs": 2,
+    "B.live.ws.sender_bytes_per_burst": 3713,
+    "C.back_and_forth.ws.messages_per_turn": 3,
+    "C.back_and_forth.ws.turn_gap_legs": 4,
+    "D.http_sender.first_frame_latency_legs": 2,
+    "D.http_sender.posts_per_burst": 66,
+    "D.http_sender.posts_per_burst_delayed": 9,
+    "D.http_sender.release_to_burst_end_legs": 4,
+    "E.first_press.http.cold.press_to_grant_legs": 8,
+    "E.first_press.http.preconnected.press_to_grant_legs": 4,
+    "E.first_press.ws.cold.press_to_grant_legs": 8,
+    "E.first_press.ws.preconnected.press_to_grant_legs": 2,
+    "G.codecs.opus.join_to_replay_done_1mbps": 809,
+    "G.codecs.opus.replay_bytes_down": 12123,
+    "G.codecs.pcm.join_to_replay_done_1mbps": 1608,
+    "G.codecs.pcm.replay_bytes_down": 99273,
+    "kit.capture.level_change_db.44k": {
+      "absMax": 0.5
+    },
+    "kit.capture.level_change_db.48k": {
+      "absMax": 0.5
+    },
+    "kit.capture.pitch_share.44k": {
+      "min": 0.9
+    },
+    "kit.capture.pitch_share.48k": {
+      "min": 0.9
+    },
+    "kit.codec.opus.clipped_samples.speech_loud": 0,
+    "kit.codec.opus.clipped_samples.tone1000_m6": 0,
+    "kit.codec.opus.clipped_samples.tone440_m6": 0,
+    "kit.codec.opus.level_change_db.tone1000_m20": {
+      "absMax": 1.5
+    },
+    "kit.codec.opus.level_change_db.tone1000_m30": {
+      "absMax": 1.5
+    },
+    "kit.codec.opus.level_change_db.tone1000_m6": {
+      "absMax": 1.5
+    },
+    "kit.codec.opus.level_change_db.tone440_m20": {
+      "absMax": 1.5
+    },
+    "kit.codec.opus.level_change_db.tone440_m30": {
+      "absMax": 1.5
+    },
+    "kit.codec.opus.level_change_db.tone440_m6": {
+      "absMax": 1.5
+    },
+    "kit.codec.opus.output_rms_dbfs.tone1000_m20": {
+      "min": -60
+    },
+    "kit.codec.opus.output_rms_dbfs.tone1000_m30": {
+      "min": -60
+    },
+    "kit.codec.opus.output_rms_dbfs.tone1000_m6": {
+      "min": -60
+    },
+    "kit.codec.opus.output_rms_dbfs.tone440_m20": {
+      "min": -60
+    },
+    "kit.codec.opus.output_rms_dbfs.tone440_m30": {
+      "min": -60
+    },
+    "kit.codec.opus.output_rms_dbfs.tone440_m6": {
+      "min": -60
+    },
+    "kit.codec.opus.pitch_share.tone1000_m20": {
+      "min": 0.8
+    },
+    "kit.codec.opus.pitch_share.tone1000_m30": {
+      "min": 0.8
+    },
+    "kit.codec.opus.pitch_share.tone1000_m6": {
+      "min": 0.8
+    },
+    "kit.codec.opus.pitch_share.tone440_m20": {
+      "min": 0.8
+    },
+    "kit.codec.opus.pitch_share.tone440_m30": {
+      "min": 0.8
+    },
+    "kit.codec.opus.pitch_share.tone440_m6": {
+      "min": 0.8
+    },
+    "kit.codec.opus.speech_level_change_db": {
+      "absMax": 1.5
+    },
+    "kit.codec.opus.speech_snr_db": {
+      "min": 3
+    },
+    "kit.codec.pcm.max_error": 0.0001,
+    "kit.e2e.level_change_db": {
+      "absMax": 1.5
+    },
+    "kit.e2e.live_level_change_db": {
+      "absMax": 1.5
+    },
+    "kit.e2e.speech_snr_db": {
+      "min": 3
+    }
+  }
+}
