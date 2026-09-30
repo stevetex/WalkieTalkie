@@ -15,8 +15,9 @@ import AVFoundation
 public final class AudioPipeline {
     /// Encoded wire frames while capturing, in order.
     public var onFrame: ((Data) -> Void)?
-    /// The first buffer of a received burst was handed to the player.
-    public var onFirstPlayback: (() -> Void)?
+    /// The first buffer of a received burst was handed to the player (time in ms, on the audio
+    /// queue: the main thread can hear of it much later while the app comes to the front).
+    public var onFirstPlayback: ((Double) -> Void)?
     /// Everything handed to the player has been played. A replayed burst arrives much
     /// faster than it plays, so this, not the burst's end, is when the speaker goes quiet.
     public var onPlaybackDrained: (() -> Void)?
@@ -172,21 +173,27 @@ public final class AudioPipeline {
     /// the hardware, or the route's format changes (run 57: hearing aids switching to a call
     /// link as PushToTalk activated audio). The stopped engine is rebuilt rather than restarted:
     /// restarted with its old connections, it played static and never reported buffers played.
-    private func restartAfterConfigurationChange() {
+    /// The stopped engine also threw away what the player had scheduled; that is played again on
+    /// the new one, from the burst's start if the change came early in it (runs 87–88: the
+    /// hearing aids' switch 150 ms into a message cut its first word).
+    func restartAfterConfigurationChange() {
         guard wantsRunning, attached, !engine.isRunning else { return }
-        // The stopped engine discarded what the player had scheduled, and those buffers'
-        // "played" callbacks never come: count them as played, or the speaker never drains.
-        if state.discardScheduled() {
-            DispatchQueue.main.async { [weak self] in self?.onPlaybackDrained?() }
-        }
+        let replay = state.holdScheduledForReplay()
         if engineHasInput { engine.inputNode.removeTap(onBus: 0) }
         replaceEngine()
         do {
             try start(capture: wantsCapture)
-            onRestart?("engine restarted after configuration change")
+            onRestart?("engine restarted: replaying \(replay.buffers) (\(replay.rewound) rewound)")
         } catch {
+            // Nothing will play what was held: count it as played, or the speaker never drains.
+            state.async { $0.abandonPlayback() }
             onRestart?("engine restart failed: \(error.localizedDescription)")
         }
+    }
+
+    /// For the tests: the engine as the system leaves it after a configuration change.
+    func stopEngineForTesting() {
+        engine.stop()
     }
 
     // MARK: Capture
@@ -223,7 +230,7 @@ public final class AudioPipeline {
     fileprivate func deliver(_ event: AudioQueueState.Event) {
         switch event {
         case .frame(let frame): onFrame?(frame)
-        case .firstPlayback: onFirstPlayback?()
+        case .firstPlayback(let t): onFirstPlayback?(t)
         case .firstCapturedFrame(let t): onFirstCapturedFrame?(t)
         case .drained: onPlaybackDrained?()
         case .stalled(let buffers, let drained):
@@ -248,7 +255,7 @@ public final class AudioPipeline {
 private final class AudioQueueState: @unchecked Sendable {
     enum Event: Sendable {
         case frame(Data)
-        case firstPlayback
+        case firstPlayback(Double)
         case firstCapturedFrame(Double)
         case drained
         case stalled(buffers: Int, drained: Bool)
@@ -276,7 +283,10 @@ private final class AudioQueueState: @unchecked Sendable {
     private var held: [AVAudioPCMBuffer] = []
     private var prebuffering = false
     private var reportedFirstPlayback = false
-    private var scheduled = 0
+    /// What the current player was given and hasn't played yet, and the start of the burst.
+    private var ledger = PlaybackLedger<AVAudioPCMBuffer>()
+    /// Bumped when the player is replaced, so a stopped player's late callbacks are ignored.
+    private var playerGeneration = 0
     /// When everything scheduled should have finished playing (ms).
     private var expectedDrainAt: Double = 0
     private var drainWatchdog: DispatchWorkItem?
@@ -295,7 +305,10 @@ private final class AudioQueueState: @unchecked Sendable {
 
     /// From the main actor, with the engine stopped: waits for the queue.
     func replacePlayer(_ player: AVAudioPlayerNode) {
-        queue.sync { self.player = player }
+        queue.sync {
+            self.player = player
+            playerGeneration += 1
+        }
     }
 
     private func onQueue() {
@@ -339,21 +352,37 @@ private final class AudioQueueState: @unchecked Sendable {
         playedLevel = AudioLevel()
         playedFrames = 0
         held.removeAll()
-        scheduled = 0
+        ledger = PlaybackLedger()
         expectedDrainAt = 0
         drainWatchdog?.cancel()
     }
 
-    /// From the main actor: the engine stopped and threw away what was scheduled. Waits for the
-    /// queue; true if that was the last of it, so the speaker has drained.
-    func discardScheduled() -> Bool {
+    /// From the main actor: the engine stopped and threw away what was scheduled, and those
+    /// buffers' "played" callbacks never come. Holds them to play again once the new engine
+    /// starts (`started()`), after the burst's first moments if the stop came early in it.
+    /// Waits for the queue; returns how many buffers will play again, and how many of them had
+    /// already played.
+    func holdScheduledForReplay() -> (buffers: Int, rewound: Int) {
         queue.sync {
-            let lost = scheduled
-            scheduled = 0
+            let replay = ledger.takeForReplay()
+            held.insert(contentsOf: replay.buffers, at: 0)
+            // Until the new engine runs, frames that arrive wait in `held` behind these.
+            running = false
             expectedDrainAt = 0
             drainWatchdog?.cancel()
-            return lost > 0 && held.isEmpty
+            return (replay.buffers.count, replay.rewound)
         }
+    }
+
+    /// The engine couldn't be restarted: nothing will play what's held.
+    func abandonPlayback() {
+        onQueue()
+        let hadAudio = ledger.scheduledCount > 0 || !held.isEmpty
+        held.removeAll()
+        ledger = PlaybackLedger()
+        expectedDrainAt = 0
+        drainWatchdog?.cancel()
+        if hadAudio { send(.drained) }
     }
 
     // MARK: Capture
@@ -433,6 +462,7 @@ private final class AudioQueueState: @unchecked Sendable {
     func beginPlayback() {
         onQueue()
         decoder.reset()
+        ledger.beginBurst()
         prebuffering = true
         reportedFirstPlayback = false
         playedLevel = AudioLevel()
@@ -462,11 +492,13 @@ private final class AudioQueueState: @unchecked Sendable {
     private func flushHeld() {
         guard running, !held.isEmpty else { return }
         let now = Clock.nowMs()
+        let generation = playerGeneration
         for buffer in held {
-            expectedDrainAt = max(expectedDrainAt, now) + Double(buffer.frameLength) / buffer.format.sampleRate * 1000
-            scheduled += 1
+            let durationMs = Double(buffer.frameLength) / buffer.format.sampleRate * 1000
+            expectedDrainAt = max(expectedDrainAt, now) + durationMs
+            ledger.scheduled(buffer, durationMs: durationMs)
             player.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack) { [weak self] _ in
-                self?.async { $0.played() }
+                self?.async { $0.played(generation: generation) }
             }
         }
         held.removeAll()
@@ -474,15 +506,15 @@ private final class AudioQueueState: @unchecked Sendable {
         if !player.isPlaying { player.play() }
         if !reportedFirstPlayback {
             reportedFirstPlayback = true
-            send(.firstPlayback)
+            send(.firstPlayback(now))
         }
     }
 
-    private func played() {
+    private func played(generation: Int) {
         onQueue()
-        guard scheduled > 0 else { return }
-        scheduled -= 1
-        if scheduled == 0, held.isEmpty { send(.drained) }
+        guard generation == playerGeneration, ledger.scheduledCount > 0 else { return }
+        ledger.played()
+        if ledger.scheduledCount == 0, held.isEmpty { send(.drained) }
     }
 
     /// If what was scheduled still hasn't been reported played a second after it should have
@@ -491,10 +523,9 @@ private final class AudioQueueState: @unchecked Sendable {
     private func armDrainWatchdog() {
         drainWatchdog?.cancel()
         let item = DispatchWorkItem { [weak self] in
-            guard let self, self.scheduled > 0, Clock.nowMs() >= self.expectedDrainAt + 1_000 else { return }
-            let stalled = self.scheduled
+            guard let self, self.ledger.scheduledCount > 0, Clock.nowMs() >= self.expectedDrainAt + 1_000 else { return }
+            let stalled = self.ledger.abandonScheduled()
             let drained = self.held.isEmpty
-            self.scheduled = 0
             self.expectedDrainAt = 0
             self.send(.stalled(buffers: stalled, drained: drained))
         }

@@ -94,6 +94,46 @@ final class TelemetryTests: XCTestCase {
         await third.flush()
         XCTAssertEqual(again.names, [])
     }
+
+    /// Run 63: the watch was suspended before its timeline upload finished.
+    func testAnUnsentTimelineIsSentAfterARelaunch() async throws {
+        let directory = tempDirectory()
+        let first = Telemetry()
+        first.configure(platform: .watch, directory: directory, maxBytes: 100_000)
+        first.sendTimeline = { _ in throw URLError(.notConnectedToInternet) }
+        var timeline = Timeline(role: .receiver)
+        timeline.mark("notificationOpened", at: 1000)
+        timeline.mark("firstAudioScheduled", at: 1700)
+        await first.uploadTimeline(timeline.upload(conversationId: "c1", userId: "u1", clockOffsetMs: 5), conversationId: "c1")
+
+        let second = Telemetry()
+        second.configure(platform: .watch, directory: directory, maxBytes: 100_000)
+        let sent = SentBox()
+        second.sendTimeline = { body in
+            let events = (body["events"] as? [Telemetry.Fields] ?? []).compactMap { $0["name"] as? String }
+            sent.add(["\(body["conversationId"] ?? "")"] + events)
+        }
+        await second.flush()
+        XCTAssertEqual(sent.names, ["c1", "notificationOpened", "firstAudioScheduled"])
+        // Sent once only.
+        await second.flush()
+        XCTAssertEqual(sent.names.count, 3)
+    }
+
+    func testTimelinesGoOldestFirstAndOnlyTheNewestAreKept() async throws {
+        let telemetry = Telemetry()
+        telemetry.configure(platform: .iphone, directory: tempDirectory(), maxBytes: 100_000)
+        telemetry.sendTimeline = { _ in throw URLError(.timedOut) }
+        for i in 0..<25 {
+            await telemetry.uploadTimeline(["conversationId": "c\(i)", "events": [Telemetry.Fields]()], conversationId: "c\(i)")
+            // Distinct millisecond names, as conversations are in practice.
+            try await Task.sleep(nanoseconds: 2_000_000)
+        }
+        let sent = SentBox()
+        telemetry.sendTimeline = { body in sent.add(["\(body["conversationId"] ?? "")"]) }
+        await telemetry.flush()
+        XCTAssertEqual(sent.names, (5..<25).map { "c\($0)" })
+    }
 }
 
 private final class SentBox: Sendable {
