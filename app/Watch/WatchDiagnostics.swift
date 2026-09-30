@@ -54,7 +54,7 @@ enum WatchDiagnostics {
                 }
                 Telemetry.shared.event("extensionUnfinished", ["conversationId": line["conversationId"] as? String ?? ""])
             }
-            var fields = line
+            var fields = Telemetry.fields(line)
             fields.removeValue(forKey: "name")
             fields.removeValue(forKey: "t")
             Telemetry.shared.log?.append(name, fields, at: t)

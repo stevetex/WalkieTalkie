@@ -1,4 +1,5 @@
 import Foundation
+import os
 import Security
 
 // Accounts, shared by the iPhone and watch apps (design decisions 2026-09-27): Sign in with
@@ -179,47 +180,48 @@ public protocol SessionStoring: AnyObject, Sendable {
 /// notification service extension can read the token to prefetch a ring's message. If the
 /// system refuses that group (a missing entitlement), the session is kept in the app's own
 /// Keychain instead: signing in still works, only the prefetch doesn't.
-public final class KeychainSessionStore: SessionStoring, @unchecked Sendable {
+public final class KeychainSessionStore: SessionStoring {
     public static let service = "com.cypressoakstudios.overandout.session"
     private static let account = "session"
-    private var accessGroup: String?
-    private let lock = NSLock()
+    /// The Keychain access group, nil once the system has refused it. Held for each whole
+    /// Keychain call, so loads, saves and clears don't interleave.
+    private let accessGroup: OSAllocatedUnfairLock<String?>
 
     public init(accessGroup: String? = nil) {
-        self.accessGroup = accessGroup
+        self.accessGroup = OSAllocatedUnfairLock(initialState: accessGroup)
     }
 
     public func load() -> AccountSession? {
-        lock.lock()
-        defer { lock.unlock() }
-        var query = baseQuery()
-        query[kSecReturnData as String] = true
-        query[kSecMatchLimit as String] = kSecMatchLimitOne
-        var result: AnyObject?
-        var status = SecItemCopyMatching(query as CFDictionary, &result)
-        if status == errSecMissingEntitlement, accessGroup != nil {
-            accessGroup = nil
-            query[kSecAttrAccessGroup as String] = nil
-            status = SecItemCopyMatching(query as CFDictionary, &result)
+        let data: Data? = accessGroup.withLock { accessGroup in
+            var query = Self.baseQuery(accessGroup)
+            query[kSecReturnData as String] = true
+            query[kSecMatchLimit as String] = kSecMatchLimitOne
+            var result: AnyObject?
+            var status = SecItemCopyMatching(query as CFDictionary, &result)
+            if status == errSecMissingEntitlement, accessGroup != nil {
+                accessGroup = nil
+                query[kSecAttrAccessGroup as String] = nil
+                status = SecItemCopyMatching(query as CFDictionary, &result)
+            }
+            return status == errSecSuccess ? result as? Data : nil
         }
-        guard status == errSecSuccess, let data = result as? Data else { return nil }
-        return try? Self.decoder.decode(AccountSession.self, from: data)
+        return data.flatMap { try? Self.decoder.decode(AccountSession.self, from: $0) }
     }
 
     public func save(_ session: AccountSession) {
-        lock.lock()
-        defer { lock.unlock() }
         guard let data = try? Self.encoder.encode(session) else { return }
-        if add(data) == errSecMissingEntitlement, accessGroup != nil {
-            print("[oao] Keychain refused access group \(accessGroup ?? ""); keeping the session in the app's own Keychain")
-            accessGroup = nil
-            _ = add(data)
+        accessGroup.withLock { accessGroup in
+            if Self.add(data, accessGroup) == errSecMissingEntitlement, accessGroup != nil {
+                print("[oao] Keychain refused access group \(accessGroup ?? ""); keeping the session in the app's own Keychain")
+                accessGroup = nil
+                _ = Self.add(data, nil)
+            }
         }
     }
 
-    private func add(_ data: Data) -> OSStatus {
-        SecItemDelete(baseQuery() as CFDictionary)
-        var item = baseQuery()
+    private static func add(_ data: Data, _ accessGroup: String?) -> OSStatus {
+        SecItemDelete(baseQuery(accessGroup) as CFDictionary)
+        var item = baseQuery(accessGroup)
         item[kSecValueData as String] = data
         // Readable while the watch is locked after its first unlock, so a ring's prefetch works.
         item[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
@@ -227,16 +229,16 @@ public final class KeychainSessionStore: SessionStoring, @unchecked Sendable {
     }
 
     public func clear() {
-        lock.lock()
-        defer { lock.unlock() }
-        SecItemDelete(baseQuery() as CFDictionary)
+        accessGroup.withLock { accessGroup in
+            _ = SecItemDelete(Self.baseQuery(accessGroup) as CFDictionary)
+        }
     }
 
-    private func baseQuery() -> [String: Any] {
+    private static func baseQuery(_ accessGroup: String?) -> [String: Any] {
         var query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: Self.service,
-            kSecAttrAccount as String: Self.account,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
         ]
         if let accessGroup { query[kSecAttrAccessGroup as String] = accessGroup }
         return query
@@ -255,17 +257,16 @@ public final class KeychainSessionStore: SessionStoring, @unchecked Sendable {
     }()
 }
 
-public final class MemorySessionStore: SessionStoring, @unchecked Sendable {
-    private var session: AccountSession?
-    private let lock = NSLock()
+public final class MemorySessionStore: SessionStoring {
+    private let session: OSAllocatedUnfairLock<AccountSession?>
 
     public init(_ session: AccountSession? = nil) {
-        self.session = session
+        self.session = OSAllocatedUnfairLock(initialState: session)
     }
 
-    public func load() -> AccountSession? { lock.withLock { session } }
-    public func save(_ session: AccountSession) { lock.withLock { self.session = session } }
-    public func clear() { lock.withLock { session = nil } }
+    public func load() -> AccountSession? { session.withLock { $0 } }
+    public func save(_ session: AccountSession) { self.session.withLock { $0 = session } }
+    public func clear() { session.withLock { $0 = nil } }
 }
 
 /// A random ID for this install, which the server keys the device's session and push token by.
@@ -501,7 +502,7 @@ public actor AccountClient {
     // MARK: Telemetry (the Beta telemetry spec)
 
     /// Device events outside conversations, which the server logs.
-    public func sendEvents(_ events: [[String: Any]], device: [String: String]) async throws {
+    public func sendEvents(_ events: [Telemetry.Fields], device: [String: String]) async throws {
         let _: Empty = try await request("POST", "/v1/events", body: ["events": events, "device": device])
     }
 

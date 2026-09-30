@@ -1,4 +1,5 @@
 import Foundation
+import os
 @testable import OverAndOutKit
 import XCTest
 
@@ -54,6 +55,22 @@ final class TelemetryTests: XCTestCase {
         XCTAssertFalse(info["os", default: ""].isEmpty)
     }
 
+    /// Events come from the main actor, MetricKit's queue and PushToTalk's delegate at once.
+    func testEventsFromManyThreadsAreAllSentOnce() async throws {
+        let telemetry = Telemetry()
+        telemetry.configure(platform: .iphone, directory: tempDirectory(), maxBytes: 100_000)
+        await withTaskGroup(of: Void.self) { group in
+            for task in 0..<8 {
+                group.addTask { for i in 0..<20 { telemetry.event("e\(task)-\(i)", ["i": i]) } }
+            }
+        }
+        let sent = SentBox()
+        telemetry.send = { events, _ in sent.add(events.compactMap { $0["name"] as? String }) }
+        for _ in 0..<4 { await telemetry.flush() }
+        XCTAssertEqual(sent.names.count, 160)
+        XCTAssertEqual(Set(sent.names).count, 160)
+    }
+
     func testQueuedEventsSurviveARelaunch() async throws {
         let directory = tempDirectory()
         let first = Telemetry()
@@ -79,9 +96,8 @@ final class TelemetryTests: XCTestCase {
     }
 }
 
-private final class SentBox: @unchecked Sendable {
-    private let lock = NSLock()
-    private var all: [String] = []
-    func add(_ names: [String]) { lock.withLock { all += names } }
-    var names: [String] { lock.withLock { all } }
+private final class SentBox: Sendable {
+    private let all = OSAllocatedUnfairLock<[String]>(initialState: [])
+    func add(_ names: [String]) { all.withLock { $0 += names } }
+    var names: [String] { all.withLock { $0 } }
 }

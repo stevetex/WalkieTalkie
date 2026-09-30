@@ -2,7 +2,7 @@ import Foundation
 
 /// A ring: someone started talking and the relay is holding their message for us. It
 /// arrives as custom keys in the ring notification (see ringAlert in server/src/apns.ts).
-public struct Ring: Equatable {
+public struct Ring: Equatable, Sendable {
     public let conversationId: String
     public let from: String
     public let fromName: String

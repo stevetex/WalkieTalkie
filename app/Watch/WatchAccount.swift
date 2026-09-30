@@ -6,7 +6,9 @@ import WatchConnectivity
 /// The watch's account (design decision 2026-09-27): its own session, made by the iPhone and
 /// sent over WatchConnectivity, then refreshed with the API directly. The session lives in
 /// the Keychain under the app group, so the notification service extension can use the
-/// token too. Also the account's friends.
+/// token too. Also the account's friends. Owned by the main actor; WatchConnectivity's
+/// callbacks hand what they carry to it.
+@MainActor
 final class WatchAccount: NSObject, ObservableObject {
     static let shared = WatchAccount()
 
@@ -16,8 +18,8 @@ final class WatchAccount: NSObject, ObservableObject {
     /// Waiting for the iPhone: "Open Over&Out on your iPhone" until a session arrives.
     @Published private(set) var phoneSignedIn: Bool?
 
-    /// Called on the main queue whenever the session appears or changes hands, so the push
-    /// token can be registered under the account.
+    /// Called whenever the session appears or changes hands, so the push token can be
+    /// registered under the account.
     var onSessionChanged: ((AccountSession?) -> Void)?
 
     let deviceId = DeviceIdentity.id()
@@ -42,7 +44,7 @@ final class WatchAccount: NSObject, ObservableObject {
         }
         UserDefaults.standard.removeObject(forKey: Key.selectedFriend)
         NotificationCenter.default.addObserver(forName: AccountClient.signedOutNotification, object: nil, queue: .main) { [weak self] _ in
-            self?.signedOut(askPhone: true)
+            MainActor.assumeIsolated { self?.signedOut(askPhone: true) }
         }
     }
 
@@ -72,7 +74,7 @@ final class WatchAccount: NSObject, ObservableObject {
             do {
                 let result = try await client.signInWithApple(identityToken: "dev:\(user.lowercased())", nonce: "dev",
                                                               name: user, deviceId: deviceId, platform: .watch)
-                await MainActor.run { self.adopt(result.session) }
+                adopt(result.session)
             } catch {
                 print("[oao] dev sign-in failed: \(error.localizedDescription)")
             }
@@ -88,29 +90,31 @@ final class WatchAccount: NSObject, ObservableObject {
             do {
                 try await client.refreshIfNeeded()
                 let loaded = try await client.friends()
-                await MainActor.run {
-                    self.session = self.store.load()
-                    self.setFriends(loaded)
-                }
-                // Telemetry, while idle: queued events, and the diagnostics log if the server
-                // asked for it (tools/beta.ts pull, or Report a Problem on the iPhone).
-                Telemetry.shared.send = { events, device in try await client.sendEvents(events, device: device) }
-                WatchDiagnostics.collectExtensionLines()
-                await Telemetry.shared.flush()
-                if let me = try? await client.me() {
-                    await Telemetry.shared.uploadIfRequested(requestedAt: me.diagnosticsRequestedAt) { data in
-                        try await client.uploadDiagnostics(data, platform: .watch)
-                    }
-                }
-                // Download changed photos now, while idle, so a ring never waits on one.
-                for friend in loaded {
-                    guard let version = friend.photoVersion else { continue }
-                    let id = friend.id
-                    _ = await PhotoCache.shared.photo(userId: id, version: version) { try await client.photo(userId: id) }
-                }
+                session = store.load()
+                setFriends(loaded)
+                await Self.whileIdle(client: client, friends: loaded)
             } catch {
                 print("[oao] account refresh failed: \(error.localizedDescription)")
             }
+        }
+    }
+
+    /// Off the main actor, after a refresh. Telemetry: queued events, and the diagnostics log
+    /// if the server asked for it (tools/beta.ts pull, or Report a Problem on the iPhone).
+    private nonisolated static func whileIdle(client: AccountClient, friends: [Friend]) async {
+        Telemetry.shared.send = { events, device in try await client.sendEvents(events, device: device) }
+        WatchDiagnostics.collectExtensionLines()
+        await Telemetry.shared.flush()
+        if let me = try? await client.me() {
+            await Telemetry.shared.uploadIfRequested(requestedAt: me.diagnosticsRequestedAt) { data in
+                try await client.uploadDiagnostics(data, platform: .watch)
+            }
+        }
+        // Download changed photos now, while idle, so a ring never waits on one.
+        for friend in friends {
+            guard let version = friend.photoVersion else { continue }
+            let id = friend.id
+            _ = await PhotoCache.shared.photo(userId: id, version: version) { try await client.photo(userId: id) }
         }
     }
 
@@ -120,10 +124,8 @@ final class WatchAccount: NSObject, ObservableObject {
         guard let session, session.isExpired, let client else { return body(self.session) }
         Task {
             let fresh = try? await client.refresh()
-            await MainActor.run {
-                self.session = fresh ?? self.store.load()
-                body(self.session)
-            }
+            self.session = fresh ?? store.load()
+            body(self.session)
         }
     }
 
@@ -174,9 +176,11 @@ final class WatchAccount: NSObject, ObservableObject {
         guard session == nil, WCSession.isSupported(), WCSession.default.activationState == .activated else { return }
         updateContext()
         guard WCSession.default.isReachable else { return }
-        WCSession.default.sendMessage([WatchLink.request: WatchLink.sessionRequest, WatchLink.deviceId: deviceId]) { [weak self] reply in
-            DispatchQueue.main.async { self?.handle(reply) }
-        } errorHandler: { error in
+        // Both handlers run on a WatchConnectivity queue, so they're @Sendable, not main-actor.
+        WCSession.default.sendMessage([WatchLink.request: WatchLink.sessionRequest, WatchLink.deviceId: deviceId]) { @Sendable [weak self] reply in
+            let message = PhoneMessage(reply)
+            DispatchQueue.main.async { self?.handle(message) }
+        } errorHandler: { @Sendable error in
             print("[oao] asking the iPhone for a session failed: \(error.localizedDescription)")
         }
     }
@@ -186,47 +190,62 @@ final class WatchAccount: NSObject, ObservableObject {
         try? WCSession.default.updateApplicationContext([WatchLink.deviceId: deviceId, WatchLink.needsSession: session == nil])
     }
 
-    private func handle(_ payload: [String: Any]) {
-        if let data = payload[WatchLink.session] as? Data, let new = WatchLink.decode(data), new.deviceId == deviceId {
+    private func handle(_ message: PhoneMessage) {
+        if let new = message.session, new.deviceId == deviceId {
             adopt(new)
-        } else if payload[WatchLink.signedOut] as? Bool == true {
+        } else if message.signedOut {
             phoneSignedIn = false
             guard session != nil else { return }
             // Signed out on the iPhone: end this watch's session too.
             let client = client
             Task {
                 await client?.signOut()
-                await MainActor.run { self.signedOut(askPhone: false) }
+                signedOut(askPhone: false)
             }
         }
     }
 }
 
+/// What the iPhone sent (a reply, user info or a message), read where it arrived.
+private struct PhoneMessage: Sendable {
+    let session: AccountSession?
+    let signedOut: Bool
+
+    init(_ payload: [String: Any]) {
+        session = (payload[WatchLink.session] as? Data).flatMap(WatchLink.decode)
+        signedOut = payload[WatchLink.signedOut] as? Bool == true
+    }
+}
+
+/// WatchConnectivity calls these on its own queue.
 extension WatchAccount: WCSessionDelegate {
-    func session(_ session: WCSession, activationDidCompleteWith activationState: WCSessionActivationState, error: Error?) {
+    nonisolated func session(_ session: WCSession, activationDidCompleteWith activationState: WCSessionActivationState, error: Error?) {
+        let signedIn = session.receivedApplicationContext[WatchLink.signedIn] as? Bool
         DispatchQueue.main.async {
-            self.phoneSignedIn = session.receivedApplicationContext[WatchLink.signedIn] as? Bool
+            self.phoneSignedIn = signedIn
             self.askPhoneForSession()
         }
     }
 
-    func sessionReachabilityDidChange(_ session: WCSession) {
+    nonisolated func sessionReachabilityDidChange(_ session: WCSession) {
         DispatchQueue.main.async { self.askPhoneForSession() }
     }
 
-    func session(_ session: WCSession, didReceiveApplicationContext applicationContext: [String: Any]) {
+    nonisolated func session(_ session: WCSession, didReceiveApplicationContext applicationContext: [String: Any]) {
+        let signedIn = applicationContext[WatchLink.signedIn] as? Bool
         DispatchQueue.main.async {
-            let signedIn = applicationContext[WatchLink.signedIn] as? Bool
             self.phoneSignedIn = signedIn
             if signedIn == true { self.askPhoneForSession() }
         }
     }
 
-    func session(_ session: WCSession, didReceiveUserInfo userInfo: [String: Any] = [:]) {
-        DispatchQueue.main.async { self.handle(userInfo) }
+    nonisolated func session(_ session: WCSession, didReceiveUserInfo userInfo: [String: Any] = [:]) {
+        let message = PhoneMessage(userInfo)
+        DispatchQueue.main.async { self.handle(message) }
     }
 
-    func session(_ session: WCSession, didReceiveMessage message: [String: Any]) {
+    nonisolated func session(_ session: WCSession, didReceiveMessage message: [String: Any]) {
+        let message = PhoneMessage(message)
         DispatchQueue.main.async { self.handle(message) }
     }
 }

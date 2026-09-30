@@ -3,25 +3,31 @@ import AVFoundation
 /// Microphone capture and speaker playback for the duration of a conversation.
 ///
 /// The app owns the audio session (playAndRecord, voiceChat) and activates it before
-/// `start()`. Frames received before `start()` are held and played once it runs. All
-/// state lives on `queue`; only the capture converter runs on the tap's thread.
+/// `start()`. Frames received before `start()` are held and played once it runs.
+///
+/// Who owns what:
+/// - The main actor: the public API, every callback, and the engine's lifecycle (start, stop,
+///   replacing the engine, restarting after a configuration change).
+/// - The audio queue (`AudioQueueState`): the encoder and decoder, the capture buffer, the
+///   jitter buffer, and scheduling on the player, so captured and played frames stay in order.
+/// - The input tap's block: the capture converter. It hands converted samples to the queue.
+@MainActor
 public final class AudioPipeline {
-    /// Encoded wire frames while capturing. Called on the audio queue.
+    /// Encoded wire frames while capturing, in order.
     public var onFrame: ((Data) -> Void)?
-    /// The first buffer of a received burst was handed to the player. Called on the audio queue.
+    /// The first buffer of a received burst was handed to the player.
     public var onFirstPlayback: (() -> Void)?
     /// Everything handed to the player has been played. A replayed burst arrives much
     /// faster than it plays, so this, not the burst's end, is when the speaker goes quiet.
-    /// Called on the main queue.
     public var onPlaybackDrained: (() -> Void)?
-    /// The microphone produced the first frame of a burst (time in ms). Called on the audio queue.
+    /// The microphone produced the first frame of a burst (time in ms, on the audio queue).
     public var onFirstCapturedFrame: ((Double) -> Void)?
     /// The engine was restarted after watchOS changed its configuration (for example
-    /// another session took the audio hardware). Called on the main queue.
+    /// another session took the audio hardware).
     public var onRestart: ((String) -> Void)?
 
     public var codecDescription: String {
-        encoder.codec == .opus16k ? "Opus 24 kbps" : "PCM 256 kbps (no Opus encoder)"
+        codec == .opus16k ? "Opus 24 kbps" : "PCM 256 kbps (no Opus encoder)"
     }
 
     public enum PipelineError: LocalizedError {
@@ -29,51 +35,29 @@ public final class AudioPipeline {
         public var errorDescription: String? { "No microphone input available (playback only)" }
     }
 
-    // Replaced (main thread, engine stopped) when a playback-only start follows one that used
-    // the microphone: merely touching `inputNode` gives an engine an input for good.
+    // Replaced (engine stopped) when a playback-only start follows one that used the
+    // microphone: merely touching `inputNode` gives an engine an input for good.
     private var engine = AVAudioEngine()
     private var player = AVAudioPlayerNode()
-    /// Main thread only: this engine has touched its input node.
+    /// This engine has touched its input node.
     private var engineHasInput = false
-    /// Main thread only: the last start's capture choice, for restarts.
+    /// The last start's capture choice, for restarts.
     private var wantsCapture = true
     private var configurationObserver: NSObjectProtocol?
-    private let queue = DispatchQueue(label: "walkie.audio", qos: .userInteractive)
-    private let encoder = VoiceEncoder()
-    private let decoder = VoiceDecoder()
     private var attached = false
-    /// Main thread only: start() was called and stop() hasn't been since.
+    /// start() was called and stop() hasn't been since.
     private var wantsRunning = false
-
-    // Tap thread only.
-    private var captureConverter: AVAudioConverter?
-
-    // Audio queue only.
-    private var running = false
-    private var capturing = false
-    private var pendingSamples: [Float] = []
-    private var sequence: UInt32 = 0
-    private var held: [AVAudioPCMBuffer] = []
-    private var prebuffering = false
-    private var reportedFirstPlayback = false
-    private var scheduled = 0
-    /// When everything scheduled should have finished playing (ms, audio queue only).
-    private var expectedDrainAt: Double = 0
-    private var drainWatchdog: DispatchWorkItem?
-
-    /// Frames of jitter buffer before a live burst starts playing (4 × 20 ms).
-    private static let prebufferFrames = 4
+    private let codec: VoiceFrame.Codec
+    private let state: AudioQueueState
 
     public init() {
+        state = AudioQueueState(player: player)
+        codec = state.codec
         observeConfigurationChanges()
-        // Build the Opus encoder and decoder at launch rather than on the first message.
-        queue.async {
-            let silence = [Float](repeating: 0, count: VoiceFrame.samplesPerFrame)
-            if let packet = self.encoder.encode(silence) {
-                _ = self.decoder.decode(codec: self.encoder.codec, payload: packet)
-            }
-            self.encoder.reset()
-            self.decoder.reset()
+        state.async { [weak self] state in
+            state.pipeline = self
+            // Build the Opus encoder and decoder at launch rather than on the first message.
+            state.warmUp()
         }
     }
 
@@ -81,7 +65,9 @@ public final class AudioPipeline {
         if let configurationObserver { NotificationCenter.default.removeObserver(configurationObserver) }
         configurationObserver = NotificationCenter.default.addObserver(
             forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main
-        ) { [weak self] _ in self?.restartAfterConfigurationChange() }
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.restartAfterConfigurationChange() }
+        }
     }
 
     /// `capture: false` starts the speaker only. For PushToTalk receiving: the system has muted
@@ -100,10 +86,7 @@ public final class AudioPipeline {
             engine.prepare()
             try engine.start()
             player.play()
-            queue.async {
-                self.running = true
-                if !self.prebuffering { self.flushHeld() }
-            }
+            state.async { $0.started() }
             return
         }
         let input = engine.inputNode
@@ -111,26 +94,282 @@ public final class AudioPipeline {
         let hardware = input.outputFormat(forBus: 0)
         let hasInput = hardware.channelCount > 0 && hardware.sampleRate > 0
         input.removeTap(onBus: 0)
-        if hasInput {
-            captureConverter = AVAudioConverter(from: hardware, to: VoiceFrame.pcmFormat)
-            // The tap delivers ~100 ms buffers; they're re-chunked into 20 ms frames below.
-            input.installTap(onBus: 0, bufferSize: 1600, format: hardware) { [weak self] buffer, _ in
-                self?.captured(buffer)
-            }
+        if hasInput, let converter = AVAudioConverter(from: hardware, to: VoiceFrame.pcmFormat) {
+            // The tap delivers ~100 ms buffers; they're re-chunked into 20 ms frames on the queue.
+            input.installTap(onBus: 0, bufferSize: 1600, format: hardware, block: Self.captureTap(converter: converter, state: state))
         }
         engine.prepare()
         try engine.start()
         player.play()
-        queue.async {
-            self.running = true
-            if !self.prebuffering { self.flushHeld() }
-        }
+        state.async { $0.started() }
         guard hasInput else {
             // Playback still works, so receiving can be tested even without a microphone.
             #if targetEnvironment(simulator)
-            startTestTone()
+            state.async { $0.startTestTone() }
             #endif
             throw PipelineError.noInput
+        }
+    }
+
+    /// The input tap's block, made outside the main actor: the tap calls it on its own
+    /// real-time thread. It owns the converter; only the samples go to the audio queue.
+    private nonisolated static func captureTap(converter: AVAudioConverter, state: AudioQueueState) -> AVAudioNodeTapBlock {
+        { buffer, _ in
+            let ratio = VoiceFrame.sampleRate / buffer.format.sampleRate
+            let capacity = AVAudioFrameCount(Double(buffer.frameLength) * ratio) + 32
+            guard let output = AVAudioPCMBuffer(pcmFormat: VoiceFrame.pcmFormat, frameCapacity: capacity) else { return }
+            var consumed = false
+            var error: NSError?
+            _ = converter.convert(to: output, error: &error) { _, status in
+                if consumed {
+                    status.pointee = .noDataNow
+                    return nil
+                }
+                consumed = true
+                status.pointee = .haveData
+                return buffer
+            }
+            guard output.frameLength > 0 else { return }
+            let samples = Array(UnsafeBufferPointer(start: output.floatChannelData![0], count: Int(output.frameLength)))
+            state.async { $0.captured(samples) }
+        }
+    }
+
+    public func stop() {
+        wantsRunning = false
+        if engineHasInput { engine.inputNode.removeTap(onBus: 0) }
+        player.stop()
+        engine.stop()
+        state.async { $0.stopped() }
+    }
+
+    /// A new engine and player, attached on the next start. The old engine's connections keep
+    /// the hardware format they were made with.
+    private func replaceEngine() {
+        let fresh = AVAudioEngine()
+        let freshPlayer = AVAudioPlayerNode()
+        state.replacePlayer(freshPlayer)
+        engine = fresh
+        player = freshPlayer
+        attached = false
+        engineHasInput = false
+        observeConfigurationChanges()
+    }
+
+    /// The system stops the engine when the audio configuration changes: another session takes
+    /// the hardware, or the route's format changes (run 57: hearing aids switching to a call
+    /// link as PushToTalk activated audio). The stopped engine is rebuilt rather than restarted:
+    /// restarted with its old connections, it played static and never reported buffers played.
+    private func restartAfterConfigurationChange() {
+        guard wantsRunning, attached, !engine.isRunning else { return }
+        // The stopped engine discarded what the player had scheduled, and those buffers'
+        // "played" callbacks never come: count them as played, or the speaker never drains.
+        if state.discardScheduled() {
+            DispatchQueue.main.async { [weak self] in self?.onPlaybackDrained?() }
+        }
+        if engineHasInput { engine.inputNode.removeTap(onBus: 0) }
+        replaceEngine()
+        do {
+            try start(capture: wantsCapture)
+            onRestart?("engine restarted after configuration change")
+        } catch {
+            onRestart?("engine restart failed: \(error.localizedDescription)")
+        }
+    }
+
+    // MARK: Capture
+
+    public func beginCapture() {
+        state.async { $0.beginCapture() }
+    }
+
+    /// Pads and sends the final partial frame, then calls `completion`, after that frame's `onFrame`.
+    public func endCapture(completion: @escaping @MainActor @Sendable () -> Void) {
+        state.async { state in
+            state.endCapture()
+            DispatchQueue.main.async { completion() }
+        }
+    }
+
+    // MARK: Playback
+
+    public func beginPlayback() {
+        state.async { $0.beginPlayback() }
+    }
+
+    public func enqueue(_ frame: Data) {
+        state.async { $0.enqueue(frame) }
+    }
+
+    /// End of a received burst: play whatever is still held, even if under the prebuffer.
+    public func endPlayback() {
+        state.async { $0.endPlayback() }
+    }
+
+    // MARK: From the audio queue
+
+    fileprivate func deliver(_ event: AudioQueueState.Event) {
+        switch event {
+        case .frame(let frame): onFrame?(frame)
+        case .firstPlayback: onFirstPlayback?()
+        case .firstCapturedFrame(let t): onFirstCapturedFrame?(t)
+        case .drained: onPlaybackDrained?()
+        case .stalled(let buffers, let drained):
+            onRestart?("playback stalled: \(buffers) buffers never reported played; counted as played")
+            if drained { onPlaybackDrained?() }
+        }
+    }
+}
+
+/// The pipeline's state on its serial audio queue.
+///
+/// `@unchecked Sendable`: every mutable property is read and written only on `queue`. The
+/// pipeline reaches it only through `async` and the two methods that wait for the queue
+/// (called from the main actor, never from the queue, so they can't deadlock); the player's
+/// completion handlers and the watchdog hop onto the queue; `onQueue()` checks the invariant
+/// in debug builds. Events for the pipeline go to
+/// the main queue in the order they happen. A serial queue rather than an actor: frames arrive
+/// from the tap's real-time thread and the player's callbacks, where awaiting isn't possible,
+/// and iOS 16/watchOS 9 can't run an actor on this queue.
+private final class AudioQueueState: @unchecked Sendable {
+    enum Event: Sendable {
+        case frame(Data)
+        case firstPlayback
+        case firstCapturedFrame(Double)
+        case drained
+        case stalled(buffers: Int, drained: Bool)
+    }
+
+    private let queue = DispatchQueue(label: "walkie.audio", qos: .userInteractive)
+    private let encoder = VoiceEncoder()
+    private let decoder = VoiceDecoder()
+    let codec: VoiceFrame.Codec
+
+    /// Set on the queue by the pipeline's init; weak so the pipeline can go away.
+    weak var pipeline: AudioPipeline?
+    /// The pipeline's current player (replaced along with its engine).
+    private var player: AVAudioPlayerNode
+    private var running = false
+    private var capturing = false
+    private var pendingSamples: [Float] = []
+    private var sequence: UInt32 = 0
+    private var held: [AVAudioPCMBuffer] = []
+    private var prebuffering = false
+    private var reportedFirstPlayback = false
+    private var scheduled = 0
+    /// When everything scheduled should have finished playing (ms).
+    private var expectedDrainAt: Double = 0
+    private var drainWatchdog: DispatchWorkItem?
+
+    /// Frames of jitter buffer before a live burst starts playing (4 × 20 ms).
+    private static let prebufferFrames = 4
+
+    init(player: AVAudioPlayerNode) {
+        self.player = player
+        codec = encoder.codec
+    }
+
+    func async(_ work: @escaping @Sendable (AudioQueueState) -> Void) {
+        queue.async { work(self) }
+    }
+
+    /// From the main actor, with the engine stopped: waits for the queue.
+    func replacePlayer(_ player: AVAudioPlayerNode) {
+        queue.sync { self.player = player }
+    }
+
+    private func onQueue() {
+        #if DEBUG
+        dispatchPrecondition(condition: .onQueue(queue))
+        #endif
+    }
+
+    /// To the pipeline on the main queue, after everything sent before it.
+    private func send(_ event: Event) {
+        let pipeline = self.pipeline
+        DispatchQueue.main.async { pipeline?.deliver(event) }
+    }
+
+    func warmUp() {
+        onQueue()
+        let silence = [Float](repeating: 0, count: VoiceFrame.samplesPerFrame)
+        if let packet = encoder.encode(silence) {
+            _ = decoder.decode(codec: encoder.codec, payload: packet)
+        }
+        encoder.reset()
+        decoder.reset()
+    }
+
+    func started() {
+        onQueue()
+        running = true
+        if !prebuffering { flushHeld() }
+    }
+
+    func stopped() {
+        onQueue()
+        #if targetEnvironment(simulator)
+        toneTimer?.cancel()
+        toneTimer = nil
+        #endif
+        running = false
+        capturing = false
+        pendingSamples.removeAll()
+        held.removeAll()
+        scheduled = 0
+        expectedDrainAt = 0
+        drainWatchdog?.cancel()
+    }
+
+    /// From the main actor: the engine stopped and threw away what was scheduled. Waits for the
+    /// queue; true if that was the last of it, so the speaker has drained.
+    func discardScheduled() -> Bool {
+        queue.sync {
+            let lost = scheduled
+            scheduled = 0
+            expectedDrainAt = 0
+            drainWatchdog?.cancel()
+            return lost > 0 && held.isEmpty
+        }
+    }
+
+    // MARK: Capture
+
+    func beginCapture() {
+        onQueue()
+        encoder.reset()
+        sequence = 0
+        pendingSamples.removeAll()
+        capturing = true
+    }
+
+    func endCapture() {
+        onQueue()
+        if capturing, !pendingSamples.isEmpty {
+            let padding = VoiceFrame.samplesPerFrame - pendingSamples.count
+            pendingSamples.append(contentsOf: repeatElement(0, count: max(0, padding)))
+            emitFrames()
+        }
+        capturing = false
+        pendingSamples.removeAll()
+    }
+
+    func captured(_ samples: [Float]) {
+        onQueue()
+        guard capturing else { return }
+        pendingSamples.append(contentsOf: samples)
+        emitFrames()
+    }
+
+    private func emitFrames() {
+        let size = VoiceFrame.samplesPerFrame
+        while pendingSamples.count >= size {
+            let frame = Array(pendingSamples.prefix(size))
+            pendingSamples.removeFirst(size)
+            guard let payload = encoder.encode(frame) else { continue }
+            if sequence == 0 { send(.firstCapturedFrame(Clock.nowMs())) }
+            send(.frame(VoiceFrame.encode(codec: encoder.codec, seq: sequence, payload: payload)))
+            sequence &+= 1
         }
     }
 
@@ -140,7 +379,8 @@ public final class AudioPipeline {
     private var toneTimer: DispatchSourceTimer?
     private var tonePhase: Float = 0
 
-    private func startTestTone() {
+    func startTestTone() {
+        onQueue()
         guard toneTimer == nil else { return }
         let timer = DispatchSource.makeTimerSource(queue: queue)
         timer.schedule(deadline: .now(), repeating: .milliseconds(20))
@@ -159,153 +399,28 @@ public final class AudioPipeline {
     }
     #endif
 
-    public func stop() {
-        wantsRunning = false
-        #if targetEnvironment(simulator)
-        toneTimer?.cancel()
-        toneTimer = nil
-        #endif
-        if engineHasInput { engine.inputNode.removeTap(onBus: 0) }
-        player.stop()
-        engine.stop()
-        queue.async {
-            self.running = false
-            self.capturing = false
-            self.pendingSamples.removeAll()
-            self.held.removeAll()
-            self.scheduled = 0
-            self.expectedDrainAt = 0
-            self.drainWatchdog?.cancel()
-        }
-    }
-
-    /// A new engine and player, attached on the next start. The old engine's connections keep
-    /// the hardware format they were made with.
-    private func replaceEngine() {
-        let fresh = AVAudioEngine()
-        let freshPlayer = AVAudioPlayerNode()
-        queue.sync {
-            engine = fresh
-            player = freshPlayer
-        }
-        attached = false
-        engineHasInput = false
-        observeConfigurationChanges()
-    }
-
-    /// The system stops the engine when the audio configuration changes: another session takes
-    /// the hardware, or the route's format changes (run 57: hearing aids switching to a call
-    /// link as PushToTalk activated audio). The stopped engine is rebuilt rather than restarted:
-    /// restarted with its old connections, it played static and never reported buffers played.
-    private func restartAfterConfigurationChange() {
-        guard wantsRunning, attached, !engine.isRunning else { return }
-        // The stopped engine discarded what the player had scheduled, and those buffers'
-        // "played" callbacks never come: count them as played, or the speaker never drains.
-        queue.sync {
-            let lost = scheduled
-            scheduled = 0
-            expectedDrainAt = 0
-            drainWatchdog?.cancel()
-            if lost > 0, held.isEmpty { DispatchQueue.main.async { self.onPlaybackDrained?() } }
-        }
-        if engineHasInput { engine.inputNode.removeTap(onBus: 0) }
-        replaceEngine()
-        do {
-            try start(capture: wantsCapture)
-            onRestart?("engine restarted after configuration change")
-        } catch {
-            onRestart?("engine restart failed: \(error.localizedDescription)")
-        }
-    }
-
-    // MARK: Capture
-
-    public func beginCapture() {
-        queue.async {
-            self.encoder.reset()
-            self.sequence = 0
-            self.pendingSamples.removeAll()
-            self.capturing = true
-        }
-    }
-
-    /// Pads and sends the final partial frame, then calls `completion` on the audio queue.
-    public func endCapture(completion: @escaping () -> Void) {
-        queue.async {
-            if self.capturing, !self.pendingSamples.isEmpty {
-                let padding = VoiceFrame.samplesPerFrame - self.pendingSamples.count
-                self.pendingSamples.append(contentsOf: repeatElement(0, count: max(0, padding)))
-                self.emitFrames()
-            }
-            self.capturing = false
-            self.pendingSamples.removeAll()
-            completion()
-        }
-    }
-
-    private func captured(_ buffer: AVAudioPCMBuffer) {
-        guard let converter = captureConverter else { return }
-        let ratio = VoiceFrame.sampleRate / buffer.format.sampleRate
-        let capacity = AVAudioFrameCount(Double(buffer.frameLength) * ratio) + 32
-        guard let output = AVAudioPCMBuffer(pcmFormat: VoiceFrame.pcmFormat, frameCapacity: capacity) else { return }
-        var consumed = false
-        var error: NSError?
-        _ = converter.convert(to: output, error: &error) { _, status in
-            if consumed {
-                status.pointee = .noDataNow
-                return nil
-            }
-            consumed = true
-            status.pointee = .haveData
-            return buffer
-        }
-        guard output.frameLength > 0 else { return }
-        let samples = Array(UnsafeBufferPointer(start: output.floatChannelData![0], count: Int(output.frameLength)))
-        queue.async {
-            guard self.capturing else { return }
-            self.pendingSamples.append(contentsOf: samples)
-            self.emitFrames()
-        }
-    }
-
-    private func emitFrames() {
-        let size = VoiceFrame.samplesPerFrame
-        while pendingSamples.count >= size {
-            let frame = Array(pendingSamples.prefix(size))
-            pendingSamples.removeFirst(size)
-            guard let payload = encoder.encode(frame) else { continue }
-            if sequence == 0 { onFirstCapturedFrame?(Clock.nowMs()) }
-            onFrame?(VoiceFrame.encode(codec: encoder.codec, seq: sequence, payload: payload))
-            sequence &+= 1
-        }
-    }
-
     // MARK: Playback
 
-    public func beginPlayback() {
-        queue.async {
-            self.decoder.reset()
-            self.prebuffering = true
-            self.reportedFirstPlayback = false
-        }
+    func beginPlayback() {
+        onQueue()
+        decoder.reset()
+        prebuffering = true
+        reportedFirstPlayback = false
     }
 
-    public func enqueue(_ frame: Data) {
-        queue.async {
-            guard let (codec, _, payload) = VoiceFrame.decode(frame),
-                  let buffer = self.decoder.decode(codec: codec, payload: payload) else { return }
-            self.held.append(buffer)
-            if self.prebuffering, self.held.count >= Self.prebufferFrames { self.prebuffering = false }
-            if !self.prebuffering { self.flushHeld() }
-        }
+    func enqueue(_ frame: Data) {
+        onQueue()
+        guard let (codec, _, payload) = VoiceFrame.decode(frame),
+              let buffer = decoder.decode(codec: codec, payload: payload) else { return }
+        held.append(buffer)
+        if prebuffering, held.count >= Self.prebufferFrames { prebuffering = false }
+        if !prebuffering { flushHeld() }
     }
 
-    /// End of a received burst: play whatever is still held, even if under the prebuffer.
-    public func endPlayback() {
-        queue.async {
-            self.prebuffering = false
-            self.flushHeld()
-        }
+    func endPlayback() {
+        onQueue()
+        prebuffering = false
+        flushHeld()
     }
 
     private func flushHeld() {
@@ -315,14 +430,7 @@ public final class AudioPipeline {
             expectedDrainAt = max(expectedDrainAt, now) + Double(buffer.frameLength) / buffer.format.sampleRate * 1000
             scheduled += 1
             player.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack) { [weak self] _ in
-                guard let self else { return }
-                self.queue.async {
-                    guard self.scheduled > 0 else { return }
-                    self.scheduled -= 1
-                    if self.scheduled == 0, self.held.isEmpty {
-                        DispatchQueue.main.async { self.onPlaybackDrained?() }
-                    }
-                }
+                self?.async { $0.played() }
             }
         }
         held.removeAll()
@@ -330,8 +438,15 @@ public final class AudioPipeline {
         if !player.isPlaying { player.play() }
         if !reportedFirstPlayback {
             reportedFirstPlayback = true
-            onFirstPlayback?()
+            send(.firstPlayback)
         }
+    }
+
+    private func played() {
+        onQueue()
+        guard scheduled > 0 else { return }
+        scheduled -= 1
+        if scheduled == 0, held.isEmpty { send(.drained) }
     }
 
     /// If what was scheduled still hasn't been reported played a second after it should have
@@ -345,10 +460,7 @@ public final class AudioPipeline {
             let drained = self.held.isEmpty
             self.scheduled = 0
             self.expectedDrainAt = 0
-            DispatchQueue.main.async {
-                self.onRestart?("playback stalled: \(stalled) buffers never reported played; counted as played")
-                if drained { self.onPlaybackDrained?() }
-            }
+            self.send(.stalled(buffers: stalled, drained: drained))
         }
         drainWatchdog = item
         queue.asyncAfter(deadline: .now() + .milliseconds(Int(max(0, expectedDrainAt - Clock.nowMs())) + 1_000), execute: item)

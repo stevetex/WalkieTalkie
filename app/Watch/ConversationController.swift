@@ -1,6 +1,7 @@
 import AVFoundation
 import Combine
 import Network
+import os
 import OverAndOutKit
 import UserNotifications
 import WatchKit
@@ -14,8 +15,9 @@ import WatchKit
 ///             then frames.
 ///
 /// A conversation ends by itself after `conversationWindow` with no audio either way.
-/// Everything here runs on the main queue: the relay and notifications deliver there, and
-/// the audio pipeline hops back to it.
+/// Everything here runs on the main actor: the relay and the audio pipeline deliver there,
+/// and notification and system callbacks hop to it.
+@MainActor
 final class ConversationController: NSObject, ObservableObject {
     static let shared = ConversationController()
 
@@ -211,21 +213,17 @@ final class ConversationController: NSObject, ObservableObject {
                                         detail: "\(bytes) bytes, \(Int(finished - started)) ms, HTTP \(status)", once: false)
         }
 
-        audio.onFrame = { [weak self] frame in
-            DispatchQueue.main.async { self?.sendCaptured(frame) }
-        }
+        audio.onFrame = { [weak self] frame in self?.sendCaptured(frame) }
         audio.onFirstPlayback = { [weak self] in
-            DispatchQueue.main.async {
-                self?.conversation?.timeline.mark("firstAudioScheduled")
-                self?.conversation?.timeline.mark("burstAudioStarted", once: false)
-            }
+            self?.conversation?.timeline.mark("firstAudioScheduled")
+            self?.conversation?.timeline.mark("burstAudioStarted", once: false)
         }
         audio.onPlaybackDrained = { [weak self] in
             self?.speakerIdle = true
             self?.friendStoppedTalkingIfDone()
         }
         audio.onFirstCapturedFrame = { [weak self] t in
-            DispatchQueue.main.async { self?.conversation?.timeline.mark("micFirstFrame", at: t, once: false) }
+            self?.conversation?.timeline.mark("micFirstFrame", at: t, once: false)
         }
         audio.onRestart = { [unowned self] detail in
             log("Audio: \(detail)")
@@ -235,7 +233,10 @@ final class ConversationController: NSObject, ObservableObject {
 
         NotificationCenter.default.addObserver(
             forName: AVAudioSession.interruptionNotification, object: nil, queue: .main
-        ) { [unowned self] note in handleAudioInterruption(note) }
+        ) { [weak self] note in
+            let raw = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt
+            MainActor.assumeIsolated { self?.handleAudioInterruption(raw) }
+        }
         startMainThreadWatchdog()
         log("Codec: \(audio.codecDescription)")
         account.onSessionChanged = { [unowned self] session in
@@ -264,7 +265,7 @@ final class ConversationController: NSObject, ObservableObject {
     // MARK: Permissions and push registration
 
     func requestMicrophone() {
-        let completion: (Bool) -> Void = { granted in
+        let completion: @Sendable (Bool) -> Void = { granted in
             DispatchQueue.main.async { if !granted { self.log("Microphone permission denied") } }
         }
         if #available(watchOS 10.0, *) {
@@ -359,12 +360,10 @@ final class ConversationController: NSObject, ObservableObject {
             return
         }
         // Flush the last partial frame before telling the relay the burst is over.
-        audio.endCapture {
-            DispatchQueue.main.async {
-                self.relay.send(["type": "talk-end", "burstId": id])
-                if self.burstId == id { self.burstId = nil }
-                self.resetIdleTimer()
-            }
+        audio.endCapture { [self] in
+            relay.send(["type": "talk-end", "burstId": id])
+            if burstId == id { burstId = nil }
+            resetIdleTimer()
         }
     }
 
@@ -545,12 +544,11 @@ final class ConversationController: NSObject, ObservableObject {
     }
 
     private func removeDeliveredNotifications(for conversationId: String) {
-        let center = UNUserNotificationCenter.current()
-        center.getDeliveredNotifications { notifications in
+        UNUserNotificationCenter.current().getDeliveredNotifications { notifications in
             let ids = notifications
                 .filter { Ring(userInfo: $0.request.content.userInfo)?.conversationId == conversationId }
                 .map(\.request.identifier)
-            center.removeDeliveredNotifications(withIdentifiers: ids)
+            UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: ids)
         }
     }
 
@@ -768,11 +766,13 @@ final class ConversationController: NSObject, ObservableObject {
         guard conversation != nil else { return }
         idleTimer = Timer.scheduledTimer(withTimeInterval: Self.conversationWindow, repeats: false) { [weak self] _ in
             guard let self else { return }
-            if talkHeld || remoteTalking {
-                resetIdleTimer()
-            } else {
-                log("Conversation window ended")
-                finish()
+            MainActor.assumeIsolated {
+                if talkHeld || remoteTalking {
+                    resetIdleTimer()
+                } else {
+                    log("Conversation window ended")
+                    finish()
+                }
             }
         }
     }
@@ -817,10 +817,8 @@ final class ConversationController: NSObject, ObservableObject {
     }
 
     /// Something else (a phone call, Siri) interrupted the app's audio.
-    private func handleAudioInterruption(_ note: Notification) {
-        guard conversation != nil,
-              let raw = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
-              let type = AVAudioSession.InterruptionType(rawValue: raw) else { return }
+    private func handleAudioInterruption(_ raw: UInt?) {
+        guard conversation != nil, let raw, let type = AVAudioSession.InterruptionType(rawValue: raw) else { return }
         switch type {
         case .began:
             log("Audio interrupted")
@@ -917,7 +915,7 @@ final class ConversationController: NSObject, ObservableObject {
 
     /// A request's timings from the network stack: its protocol, a new or reused connection
     /// (with DNS, connect and TLS), request → first response byte, and the path's flags.
-    private static func describe(_ metrics: URLSessionTaskMetrics) -> (requestStartedAt: Double, detail: String)? {
+    private nonisolated static func describe(_ metrics: URLSessionTaskMetrics) -> (requestStartedAt: Double, detail: String)? {
         guard let t = metrics.transactionMetrics.last, let start = t.requestStartDate ?? t.fetchStartDate else { return nil }
         func ms(_ from: Date?, _ to: Date?) -> String {
             guard let from, let to else { return "-" }
@@ -938,7 +936,7 @@ final class ConversationController: NSObject, ObservableObject {
     }
 
     /// The interfaces the watch can use, preferred first: "wifi", "cellular", or "other".
-    private static func describe(_ path: NWPath) -> String {
+    private nonisolated static func describe(_ path: NWPath) -> String {
         let interfaces = path.availableInterfaces.map { interface -> String in
             switch interface.type {
             case .wifi: return "wifi"
@@ -973,9 +971,12 @@ final class ConversationController: NSObject, ObservableObject {
         preconnectRelay()
         preconnectTimer?.invalidate()
         preconnectTimer = Timer.scheduledTimer(withTimeInterval: Self.preconnectIdle, repeats: false) { [weak self] _ in
-            guard let self, conversation == nil, incomingRing == nil else { return }
-            log("Closing the idle pre-connected stream")
-            closePreconnect()
+            guard let self else { return }
+            MainActor.assumeIsolated {
+                guard conversation == nil, incomingRing == nil else { return }
+                log("Closing the idle pre-connected stream")
+                closePreconnect()
+            }
         }
     }
 
@@ -1001,11 +1002,14 @@ final class ConversationController: NSObject, ObservableObject {
     private func startMainThreadWatchdog() {
         let timer = DispatchSource.makeTimerSource(queue: .global(qos: .utility))
         timer.schedule(deadline: .now() + 1, repeating: .milliseconds(250))
-        var lastTick = Clock.nowMs()
-        timer.setEventHandler { [weak self] in
+        let lastTick = OSAllocatedUnfairLock(initialState: Clock.nowMs())
+        // @Sendable, so not main-actor: the timer fires on a global queue.
+        timer.setEventHandler { @Sendable [weak self] in
             let queuedAt = Clock.nowMs()
-            let gap = queuedAt - lastTick
-            lastTick = queuedAt
+            let gap = lastTick.withLock { lastTick in
+                defer { lastTick = queuedAt }
+                return queuedAt - lastTick
+            }
             if gap > 1_000 {
                 DispatchQueue.main.async {
                     self?.conversation?.timeline.mark("processPaused", at: queuedAt - gap, detail: "\(Int(gap)) ms", once: false)
@@ -1037,14 +1041,15 @@ final class ConversationController: NSObject, ObservableObject {
 
 extension ConversationController: UNUserNotificationCenterDelegate {
     /// A ring while the app is on screen: ring in the app instead of showing the banner.
-    func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification,
-                                withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
+    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification,
+                                            withCompletionHandler completionHandler: @escaping @Sendable (UNNotificationPresentationOptions) -> Void) {
         let info = notification.request.content.userInfo
         guard let ring = Ring(userInfo: info) else {
             return completionHandler([.banner, .sound])
         }
         let receivedAt = Clock.nowMs()
         let isPrefetch = info["prefetch"] != nil
+        let delivered = notification.date
         DispatchQueue.main.async {
             defer { completionHandler([]) }
             // Which path each ring takes, for the frontmost case (run 60).
@@ -1060,21 +1065,23 @@ extension ConversationController: UNUserNotificationCenterDelegate {
             // The prefetch push for a ring that's already ringing in the app: don't ring again.
             guard self.incomingRing?.conversationId != ring.conversationId else { return }
             self.incomingRing = ring
-            self.incomingRingDelivered = notification.date
+            self.incomingRingDelivered = delivered
             self.preconnectRelay()
             WKInterfaceDevice.current().play(.notification)
             self.incomingRingTimer?.invalidate()
             self.incomingRingTimer = Timer.scheduledTimer(withTimeInterval: Self.inAppRingTimeout, repeats: false) { _ in
-                guard self.incomingRing == ring else { return }
-                self.declineIncomingRing()
-                self.outcomes[ring.from] = OutcomeNote(outcome: .missed, at: Date())
+                MainActor.assumeIsolated {
+                    guard self.incomingRing == ring else { return }
+                    self.declineIncomingRing()
+                    self.outcomes[ring.from] = OutcomeNote(outcome: .missed, at: Date())
+                }
             }
         }
     }
 
     /// Tapping the ring notification answers it.
-    func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,
-                                withCompletionHandler completionHandler: @escaping () -> Void) {
+    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,
+                                            withCompletionHandler completionHandler: @escaping @Sendable () -> Void) {
         let openedAt = Clock.nowMs()
         let ring = Ring(userInfo: response.notification.request.content.userInfo)
         let delivered = response.notification.date

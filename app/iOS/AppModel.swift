@@ -283,7 +283,8 @@ final class AppModel: ObservableObject {
     func requestMicrophone() async {
         guard AVAudioSession.sharedInstance().recordPermission == .undetermined else { return }
         _ = await withCheckedContinuation { continuation in
-            AVAudioSession.sharedInstance().requestRecordPermission { continuation.resume(returning: $0) }
+            // @Sendable: iOS answers on another thread, so the block mustn't be main-actor.
+            AVAudioSession.sharedInstance().requestRecordPermission { @Sendable granted in continuation.resume(returning: granted) }
         }
     }
 

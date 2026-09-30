@@ -102,21 +102,17 @@ final class TalkController: ObservableObject {
             Telemetry.shared.event("relayDropped", ["reason": String(reason.prefix(80)), "conversationId": conversation?.conversationId ?? ""])
             finish()
         }
-        audio.onFrame = { [weak self] frame in
-            DispatchQueue.main.async { self?.sendCaptured(frame) }
-        }
+        audio.onFrame = { [weak self] frame in self?.sendCaptured(frame) }
         audio.onFirstPlayback = { [weak self] in
-            DispatchQueue.main.async {
-                self?.conversation?.timeline.mark("firstAudioScheduled")
-                self?.conversation?.timeline.mark("burstAudioStarted", once: false)
-            }
+            self?.conversation?.timeline.mark("firstAudioScheduled")
+            self?.conversation?.timeline.mark("burstAudioStarted", once: false)
         }
         audio.onPlaybackDrained = { [weak self] in
             self?.speakerIdle = true
             self?.friendStoppedTalkingIfDone()
         }
         audio.onFirstCapturedFrame = { [weak self] t in
-            DispatchQueue.main.async { self?.conversation?.timeline.mark("micFirstFrame", at: t, once: false) }
+            self?.conversation?.timeline.mark("micFirstFrame", at: t, once: false)
         }
         audio.onRestart = { [weak self] detail in
             let route = Self.routeDescription()
@@ -502,12 +498,10 @@ final class TalkController: ObservableObject {
         conversation?.timeline.mark("talkReleased", once: false)
         guard let id = burstId else { return resetIdleTimer() }
         // Flush the last partial frame before telling the relay the burst is over.
-        audio.endCapture {
-            DispatchQueue.main.async {
-                self.relay.send(["type": "talk-end", "burstId": id])
-                if self.burstId == id { self.burstId = nil }
-                self.resetIdleTimer()
-            }
+        audio.endCapture { [self] in
+            relay.send(["type": "talk-end", "burstId": id])
+            if burstId == id { burstId = nil }
+            resetIdleTimer()
         }
     }
 
@@ -723,7 +717,7 @@ final class TalkController: ObservableObject {
     }
 
     /// In Console.app: the iPhone, subsystem com.cypressoakstudios.overandout.
-    static let logger = Logger(subsystem: "com.cypressoakstudios.overandout", category: "talk")
+    nonisolated static let logger = Logger(subsystem: "com.cypressoakstudios.overandout", category: "talk")
 
     func log(_ line: String) {
         Self.logger.notice("\(line, privacy: .public)")

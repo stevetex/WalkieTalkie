@@ -13,7 +13,7 @@ public enum VoiceFrame {
     /// The largest Opus packet (RFC 6716).
     public static let maxOpusPayloadBytes = 1275
 
-    public enum Codec: UInt8 {
+    public enum Codec: UInt8, Sendable {
         case opus16k = 1
         case pcm16le16k = 2
     }

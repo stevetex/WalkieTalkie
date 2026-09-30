@@ -3,10 +3,10 @@ import Foundation
 /// Timing events for one conversation, uploaded to the relay when it ends. Event names
 /// match the server's report (server/src/report.ts). These are the spike's diagnostics,
 /// kept until the product has its own telemetry.
-public struct Timeline {
-    public enum Role: String { case sender, receiver }
+public struct Timeline: Sendable {
+    public enum Role: String, Sendable { case sender, receiver }
 
-    public struct Event: Equatable {
+    public struct Event: Equatable, Sendable {
         public let name: String
         public let t: Double // ms since epoch, device clock
         public let detail: String?
@@ -35,14 +35,14 @@ public struct Timeline {
     public func has(_ name: String) -> Bool { seen.contains(name) }
 
     /// The body of POST /v1/metrics. `clockOffsetMs` is server time minus device time.
-    public func upload(conversationId: String, userId: String, clockOffsetMs: Double) -> [String: Any] {
+    public func upload(conversationId: String, userId: String, clockOffsetMs: Double) -> [String: any Sendable] {
         [
             "conversationId": conversationId,
             "userId": userId,
             "role": role.rawValue,
             "clockOffsetMs": clockOffsetMs,
-            "events": events.map { event -> [String: Any] in
-                var e: [String: Any] = ["name": event.name, "t": event.t]
+            "events": events.map { event -> [String: any Sendable] in
+                var e: [String: any Sendable] = ["name": event.name, "t": event.t]
                 if let detail = event.detail { e["detail"] = detail }
                 return e
             },

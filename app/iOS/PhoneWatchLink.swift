@@ -12,6 +12,24 @@ final class PhoneWatchLink: NSObject, ObservableObject {
     @Published private(set) var isWatchAppInstalled = false
     @Published private(set) var lastSentAt: Date?
 
+    /// WatchConnectivity's reply handler for a message, called once from the main actor.
+    /// `@unchecked Sendable`: WatchConnectivity doesn't annotate it, and it may be called from
+    /// any thread; it's called exactly once (`send(to:reply:)` or `handleRequest`).
+    struct Reply: @unchecked Sendable {
+        let handler: ([String: Any]) -> Void
+        func callAsFunction(_ payload: [String: Any]) { handler(payload) }
+    }
+
+    /// What the watch asked for, read where it arrived.
+    struct Request: Sendable {
+        /// The watch's device ID, if it asked for a session.
+        let sessionFor: String?
+
+        init(_ payload: [String: Any]) {
+            sessionFor = payload[WatchLink.request] as? String == WatchLink.sessionRequest ? payload[WatchLink.deviceId] as? String : nil
+        }
+    }
+
     /// Makes a session for the watch's device ID; nil when signed out.
     var makeSession: ((String) async throws -> AccountSession?)?
 
@@ -64,7 +82,7 @@ final class PhoneWatchLink: NSObject, ObservableObject {
     }
 
     /// Replies directly if the watch is waiting on a reply, or queues user info otherwise.
-    private func send(to deviceId: String, reply: (([String: Any]) -> Void)?) {
+    private func send(to deviceId: String, reply: Reply?) {
         guard signedIn, let makeSession else {
             reply?([WatchLink.signedOut: true])
             return
@@ -101,13 +119,13 @@ final class PhoneWatchLink: NSObject, ObservableObject {
         return session
     }
 
-    private func updateState(_ session: WCSession) {
-        isPaired = session.isPaired
-        isWatchAppInstalled = session.isWatchAppInstalled
+    private func updateState(isPaired: Bool, isWatchAppInstalled: Bool) {
+        self.isPaired = isPaired
+        self.isWatchAppInstalled = isWatchAppInstalled
     }
 
-    private func handleRequest(_ payload: [String: Any], reply: (([String: Any]) -> Void)?) {
-        if payload[WatchLink.request] as? String == WatchLink.sessionRequest, let deviceId = payload[WatchLink.deviceId] as? String {
+    private func handleRequest(_ request: Request, reply: Reply?) {
+        if let deviceId = request.sessionFor {
             answered.remove(deviceId)
             send(to: deviceId, reply: reply)
         } else {
@@ -116,18 +134,21 @@ final class PhoneWatchLink: NSObject, ObservableObject {
     }
 }
 
+/// WatchConnectivity calls these on its own queue; `session` is always `WCSession.default`.
 extension PhoneWatchLink: WCSessionDelegate {
     nonisolated func session(_ session: WCSession, activationDidCompleteWith activationState: WCSessionActivationState, error: Error?) {
+        let (isPaired, isWatchAppInstalled) = (session.isPaired, session.isWatchAppInstalled)
         Task { @MainActor in
-            updateState(session)
+            updateState(isPaired: isPaired, isWatchAppInstalled: isWatchAppInstalled)
             guard activationState == .activated else { return }
-            try? session.updateApplicationContext([WatchLink.signedIn: signedIn])
+            try? WCSession.default.updateApplicationContext([WatchLink.signedIn: signedIn])
             if signedIn { answerWaitingWatch() }
         }
     }
 
     nonisolated func sessionWatchStateDidChange(_ session: WCSession) {
-        Task { @MainActor in updateState(session) }
+        let (isPaired, isWatchAppInstalled) = (session.isPaired, session.isWatchAppInstalled)
+        Task { @MainActor in updateState(isPaired: isPaired, isWatchAppInstalled: isWatchAppInstalled) }
     }
 
     nonisolated func sessionDidBecomeInactive(_ session: WCSession) {}
@@ -138,9 +159,9 @@ extension PhoneWatchLink: WCSessionDelegate {
     }
 
     nonisolated func session(_ session: WCSession, didReceiveMessage message: [String: Any], replyHandler: @escaping ([String: Any]) -> Void) {
-        let payload = message
-        nonisolated(unsafe) let reply = replyHandler
-        Task { @MainActor in handleRequest(payload, reply: reply) }
+        let request = Request(message)
+        let reply = Reply(handler: replyHandler)
+        Task { @MainActor in handleRequest(request, reply: reply) }
     }
 
     nonisolated func session(_ session: WCSession, didReceiveApplicationContext applicationContext: [String: Any]) {
@@ -151,7 +172,7 @@ extension PhoneWatchLink: WCSessionDelegate {
     }
 
     nonisolated func session(_ session: WCSession, didReceiveUserInfo userInfo: [String: Any] = [:]) {
-        let payload = userInfo
-        Task { @MainActor in handleRequest(payload, reply: nil) }
+        let request = Request(userInfo)
+        Task { @MainActor in handleRequest(request, reply: nil) }
     }
 }

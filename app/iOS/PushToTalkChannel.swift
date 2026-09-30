@@ -56,11 +56,11 @@ final class PushToTalkChannel: NSObject, ObservableObject {
 
     private var manager: PTChannelManager?
     private let channelUUID: UUID
-    private static let channelKey = "pushToTalkChannel"
-    private static let tokenKey = "pushToTalkToken"
-    private static let friendIdKey = "pushToTalkFriendId"
-    private static let friendNameKey = "pushToTalkFriendName"
-    private static let wantedKey = "walkieTalkieWanted"
+    private nonisolated static let channelKey = "pushToTalkChannel"
+    private nonisolated static let tokenKey = "pushToTalkToken"
+    private nonisolated static let friendIdKey = "pushToTalkFriendId"
+    private nonisolated static let friendNameKey = "pushToTalkFriendName"
+    private nonisolated static let wantedKey = "walkieTalkieWanted"
     /// Set just before the app leaves, so the delegate can tell its own leave from the system's.
     private var leavingByApp = false
     /// A rejoin after an unexpected leave is under way; its join shows "back on".

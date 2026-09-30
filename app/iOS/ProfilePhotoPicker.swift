@@ -72,8 +72,8 @@ struct PictureChooser: View {
                         Text("Your photo").font(.headline)
                         HStack(spacing: 12) {
                             // No photo-library permission is needed: the picker runs outside the app.
-                            PhotosPicker(selection: $selection, matching: .images) {
-                                Label(model.photoVersion == nil ? "Choose a Photo" : "Choose Another Photo", systemImage: "photo")
+                            PhotosPicker(selection: $selection, matching: .images) { [hasPhoto = model.photoVersion != nil] in
+                                Label(hasPhoto ? "Choose Another Photo" : "Choose a Photo", systemImage: "photo")
                             }
                             .buttonStyle(.borderedProminent)
                             .tint(Brand.orange)

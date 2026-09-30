@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 /// Beta telemetry on the device (the "Over&Out Beta telemetry spec" Claude Doc, design
 /// decision 2026-09-28). Two things:
@@ -11,40 +12,73 @@ import Foundation
 ///   TestFlight Beta it's sent without asking; the App Store build must ask first.
 ///
 /// Everything here carries IDs, never names: callers pass friends' account IDs, not their names.
-public final class Telemetry: @unchecked Sendable {
+/// Safe to use from any thread: its state is behind one lock, and file writes are serial.
+public final class Telemetry: Sendable {
     public static let shared = Telemetry()
 
-    /// Sends a batch of events and this device's details; set by the app once signed in.
-    public var send: (@Sendable (_ events: [[String: Any]], _ device: [String: String]) async throws -> Void)?
-    public private(set) var log: DiagnosticsLog?
-    public private(set) var device: [String: String] = [:]
+    /// An event's fields: numbers, booleans and short strings.
+    public typealias Fields = [String: any Sendable]
+    /// Sends a batch of events and this device's details.
+    public typealias Sender = @Sendable (_ events: [Fields], _ device: [String: String]) async throws -> Void
 
-    private let lock = NSLock()
-    private var pending: [[String: Any]] = []
+    private struct State {
+        var send: Sender?
+        var log: DiagnosticsLog?
+        var device: [String: String] = [:]
+        var pending: [Fields] = []
+        /// Events not yet sent, kept on disk: a PushToTalk push can launch the app in the
+        /// background and iOS can end it before the next send (run 56).
+        var pendingFile: URL?
+    }
+
+    private let state = OSAllocatedUnfairLock(initialState: State())
     private static let maxPending = 200
-    /// Events not yet sent, kept on disk: a PushToTalk push can launch the app in the background
-    /// and iOS can end it before the next send (run 56).
-    private var pendingFile: URL?
     private let saveQueue = DispatchQueue(label: "com.cypressoakstudios.overandout.telemetry")
 
     public init() {}
 
+    /// Set by the app once signed in.
+    public var send: Sender? {
+        get { state.withLock { $0.send } }
+        set { state.withLock { $0.send = newValue } }
+    }
+    public var log: DiagnosticsLog? { state.withLock { $0.log } }
+    public var device: [String: String] { state.withLock { $0.device } }
+
     /// At launch: where the log lives and how big it may grow, and this device's details.
     public func configure(platform: Platform, directory: URL, maxBytes: Int) {
-        device = DeviceInfo.current(platform: platform)
-        log = DiagnosticsLog(directory: directory, maxBytes: maxBytes)
+        let device = DeviceInfo.current(platform: platform)
+        let log = DiagnosticsLog(directory: directory, maxBytes: maxBytes)
         let file = directory.appendingPathComponent("pending-events.json")
         let saved = (try? Data(contentsOf: file)).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [[String: Any]] } ?? []
-        lock.withLock {
-            pendingFile = file
-            pending = saved + pending
-            if pending.count > Self.maxPending { pending.removeFirst(pending.count - Self.maxPending) }
+        let events = saved.map(Self.fields)
+        state.withLock {
+            $0.device = device
+            $0.log = log
+            $0.pendingFile = file
+            $0.pending = events + $0.pending
+            if $0.pending.count > Self.maxPending { $0.pending.removeFirst($0.pending.count - Self.maxPending) }
         }
         savePending()
     }
 
+    /// Parsed JSON as fields: strings, numbers, and arrays and objects of them.
+    public static func fields(_ json: [String: Any]) -> Fields {
+        json.compactMapValues(sendable)
+    }
+
+    private static func sendable(_ value: Any) -> (any Sendable)? {
+        switch value {
+        case let value as String: value
+        case let value as NSNumber: value
+        case let value as [Any]: value.compactMap(sendable)
+        case let value as [String: Any]: value.compactMapValues(sendable)
+        default: nil
+        }
+    }
+
     private func savePending() {
-        let (file, snapshot): (URL?, [[String: Any]]) = lock.withLock { (pendingFile, pending) }
+        let (file, snapshot) = state.withLock { ($0.pendingFile, $0.pending) }
         guard let file else { return }
         saveQueue.async {
             guard JSONSerialization.isValidJSONObject(snapshot), let data = try? JSONSerialization.data(withJSONObject: snapshot) else { return }
@@ -54,14 +88,15 @@ public final class Telemetry: @unchecked Sendable {
 
     /// An event for the server and the device's log. `fields` hold short values only: numbers,
     /// booleans, short strings (the server drops anything else).
-    public func event(_ name: String, _ fields: [String: Any] = [:]) {
+    public func event(_ name: String, _ fields: Fields = [:]) {
         let t = Clock.nowMs()
         log?.append(name, fields)
-        var event: [String: Any] = ["name": name, "t": t]
-        if !fields.isEmpty { event["fields"] = fields }
-        lock.withLock {
-            pending.append(event)
-            if pending.count > Self.maxPending { pending.removeFirst(pending.count - Self.maxPending) }
+        var fresh: Fields = ["name": name, "t": t]
+        if !fields.isEmpty { fresh["fields"] = fields }
+        let event = fresh
+        state.withLock {
+            $0.pending.append(event)
+            if $0.pending.count > Self.maxPending { $0.pending.removeFirst($0.pending.count - Self.maxPending) }
         }
         savePending()
     }
@@ -77,7 +112,7 @@ public final class Telemetry: @unchecked Sendable {
     }
 
     /// Only into the device's log (a conversation's timeline, details too long for an event).
-    public func note(_ name: String, _ fields: [String: Any] = [:]) {
+    public func note(_ name: String, _ fields: Fields = [:]) {
         log?.append(name, fields)
     }
 
@@ -89,16 +124,16 @@ public final class Telemetry: @unchecked Sendable {
     /// Sends what's queued. Events that fail to send are kept for the next try.
     public func flush() async {
         guard let send else { return }
-        let batch: [[String: Any]] = lock.withLock {
-            let taken = Array(pending.prefix(50))
-            pending.removeFirst(taken.count)
+        let batch: [Fields] = state.withLock {
+            let taken = Array($0.pending.prefix(50))
+            $0.pending.removeFirst(taken.count)
             return taken
         }
         guard !batch.isEmpty else { return }
         do {
             try await send(batch, device)
         } catch {
-            lock.withLock { pending.insert(contentsOf: batch, at: 0) }
+            state.withLock { $0.pending.insert(contentsOf: batch, at: 0) }
         }
         savePending()
     }
@@ -106,7 +141,7 @@ public final class Telemetry: @unchecked Sendable {
     /// The server asked for this device's log (GET /v1/me) after its last upload: sends it.
     /// Returns true if it uploaded.
     @discardableResult
-    public func uploadIfRequested(requestedAt: Double?, upload: (Data) async throws -> Void) async -> Bool {
+    public func uploadIfRequested(requestedAt: Double?, upload: @Sendable (Data) async throws -> Void) async -> Bool {
         let key = "diagnosticsUploadedAt"
         guard let requestedAt, requestedAt > UserDefaults.standard.double(forKey: key),
               let data = log?.compressed() else { return false }
@@ -148,7 +183,7 @@ public enum DeviceInfo {
 
 /// A rolling file of JSON lines (`{"t": ms, "name": …, …}`), newest last. Past `maxBytes` the
 /// oldest quarter goes; lines older than 14 days go too.
-public final class DiagnosticsLog: @unchecked Sendable {
+public final class DiagnosticsLog: Sendable {
     public let file: URL
     private let maxBytes: Int
     private let maxAgeMs: Double = 14 * 24 * 3600 * 1000
@@ -160,8 +195,8 @@ public final class DiagnosticsLog: @unchecked Sendable {
         self.maxBytes = maxBytes
     }
 
-    public func append(_ name: String, _ fields: [String: Any] = [:], at t: Double = Clock.nowMs()) {
-        var line = fields
+    public func append(_ name: String, _ fields: Telemetry.Fields = [:], at t: Double = Clock.nowMs()) {
+        var line: [String: Any] = fields
         line["t"] = t
         line["name"] = name
         write([line])
