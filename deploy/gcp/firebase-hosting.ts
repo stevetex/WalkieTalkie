@@ -16,6 +16,8 @@
 //                        example WEB_DOMAIN=www.overandout.app REDIRECT_TO=overandout.app
 //   TEAM_ID              the Apple team ID, for apple-app-site-association
 //   SUPPORT_EMAIL        shown on the privacy and support pages
+//   TESTFLIGHT_URL       optional: the Beta's public TestFlight link, which the invite page
+//                        offers instead of "Coming soon to the App Store"
 
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -79,16 +81,42 @@ const servingConfig = {
   ],
 };
 
+// The invite page's two variants: while TESTFLIGHT_URL is set (the Beta), what's between
+// <!-- testflight --> and <!-- /testflight --> is kept, with TESTFLIGHT_URL filled in;
+// otherwise what's between <!-- app-store --> and <!-- /app-store -->.
+function pageVariant(text: string, testflightUrl: string): string {
+  const [keep, drop] = testflightUrl ? ["testflight", "app-store"] : ["app-store", "testflight"];
+  return text
+    .replace(new RegExp(`[ \\t]*<!-- ${drop} -->[\\s\\S]*?<!-- /${drop} -->\\n?`, "g"), "")
+    .replace(new RegExp(`[ \\t]*<!-- /?${keep} -->\\n?`, "g"), "")
+    .replaceAll("TESTFLIGHT_URL", testflightUrl);
+}
+
+// Files whose placeholders are filled in; everything else (images) is uploaded byte for byte.
+const textFile = /\.(html|css|txt|json)$|^apple-app-site-association$/;
+
 function files(): Map<string, Buffer> {
   const teamId = required("TEAM_ID");
   const supportEmail = required("SUPPORT_EMAIL");
+  const testflightUrl = env.TESTFLIGHT_URL || "";
+  // A public TestFlight link, and nothing that could break out of the page's href.
+  if (testflightUrl && !/^https:\/\/testflight\.apple\.com\/join\/[A-Za-z0-9]+$/.test(testflightUrl)) {
+    throw new Error("TESTFLIGHT_URL must look like https://testflight.apple.com/join/AbCd1234");
+  }
   const found = new Map<string, Buffer>();
   const walk = (dir: string) => {
     for (const name of readdirSync(dir)) {
       const path = join(dir, name);
       if (statSync(path).isDirectory()) walk(path);
       else if (name !== ".DS_Store") {
-        const text = readFileSync(path, "utf8").replaceAll("TEAM_ID.", `${teamId}.`).replaceAll("SUPPORT_EMAIL", supportEmail);
+        const bytes = readFileSync(path);
+        if (!textFile.test(name)) {
+          found.set(`/${relative(publicDir, path)}`, bytes);
+          continue;
+        }
+        const text = pageVariant(bytes.toString("utf8"), testflightUrl)
+          .replaceAll("TEAM_ID.", `${teamId}.`)
+          .replaceAll("SUPPORT_EMAIL", supportEmail);
         found.set(`/${relative(publicDir, path)}`, Buffer.from(text));
       }
     }
