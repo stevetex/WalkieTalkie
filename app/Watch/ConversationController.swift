@@ -1,5 +1,6 @@
 import AVFoundation
 import Combine
+import Network
 import OverAndOutKit
 import UserNotifications
 import WatchKit
@@ -136,6 +137,13 @@ final class ConversationController: NSObject, ObservableObject {
     private var postsThisBurst = 0
     private var watchdog: DispatchSourceTimer?
     private var stallMarks = 0
+    /// Per-request network timings marked this conversation, by kind (at most 3 of each).
+    private var netMarks: [String: Int] = [:]
+    /// What NWPathMonitor last said: Wi-Fi, cellular, or "other" (through the iPhone?).
+    private let pathMonitor = NWPathMonitor()
+    private var networkDescription = "unknown"
+    /// The conversation that just ended, for the stream's timings, which come after.
+    private var endedConversationId: String?
     /// The friend whose Talk screen is showing, which keeps a stream open ahead of a press.
     private var preparingFor: String?
     private var preconnectTimer: Timer?
@@ -181,6 +189,20 @@ final class ConversationController: NSObject, ObservableObject {
             Telemetry.shared.event("relayDropped", ["reason": String(reason.prefix(80)), "conversationId": current.conversationId ?? ""])
             finish()
         }
+        relay.onTaskMetrics = { [unowned self] kind, metrics in
+            guard let network = Self.describe(metrics) else { return }
+            if conversation != nil, netMarks[kind, default: 0] < 3 {
+                netMarks[kind, default: 0] += 1
+                conversation?.timeline.mark("net-\(kind)", at: network.requestStartedAt, detail: network.detail, once: false)
+            } else if kind == "stream" {
+                Telemetry.shared.event("relayStreamMetrics", ["detail": network.detail, "conversationId": endedConversationId ?? ""])
+            }
+        }
+        pathMonitor.pathUpdateHandler = { [weak self] path in
+            let description = Self.describe(path)
+            DispatchQueue.main.async { self?.networkDescription = description }
+        }
+        pathMonitor.start(queue: .global(qos: .utility))
         relay.onPostFinished = { [unowned self] started, finished, bytes, status in
             let joining = conversation?.outgoing == false && conversation?.joined == false
             guard burstId != nil || talkHeld || joining, postsThisBurst < 3 else { return }
@@ -310,6 +332,11 @@ final class ConversationController: NSObject, ObservableObject {
         guard !talkHeld else { return }
         // Before holding the new press: finishing clears talkHeld.
         if let current = conversation, current.peerId != friend.id { finish() }
+        // Wakes the network over an open stream while the audio starts (runs 67, 69).
+        let pressedAt = Clock.nowMs()
+        let warmed = relay.isReady
+        relay.warmUp()
+        defer { if warmed { conversation?.timeline.mark("warmUpSent", at: pressedAt, once: false) } }
         talkHeld = true
         isTalking = true
         idleTimer?.invalidate()
@@ -399,6 +426,7 @@ final class ConversationController: NSObject, ObservableObject {
             if let readyAt = preconnect.readyAt { timeline.mark("preconnected", at: readyAt) }
         }
         timeline.mark("answerTapped", at: openedAt, detail: via)
+        timeline.mark("network", detail: networkDescription)
         conversation = Conversation(outgoing: false, conversationId: ring.conversationId,
                                     peerId: ring.from, peerName: ring.fromName, timeline: timeline)
         phase = .connecting
@@ -531,6 +559,7 @@ final class ConversationController: NSObject, ObservableObject {
     private func startOutgoingConversation(peerId: String, peerName name: String) {
         var timeline = Timeline(role: .sender)
         timeline.mark("talkPressed")
+        timeline.mark("network", detail: networkDescription)
         conversation = Conversation(outgoing: true, conversationId: nil,
                                     peerId: peerId, peerName: name, timeline: timeline)
         phase = .connecting
@@ -834,6 +863,8 @@ final class ConversationController: NSObject, ObservableObject {
         burstId = nil
         idleTimer?.invalidate()
         stallMarks = 0
+        netMarks = [:]
+        endedConversationId = ended.conversationId
         postsThisBurst = 0
         connected = false
         phase = .idle
@@ -880,6 +911,49 @@ final class ConversationController: NSObject, ObservableObject {
         default:
             break
         }
+    }
+
+    // MARK: Network diagnostics
+
+    /// A request's timings from the network stack: its protocol, a new or reused connection
+    /// (with DNS, connect and TLS), request → first response byte, and the path's flags.
+    private static func describe(_ metrics: URLSessionTaskMetrics) -> (requestStartedAt: Double, detail: String)? {
+        guard let t = metrics.transactionMetrics.last, let start = t.requestStartDate ?? t.fetchStartDate else { return nil }
+        func ms(_ from: Date?, _ to: Date?) -> String {
+            guard let from, let to else { return "-" }
+            return String(Int(to.timeIntervalSince(from) * 1000))
+        }
+        var parts = [t.networkProtocolName ?? "?"]
+        if t.isReusedConnection {
+            parts.append("reused")
+        } else {
+            parts.append("new: dns \(ms(t.domainLookupStartDate, t.domainLookupEndDate)), connect \(ms(t.connectStartDate, t.connectEndDate)), tls \(ms(t.secureConnectionStartDate, t.secureConnectionEndDate)) ms")
+        }
+        parts.append("request → response \(ms(t.requestStartDate, t.responseStartDate)) ms")
+        if t.isProxyConnection { parts.append("proxy") }
+        if t.isCellular { parts.append("cellular") }
+        if t.isExpensive { parts.append("expensive") }
+        if t.isConstrained { parts.append("constrained") }
+        return (start.timeIntervalSince1970 * 1000, parts.joined(separator: ", "))
+    }
+
+    /// The interfaces the watch can use, preferred first: "wifi", "cellular", or "other".
+    private static func describe(_ path: NWPath) -> String {
+        let interfaces = path.availableInterfaces.map { interface -> String in
+            switch interface.type {
+            case .wifi: return "wifi"
+            case .cellular: return "cellular"
+            case .wiredEthernet: return "ethernet"
+            case .loopback: return "loopback"
+            case .other: return "other"
+            @unknown default: return "unknown"
+            }
+        }
+        var parts = [interfaces.isEmpty ? "none" : interfaces.joined(separator: "+")]
+        if path.status != .satisfied { parts.append("\(path.status)") }
+        if path.isExpensive { parts.append("expensive") }
+        if path.isConstrained { parts.append("constrained") }
+        return parts.joined(separator: ", ")
     }
 
     // MARK: Pre-connecting from a Talk screen

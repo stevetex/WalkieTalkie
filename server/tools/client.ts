@@ -206,6 +206,18 @@ export class SpikeClient {
 
   // Streams 16 kHz mono PCM16 in real-time 20 ms frames.
   async talk(to: string, pcm: Buffer, options: { realtime?: boolean } = {}): Promise<{ conversationId: string; pushed: boolean }> {
+    const bytesPerFrame = 320 * 2;
+    const frames: Buffer[] = [];
+    for (let offset = 0; offset < pcm.length; offset += bytesPerFrame) frames.push(pcm.subarray(offset, offset + bytesPerFrame));
+    return this.talkFrames(to, { codec: Codec.pcm16le16k, frames }, options);
+  }
+
+  // Streams already-encoded 20 ms payloads (Opus packets, or PCM frames) in real time.
+  async talkFrames(
+    to: string,
+    audio: { codec: number; frames: Buffer[] },
+    options: { realtime?: boolean } = {},
+  ): Promise<{ conversationId: string; pushed: boolean }> {
     const burstId = randomUUID();
     this.mark("talkPressed");
     this.send({ type: "talk-start", to, burstId });
@@ -217,10 +229,9 @@ export class SpikeClient {
     if (granted.type === "talk-refused") throw new Error(`refused: ${granted.reason}`);
     if (granted.type !== "floor-granted") throw new Error(`unexpected ${granted.type}`);
     this.mark("floorGranted", granted.pushed ? "rang recipient" : "recipient live");
-    const bytesPerFrame = 320 * 2;
     const start = performance.now();
-    for (let seq = 0, offset = 0; offset < pcm.length; seq++, offset += bytesPerFrame) {
-      this.sendFrame(Codec.pcm16le16k, seq, pcm.subarray(offset, offset + bytesPerFrame));
+    for (let seq = 0; seq < audio.frames.length; seq++) {
+      this.sendFrame(audio.codec, seq, audio.frames[seq]);
       if (seq === 0) this.mark("firstFrameSent");
       if (options.realtime !== false) {
         const due = start + (seq + 1) * 20;
