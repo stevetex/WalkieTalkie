@@ -32,7 +32,7 @@ here=$(cd "$(dirname "$0")" && pwd)
 # shellcheck source-path=SCRIPTDIR source=config.example.sh
 . "$here/config.sh"
 
-gc() { gcloud --quiet "$@"; }
+gc() { gcloud --project="$PROJECT_ID" --quiet "$@"; }
 group=relay
 job=node-replacement
 schedule="0 9 1 * *"   # 09:00 UTC on the 1st: 2 am Pacific (1 am in winter), 5 am Eastern
