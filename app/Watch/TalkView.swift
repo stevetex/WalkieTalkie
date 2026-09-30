@@ -43,7 +43,7 @@ struct TalkView: View {
     private var connection: ConnectionGlyph.Status? {
         if let outcome = controller.outcomes[friend.id]?.outcome, outcome.isUnavailable { return .unavailable }
         guard inConversation else { return nil }
-        return controller.talkReady ? .live : .connecting
+        return controller.connected ? .live : .connecting
     }
 
     var body: some View {
@@ -96,7 +96,12 @@ struct TalkView: View {
                 }
             }
         }
-        .onAppear { openedAt = Date() }
+        .onAppear {
+            openedAt = Date()
+            // Opens the relay stream now, so a press doesn't wait for it.
+            controller.talkScreenShown(friend.id)
+        }
+        .onDisappear { controller.stopPreparing(for: friend.id) }
     }
 
     private var statusLine: some View {
