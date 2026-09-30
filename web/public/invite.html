@@ -22,6 +22,20 @@
     <h1>You've been invited to talk on Over&amp;Out</h1>
     <p class="lead">A walkie-talkie for iPhone and Apple Watch. Hold the mascot's mouth to talk, and your friend hears you.</p>
 
+    <!-- Two variants; deploy-web.sh keeps the TestFlight one while config.sh has the Beta's
+         TestFlight link, and the App Store one otherwise. -->
+    <!-- testflight -->
+    <div class="card">
+      <ol>
+        <li>Join the Over&amp;Out beta on your iPhone with the button below. It opens TestFlight, Apple's free app for trying apps before they're in the App Store. Install TestFlight if it asks, then install Over&amp;Out from it.</li>
+        <li>Open Over&amp;Out and sign in with Apple.</li>
+        <li>Come back to Messages and tap the invite link again. The app opens and asks whether to add your friend.</li>
+      </ol>
+    </div>
+
+    <p><a class="button" href="TESTFLIGHT_URL">Join the beta on TestFlight</a></p>
+    <!-- /testflight -->
+    <!-- app-store -->
     <div class="card">
       <ol>
         <li>Get Over&amp;Out on your iPhone and sign in with Apple.</li>
@@ -31,6 +45,7 @@
 
     <!-- The App Store link goes here once the app is listed. -->
     <p><a class="button" aria-disabled="true">Coming soon to the App Store</a></p>
+    <!-- /app-store -->
     <p class="muted">Already have the app? Tap the link in Messages rather than opening it in Safari. Invites work once and expire after 7 days.</p>
 
     <footer>

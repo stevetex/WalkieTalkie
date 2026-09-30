@@ -6,7 +6,7 @@ Three pieces, all in the project `walkie-talkie-relay`:
 - **The account API** (`server/src/api.ts`) is the Cloud Run service `api`: Sign in with Apple, sessions, friends, invites, blocks, reports and account deletion. See "The account API and overandout.app".
 - **overandout.app** is on Firebase Hosting: invite links, the apple-app-site-association file, the home, privacy and support pages, and `/v1/*` forwarded to the API.
 
-The relay runs on **relay nodes** (option E in the feasibility doc): small VMs in a managed instance group on Container-Optimized OS (COS), each running one container. Server data (devices and metrics timelines) lives in Firestore, so a node holds nothing that matters. Restarts, OS updates and replacing a failed node are automatic.
+The relay runs on **relay nodes** (option E in the feasibility doc): small VMs in a managed instance group on Container-Optimized OS (COS), each running one container. Server data (devices and metrics timelines) lives in Firestore, so a node holds nothing that matters. Restarts, OS updates (a deploy or the monthly node replacement) and replacing a failed node are automatic.
 
 ```
 watch ──HTTPS──▶ relay-1.overandout.app ──▶ [ Caddy :443 ──▶ relay 127.0.0.1:8080 ] ──▶ Firestore (us-central1)
@@ -65,9 +65,35 @@ Commit, then:
 deploy/gcp/deploy-relay.sh
 ```
 
-It builds the image for `HEAD` (about 30 s) unless that commit is already built, and creates an instance template `relay-<commit>`. Then it replaces the nodes one at a time. Each node gets SIGTERM, lets conversations in progress finish for up to 45 s, writes its buffered metrics, and comes back with the same name, IP and certificates, on the newest COS. A deploy is also how nodes pick up OS updates. With one node, a deploy means about 2 minutes of downtime.
+It builds the image for `HEAD` (about 30 s) unless that commit is already built, and creates an instance template `relay-<commit>`. Then it replaces the nodes one at a time. Each node gets SIGTERM, lets conversations in progress finish for up to 45 s, writes its buffered metrics, and comes back with the same name, IP and certificates, on the newest COS. A deploy (or the monthly node replacement, below) is also how nodes pick up OS updates. With one node, a deploy means about 2 minutes of downtime.
 
 To roll back, deploy an earlier commit: `deploy/gcp/deploy-relay.sh <commit>`.
+
+## Monthly node replacement (OS updates)
+
+A node only gets a newer COS when it's recreated. The instance template names the image family (`projects/cos-cloud/global/images/family/cos-stable`), not an image, so every new node boots the family's newest image; no new template is needed. So that a month without deploys still brings OS updates, once:
+
+```bash
+deploy/gcp/setup-node-replacement.sh
+```
+
+It creates a Cloud Scheduler job `node-replacement-monthly` that, at 09:00 UTC on the 1st of each month (2 am Pacific), starts the Cloud Run job `node-replacement`. That job runs Google's gcloud image to do what a deploy does on the group's current template: it waits for any rollout in progress, replaces the nodes one at a time (max surge 0, max unavailable 1, recreate; the same name, IP and data disk), and waits until the group is stable. With one node that's about 2 minutes of downtime a month. A node that doesn't come back healthy stops the rollout, fails the execution and trips the uptime alert.
+
+Both jobs run as the `node-replacer` service account, which has a custom role (`relayNodeReplacer`: get and update instance groups, use instance templates read-only, read zone operations), may act as `relay-node` (only that account), and may start only the `node-replacement` job. It's a custom role rather than `roles/compute.instanceAdmin.v1`, which could also create, delete and SSH into any VM or disk; instance groups have no per-group IAM policy, so the role is granted on the project, whose only group is `relay`.
+
+A Scheduler job can't call the Compute API for this directly: a rolling replace needs a new version name each time (gcloud stamps it with the time), and a Scheduler job's body is fixed, while `applyUpdatesToInstances`, which a fixed body can do, replaces every node at once.
+
+To replace the nodes now, and to see past runs:
+
+```bash
+gcloud run jobs execute node-replacement --region=us-central1 --project=walkie-talkie-relay
+```
+
+```bash
+gcloud run jobs executions list --job=node-replacement --region=us-central1 --project=walkie-talkie-relay
+```
+
+After a replacement, `gcloud compute ssh` refuses the node's new host key; see Everyday commands. The container image (Node, Caddy and their Debian base) is only rebuilt by a deploy of a new commit; this replaces the OS underneath it.
 
 ## The account API and overandout.app
 
@@ -103,7 +129,7 @@ deploy/gcp/deploy-api.sh
 deploy/gcp/deploy-web.sh
 ```
 
-The site's apple-app-site-association gets the team ID from `APPLE_TEAM_ID` (or `APNS_TEAM_ID`), and the privacy and support pages get `SUPPORT_EMAIL`. After adding a node or a new session key, redeploy the relay so nodes read `session-public-keys` again.
+The site's apple-app-site-association gets the team ID from `APPLE_TEAM_ID` (or `APNS_TEAM_ID`), and the privacy and support pages get `SUPPORT_EMAIL`. During the Beta, set `TESTFLIGHT_URL` to the public TestFlight link (App Store Connect → TestFlight → an external group → Public Link) and redeploy the site: the invite page (`/i/<code>`) then offers "Join the beta on TestFlight" instead of "Coming soon to the App Store", which it shows while `TESTFLIGHT_URL` is empty. After adding a node or a new session key, redeploy the relay so nodes read `session-public-keys` again.
 
 **Test Bot as an account** (for testing with one set of devices), with your gcloud credentials:
 
@@ -151,7 +177,7 @@ cd server && STORE=firestore FIRESTORE_AUTH=gcloud FIRESTORE_PROJECT=walkie-talk
 
 ## Costs
 
-For the Beta, the one charge is the static IP, about $3.65 a month. One e2-micro and 30 GB of standard disk are free in us-central1, and a node uses 20 GB. Firestore's free quota is 50,000 reads and 20,000 writes a day, and a conversation costs about 2 reads and 3 writes. Artifact Registry (0.5 GB), Cloud Build (2,500 minutes a month) and uptime checks (1 million runs) stay in their free tiers. Secret Manager's free tier covers 6 active secret versions and there are 6 (a few cents a month beyond that). Cloud Run (2 million requests a month) and Firebase Hosting (10 GB stored, 360 MB a day served) stay free at Beta scale.
+For the Beta, the one charge is the static IP, about $3.65 a month. One e2-micro and 30 GB of standard disk are free in us-central1, and a node uses 20 GB. Firestore's free quota is 50,000 reads and 20,000 writes a day, and a conversation costs about 2 reads and 3 writes. Artifact Registry (0.5 GB), Cloud Build (2,500 minutes a month) and uptime checks (1 million runs) stay in their free tiers. Secret Manager's free tier covers 6 active secret versions and there are 6 (a few cents a month beyond that). Cloud Run (2 million requests a month) and Firebase Hosting (10 GB stored, 360 MB a day served) stay free at Beta scale. Cloud Scheduler's first 3 jobs per billing account are free; there are 2 (`stats-daily`, `node-replacement-monthly`), and the Cloud Run jobs they start use a few minutes a day and a month, inside Cloud Run's free tier.
 
 ## Security notes
 

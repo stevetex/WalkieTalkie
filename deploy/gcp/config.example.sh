@@ -46,3 +46,8 @@ APPLE_AUDIENCES="com.cypressoakstudios.overandout"
 
 # overandout.app (deploy-web.sh): the contact address on the privacy and support pages.
 SUPPORT_EMAIL=""
+# Optional, during the Beta: the public TestFlight link (App Store Connect → TestFlight →
+# an external group → Public Link), e.g. https://testflight.apple.com/join/AbCd1234. While
+# set, the invite page (overandout.app/i/<code>) offers "Join the beta on TestFlight";
+# empty, it shows "Coming soon to the App Store". Redeploy the site after changing it.
+TESTFLIGHT_URL=""
