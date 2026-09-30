@@ -12,6 +12,10 @@
 //   APPLE_TEAM_ID, APPLE_SIWA_KEY_ID, APPLE_SIWA_KEY (or APPLE_SIWA_KEY_SECRET), APPLE_CLIENT_ID
 //                         the Sign in with Apple key, for revoking on deletion (apple.ts)
 //   INVITE_BASE_URL       default https://overandout.app/i/
+//   TEST_BOT_USER_ID, TEST_BOT_INVITE
+//                         the Test Bot's account and its standing invite: a code (12–64 letters,
+//                         digits, "_" or "-") that befriends the bot, and only the bot, any number
+//                         of times (accounts.ts). The link is INVITE_BASE_URL plus the code
 //   DEV_APPLE_SIGNIN      1 = also accept the identity token "dev:<name>" as that Apple user, for
 //                         local runs, simulators and tools/test-account.ts. Refused against the
 //                         real Firestore
@@ -80,7 +84,14 @@ export function apiFromEnv(env: NodeJS.ProcessEnv, docs: Docs, dataDir: string |
   } else {
     notes.push("no Sign in with Apple key: account deletion won't revoke Apple tokens");
   }
-  const accounts = new Accounts(docs);
+  let botInvite: { code: string; userId: string } | null = null;
+  if (env.TEST_BOT_INVITE) {
+    if (!/^[\w-]{12,64}$/.test(env.TEST_BOT_INVITE)) throw new Error("TEST_BOT_INVITE must be 12–64 letters, digits, _ or -");
+    if (!env.TEST_BOT_USER_ID?.startsWith("u_")) throw new Error("TEST_BOT_INVITE needs TEST_BOT_USER_ID");
+    botInvite = { code: env.TEST_BOT_INVITE, userId: env.TEST_BOT_USER_ID };
+    notes.push(`the Test Bot's standing invite befriends ${botInvite.userId}`);
+  }
+  const accounts = new Accounts(docs, { botInvite });
   const handler = createApi({
     accounts,
     signer,

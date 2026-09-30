@@ -16,6 +16,7 @@
 //
 //   node tools/test-account.ts invite
 //       Prints a new invite link from the bot, to open on the iPhone (tests the acceptance sheet).
+//       Single use; App Review uses the bot's standing invite instead (TEST_BOT_INVITE, accounts.ts).
 //
 //   node tools/test-account.ts friends
 //       The bot's friends.
@@ -113,7 +114,7 @@ if (import.meta.main) {
     const session = loadBotSession();
     const code = arg.split("/").filter(Boolean).at(-1)!;
     const { friend } = await api(session.api, session.token, "POST", `/v1/invites/${code}/accept`);
-    console.log(`Test Bot and ${friend.name} (${friend.id}) are friends.`);
+    console.log(`${session.name} and ${friend.name} (${friend.id}) are friends.`);
   } else if (command === "invite") {
     const session = loadBotSession();
     const { url, expiresAt } = await api(session.api, session.token, "POST", "/v1/invites");

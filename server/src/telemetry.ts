@@ -179,6 +179,8 @@ export interface ConversationRecord extends TelemetryEntry {
   outcome: ConversationOutcome;
   delivered: boolean;
   moved: boolean;
+  // The Test Bot answered (test-bot.ts): `to` is the bot, not a person.
+  testBot?: boolean;
   // The first ring's device kind, for log-based metric labels (which can't index arrays).
   ringPlatform?: string;
   rings: Ring[];
@@ -241,6 +243,7 @@ export function conversationRecord(conversationId: string, events: TimelineEntry
     outcome,
     delivered,
     moved: has("movedDevice"),
+    ...(has("testBotAnswered") ? { testBot: true } : {}),
     ...(rings.length ? { ringPlatform: rings[0].platform } : {}),
     rings,
     bursts: sorted.filter((e) => e.name === "talkStart").length,

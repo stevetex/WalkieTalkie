@@ -34,6 +34,9 @@
 //   FULL_TIMELINE_USERS
 //                     comma-separated account IDs whose devices' whole timelines are logged, not
 //                     only their summaries (telemetry.ts)
+//   TEST_BOT_USER_ID  the Test Bot's account: it answers rings inside this process, greets and
+//                     says each burst back (test-bot.ts). Unset = no bot. With SERVE_API=1,
+//                     TEST_BOT_INVITE also works here (see api-main.ts)
 //
 // Telemetry: on Google Cloud, structured entries go to Cloud Logging (log oao-telemetry);
 // locally, to DATA_DIR/telemetry.jsonl.
@@ -55,6 +58,7 @@ import {
 import { Firestore, gcloudAccessToken, metadataAccessToken, metadataProjectId } from "./firestore.ts";
 import { loadSecrets } from "./secrets.ts";
 import { Relay, type Peer } from "./relay.ts";
+import { TestBot, loadGreeting, type TestBotOptions } from "./test-bot.ts";
 import { summarizeAttempts } from "./report.ts";
 import { RecordParser, RecordType, encodeJSONRecord, encodeRecord } from "./records.ts";
 import { parseClientMessage, type MetricsUpload } from "./protocol.ts";
@@ -92,11 +96,14 @@ export interface ServerOptions {
   authTtlMs?: number;
   maxBurstMs?: number;
   maxBufferedBytes?: number;
+  // The always-on Test Bot (test-bot.ts); its account needs accounts.
+  testBot?: TestBotOptions;
 }
 
 export interface RunningServer {
   server: Server;
   relay: Relay;
+  testBot: TestBot | null;
   devices: DeviceStore;
   metrics: MetricsStore;
   port: number;
@@ -118,6 +125,8 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
     ...(options.maxBurstMs ? { maxBurstMs: options.maxBurstMs } : {}),
     ...(options.maxBufferedBytes ? { maxBufferedBytes: options.maxBufferedBytes } : {}),
   });
+  const testBot = options.testBot ? new TestBot(relay, metrics, options.testBot) : null;
+  testBot?.start();
 
   // Who's calling: an account (its user ID from the session token), or a client with the
   // shared token, which names its own user ID. Null = unauthorized.
@@ -364,11 +373,13 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
       resolvePromise({
         server,
         relay,
+        testBot,
         devices,
         metrics,
         port,
         close: () =>
           new Promise<void>((done) => {
+            testBot?.close();
             relay.close();
             options.pusher.close();
             // Upgraded WebSocket sockets aren't covered by closeAllConnections().
@@ -436,6 +447,7 @@ if (import.meta.main) {
   let running: RunningServer;
   let api: ApiSetup | null = null;
   const fullTimelineUsers = (env.FULL_TIMELINE_USERS ?? "").split(",").map((u) => u.trim()).filter(Boolean);
+  const testBot = env.TEST_BOT_USER_ID ? { userId: env.TEST_BOT_USER_ID, greeting: loadGreeting() } : undefined;
   if (env.STORE === "firestore") {
     const db = new Firestore({ projectId, emulatorHost, accessToken });
     const devices = new FirestoreDeviceStore(db);
@@ -446,7 +458,7 @@ if (import.meta.main) {
     if (env.SERVE_API === "1") api = apiFromEnv(env, db, null);
     const accounts = api?.accounts ?? new Accounts(db);
     sessions = api?.verifier ?? sessions;
-    running = await startServer({ port, host, dataDir: null, devices, metrics, telemetry, token, sharedTokenClients, sessions, accounts, api: api?.handler, pusher, prefetchPushAfterMs });
+    running = await startServer({ port, host, dataDir: null, devices, metrics, telemetry, token, sharedTokenClients, sessions, accounts, api: api?.handler, pusher, prefetchPushAfterMs, testBot });
     console.log(`[server] listening on ${host ?? ""}:${running.port}, data in Firestore ${emulatorHost ? `emulator ${emulatorHost}, ` : ""}project ${projectId}`);
   } else {
     const dataDir = ensureDir(resolve(env.DATA_DIR ?? "data"));
@@ -455,7 +467,8 @@ if (import.meta.main) {
     sessions = api?.verifier ?? sessions;
     const telemetry = new FileSink(dataDir);
     const metrics = new TelemetryMetricsStore(telemetry, { inner: new JsonMetricsStore(dataDir), fullTimelineUsers });
-    running = await startServer({ port, host, dataDir, metrics, telemetry, token, sharedTokenClients, sessions, accounts: api?.accounts, api: api?.handler, pusher, prefetchPushAfterMs });
+    if (testBot && !api) throw new Error("TEST_BOT_USER_ID needs accounts: STORE=firestore, or SERVE_API=1");
+    running = await startServer({ port, host, dataDir, metrics, telemetry, token, sharedTokenClients, sessions, accounts: api?.accounts, api: api?.handler, pusher, prefetchPushAfterMs, testBot });
     console.log(`[server] listening on ${host ?? ""}:${running.port}, data in ${dataDir}`);
   }
   for (const note of api?.notes ?? []) console.log(`[api] ${note}`);
@@ -463,6 +476,7 @@ if (import.meta.main) {
   console.log(`[server] revision ${env.REVISION ?? "local"}${secrets.length ? `, secrets ${secrets.join(", ")} from Secret Manager` : ""}`);
   console.log(apnsConfig ? `[server] APNs alert pushes, topic ${apnsConfig.bundleId}` : "[server] APNs not configured: dry-run pushes");
   if (prefetchPushAfterMs) console.log(`[server] prefetch pushes ${prefetchPushAfterMs} ms after a ring (prototype)`);
+  if (testBot) console.log(`[server] the Test Bot ${testBot.userId} answers rings here (${testBot.greeting.length} greeting frames)`);
   if (simulatorPush) console.warn("[server] SIMULATOR_PUSH: rings to simulator tokens run xcrun simctl push");
   if (!token) console.warn("[server] SPIKE_TOKEN not set: diagnostics are unauthenticated");
   if (sharedTokenClients) console.warn("[server] SHARED_TOKEN_CLIENTS: relay clients without accounts are allowed");

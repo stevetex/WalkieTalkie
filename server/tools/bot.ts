@@ -15,11 +15,19 @@
 //       Registers as a bot, waits to be rung, "answers" after the delay, and saves what it
 //       hears. Use it to test the watch as the sender.
 //
+//   node tools/bot.ts greeting [--say "text" | --wav file.wav]
+//       Encodes the always-on Test Bot's greeting (src/test-bot.ts) into
+//       src/test-bot-greeting.opus, which is committed: relay nodes can't encode. A recording
+//       (16 kHz mono 16-bit WAV) rather than `say`, whose voices are licensed for personal,
+//       non-commercial use.
+//
 // Server and token come from SPIKE_SERVER (default http://localhost:8080) and SPIKE_TOKEN.
 //
 // --account runs as the Test Bot's account (tools/test-account.ts create) instead of a
 // shared-token user: it connects with the account's session token, can only ring its
-// friends, and --to defaults to its first friend. SPIKE_TOKEN is then only used to read
+// friends, and --to (an ID or a name) defaults to its oldest friend, not whoever added it with
+// its standing invite since. While it's connected, rings to the bot come here rather than to
+// the relay's own Test Bot (TEST_BOT_USER_ID). SPIKE_TOKEN is then only used to read
 // timelines (--ring-until-answered). Without --account the relay must run with
 // SHARED_TOKEN_CLIENTS=1 (local only; relay nodes accept accounts only).
 
@@ -31,6 +39,7 @@ import { join } from "node:path";
 import { SpikeClient } from "./client.ts";
 import { BOT_TOKEN_FILE, loadBotSession } from "./test-account.ts";
 import { Codec, FRAME_HEADER_BYTES } from "../src/protocol.ts";
+import { GREETING_FILE } from "../src/test-bot.ts";
 
 const { positionals, values } = parseArgs({
   allowPositionals: true,
@@ -38,7 +47,7 @@ const { positionals, values } = parseArgs({
     as: { type: "string", default: "bot" },
     name: { type: "string", default: "Test Bot" },
     to: { type: "string" },
-    say: { type: "string", default: "Hey, it's the test bot. Can you hear me? Over." },
+    say: { type: "string" },
     wav: { type: "string" },
     stay: { type: "string", default: "45" },
     "ring-until-answered": { type: "boolean", default: false },
@@ -55,6 +64,16 @@ const token = process.env.SPIKE_TOKEN || undefined;
 const mode = positionals[0];
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+if (mode === "greeting") {
+  const text = values.say ?? "Hi, it's the Over and Out Test Bot. I'll say back whatever you say to me. Here's what you said.";
+  const { frames } = encode(values.wav ? readPcm16Mono16k(values.wav) : synthesize(text), true);
+  const packed = Buffer.concat(frames.flatMap((f) => [Buffer.from([f.length >> 8, f.length & 0xff]), f]));
+  writeFileSync(GREETING_FILE, packed);
+  console.log(`Wrote ${frames.length} frames (${(frames.length * 0.02).toFixed(1)} s, ${packed.length} bytes) to ${GREETING_FILE}`);
+  process.exit(0);
+}
+
 const client = values.account ? await accountClient() : new SpikeClient({ server, userId: values.as!, token });
 
 // The Test Bot's account, with its token refreshed when it's within a day of expiring.
@@ -67,12 +86,17 @@ async function accountClient(): Promise<SpikeClient> {
     writeFileSync(BOT_TOKEN_FILE, JSON.stringify(session, null, 2), { mode: 0o600 });
   }
   const accountBot = new SpikeClient({ server, userId: session.userId, token: session.token });
-  if (!values.to && mode === "send") {
+  if (mode === "send" && !values.to?.startsWith("u_")) {
     const res = await fetch(new URL("/v1/friends", session.api), { headers: { authorization: `Bearer ${session.token}` } });
-    const { friends } = (await res.json()) as { friends: Array<{ id: string; name: string }> };
+    const { friends } = (await res.json()) as { friends: Array<{ id: string; name: string; since: number }> };
     if (!friends?.length) throw new Error("the bot has no friends yet: node tools/test-account.ts accept <invite link>");
-    values.to = friends[0].id;
-    console.log(`Ringing the bot's friend ${friends[0].name}`);
+    // Its oldest friend (Steve), or one by name: anyone can add the bot with its standing invite.
+    const friend = values.to
+      ? friends.find((f) => f.name.toLowerCase() === values.to!.toLowerCase())
+      : friends.reduce((a, b) => (b.since < a.since ? b : a));
+    if (!friend) throw new Error(`the bot has no friend named ${values.to}`);
+    values.to = friend.id;
+    console.log(`Ringing the bot's friend ${friend.name}`);
   }
   return accountBot;
 }
@@ -84,7 +108,7 @@ async function register(): Promise<void> {
 
 if (mode === "send") {
   if (!values.to) throw new Error("--to <userId> is required");
-  const pcm = values.wav ? readPcm16Mono16k(values.wav) : synthesize(values.say!);
+  const pcm = values.wav ? readPcm16Mono16k(values.wav) : synthesize(values.say ?? "Hey, it's the test bot. Can you hear me? Over.");
   await register();
   await client.connect();
   const audio = encode(pcm);
@@ -148,7 +172,7 @@ if (mode === "send") {
   client.close();
   console.log(`Done. Timeline: node tools/report.ts ${ring.conversationId}`);
 } else {
-  console.error("usage: node tools/bot.ts send --to <userId> | listen");
+  console.error("usage: node tools/bot.ts send --to <userId> | listen | greeting");
   process.exit(2);
 }
 
@@ -185,8 +209,8 @@ function reportIncoming(c: SpikeClient): void {
 
 // Opus packets from 16 kHz mono PCM16, as the apps encode it (tools/opus-frames.swift), or
 // the PCM itself in 20 ms frames with --pcm.
-function encode(pcm: Buffer): { codec: number; frames: Buffer[] } {
-  if (values.pcm) {
+function encode(pcm: Buffer, opus = !values.pcm): { codec: number; frames: Buffer[] } {
+  if (!opus) {
     const frames: Buffer[] = [];
     for (let offset = 0; offset < pcm.length; offset += 640) frames.push(pcm.subarray(offset, offset + 640));
     return { codec: Codec.pcm16le16k, frames };

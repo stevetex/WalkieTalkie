@@ -111,7 +111,8 @@ export function activeAccounts(entries: LogEntry[]): Set<string> {
   for (const e of entries) {
     if (e.kind === "oao.conversation") {
       if (e.from) ids.add(e.from);
-      if (e.to && (e.rings?.length || e.outcome === "live")) ids.add(e.to);
+      // The Test Bot answering isn't a person being active.
+      if (e.to && (e.rings?.length || e.outcome === "live") && !e.testBot) ids.add(e.to);
     } else if (typeof e.userId === "string" && e.userId.startsWith("u_")) {
       ids.add(e.userId);
     }
