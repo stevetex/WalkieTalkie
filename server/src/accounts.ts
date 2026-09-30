@@ -16,6 +16,10 @@
 //                                   belongs to. Registering it elsewhere (another account, or a new
 //                                   device ID after a reinstall) removes the old registration
 //   invites/{code}                  from, createdAt, expireAt (Firestore TTL deletes it)
+//
+// The Test Bot's standing invite (TEST_BOT_INVITE, api-main.ts) isn't stored: it's a code in the
+// API's settings that befriends the bot account, and no other, any number of times, so App
+// Review and testers can add a friend who answers (test-bot.ts). Blocks apply as to any invite.
 //   reports/{id}                    reporter, reported, reason, note, conversationId, createdAt, status
 //   photos/{uid}                    jpeg (bytes, at most 100 KB), updatedAt. Apart from users/{uid}
 //                                   so friend lists don't carry photos; photoVersion there
@@ -124,6 +128,8 @@ export interface AccountsOptions {
   now?: () => number;
   inviteTtlMs?: number;
   invitesPerDay?: number;
+  // The Test Bot's standing invite: this code befriends this account, and is never used up.
+  botInvite?: { code: string; userId: string } | null;
 }
 
 export class Accounts {
@@ -132,7 +138,7 @@ export class Accounts {
 
   constructor(docs: Docs, options: AccountsOptions = {}) {
     this.docs = docs;
-    this.opts = { now: Date.now, inviteTtlMs: 7 * DAY_MS, invitesPerDay: 50, ...options };
+    this.opts = { now: Date.now, inviteTtlMs: 7 * DAY_MS, invitesPerDay: 50, botInvite: null, ...options };
   }
 
   // The account for this Apple ID, created on its first sign-in. Apple only shares the
@@ -499,9 +505,9 @@ export class Accounts {
     return this.readInvite((paths) => this.docs.getAll(paths), code, requireUserId(viewerId));
   }
 
-  // Makes the viewer and the inviter friends, and uses up the invite. The checks and the
-  // friendship are one transaction, so a block or an account deletion that lands in between
-  // makes it run again and fail, rather than being undone by the new friendship.
+  // Makes the viewer and the inviter friends, and uses up the invite (not the Test Bot's). The
+  // checks and the friendship are one transaction, so a block or an account deletion that lands
+  // in between makes it run again and fail, rather than being undone by the new friendship.
   async acceptInvite(code: string, userId: string): Promise<Friend> {
     requireUserId(userId);
     const since = new Date(this.opts.now());
@@ -509,7 +515,7 @@ export class Accounts {
       return await this.docs.transaction(async (get) => {
         const info = await this.readInvite(get, code, userId);
         const writes: Write[] = [
-          { delete: `invites/${code}`, exists: true },
+          ...(this.isBotInvite(code) ? [] : [{ delete: `invites/${code}`, exists: true }]),
           ...(info.alreadyFriends
             ? []
             : [
@@ -526,14 +532,27 @@ export class Accounts {
     }
   }
 
+  private isBotInvite(code: string): boolean {
+    return this.opts.botInvite !== null && code === this.opts.botInvite.code;
+  }
+
   private async readInvite(get: TransactionGet, code: string, viewerId: string): Promise<InviteInfo> {
     if (!isId(code)) throw new AccountError(404, "invite-not-found");
-    const [invite] = await get([`invites/${code}`]);
-    // Firestore's TTL deletes expired invites within a day or so; until then, check here.
-    if (!invite || millis(invite.expireAt) <= this.opts.now() || !isUserId(invite.from)) {
-      throw new AccountError(404, "invite-not-found");
+    let from: string;
+    let expiresAt: number;
+    if (this.isBotInvite(code)) {
+      // Never expires; the apps are shown the usual week.
+      from = this.opts.botInvite!.userId;
+      expiresAt = this.opts.now() + this.opts.inviteTtlMs;
+    } else {
+      const [invite] = await get([`invites/${code}`]);
+      // Firestore's TTL deletes expired invites within a day or so; until then, check here.
+      if (!invite || millis(invite.expireAt) <= this.opts.now() || !isUserId(invite.from)) {
+        throw new AccountError(404, "invite-not-found");
+      }
+      from = invite.from;
+      expiresAt = millis(invite.expireAt);
     }
-    const from = invite.from;
     if (from === viewerId) throw new AccountError(409, "own-invite");
     const [inviter, viewer, alreadyFriends, blocked, blockedBy] = await get([
       `users/${from}`,
@@ -543,7 +562,7 @@ export class Accounts {
       `users/${from}/blocks/${viewerId}`,
     ]);
     if (!inviter || !viewer || blocked || blockedBy) throw new AccountError(404, "invite-not-found");
-    return { code, from: { id: from, name: String(inviter.name) }, expiresAt: millis(invite.expireAt), alreadyFriends: alreadyFriends !== undefined };
+    return { code, from: { id: from, name: String(inviter.name) }, expiresAt, alreadyFriends: alreadyFriends !== undefined };
   }
 
   async cancelInvite(code: string, userId: string): Promise<void> {

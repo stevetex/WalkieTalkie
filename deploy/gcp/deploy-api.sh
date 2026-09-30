@@ -25,6 +25,11 @@ trap 'rm -rf "$stage"' EXIT
   echo "SESSION_PUBLIC_KEYS_SECRET: session-public-keys"
   echo "APPLE_AUDIENCES: \"${APPLE_AUDIENCES:-com.cypressoakstudios.overandout}\""
   echo "INVITE_BASE_URL: https://overandout.app/i/"
+  # The Test Bot's standing invite (server/src/accounts.ts): befriends the bot, and only the bot.
+  if [ -n "${TEST_BOT_INVITE:-}" ]; then
+    echo "TEST_BOT_USER_ID: \"$TEST_BOT_USER_ID\""
+    echo "TEST_BOT_INVITE: \"$TEST_BOT_INVITE\""
+  fi
   if gc secrets describe apple-siwa-key >/dev/null 2>&1; then
     echo "APPLE_SIWA_KEY_SECRET: apple-siwa-key"
     echo "APPLE_SIWA_KEY_ID: \"$APPLE_SIWA_KEY_ID\""

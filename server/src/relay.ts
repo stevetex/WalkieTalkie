@@ -31,6 +31,9 @@ export interface Peer {
   // Signed in with a session token (an account), rather than the shared relay token. An
   // account can only ring its friends, and its rings go to its account's watches.
   account?: boolean;
+  // Never rings anyone (the Test Bot, test-bot.ts): talking to someone who isn't in the
+  // conversation is refused ("unavailable") instead.
+  noRings?: boolean;
   sendJSON(message: ServerMessage): void;
   sendBinary(frame: Buffer): void;
 }
@@ -348,6 +351,9 @@ export class Relay {
       if (this.memberPeer(conversation, to)) {
         this.startDelivery(conversation, burst, to, false);
         this.grantFloor(peer, conversation, burstId, false);
+      } else if (peer.noRings) {
+        // The Test Bot's caller left just as it started talking.
+        this.refuse(peer, conversation, burstId, "unavailable");
       } else if (!conversation.ringTimer) {
         // One ring per conversation start; further bursts queue behind the pending ring.
         // The ring looks the devices up in the store, so only a Talk that rings waits for

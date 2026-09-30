@@ -34,6 +34,8 @@ trap 'rm -rf "$stage"' EXIT
   # Accounts whose devices' whole timelines are logged, not only summaries (the Beta
   # telemetry spec): Steve's and the Test Bot's, for measurement runs.
   if [ -n "${FULL_TIMELINE_USERS:-}" ]; then echo "FULL_TIMELINE_USERS=$FULL_TIMELINE_USERS"; fi
+  # The always-on Test Bot answers rings inside the relay (server/src/test-bot.ts).
+  if [ -n "${TEST_BOT_USER_ID:-}" ]; then echo "TEST_BOT_USER_ID=$TEST_BOT_USER_ID"; fi
   # Public CA refuses ACME accounts without a contact address.
   acme_email=${ACME_EMAIL:-${ALERT_EMAIL:-}}
   if [ -n "$acme_email" ]; then echo "ACME_EMAIL=$acme_email"; fi

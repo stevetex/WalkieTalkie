@@ -27,6 +27,13 @@ ALERT_EMAIL="you@example.com"
 # (deploy-relay.sh): comma-separated account IDs, for measurement runs.
 FULL_TIMELINE_USERS=""
 
+# The always-on Test Bot (server/src/test-bot.ts), for App Review: its account ID (deploy-relay.sh:
+# the relay answers its rings), and its standing invite's code (deploy-api.sh: the link
+# https://overandout.app/i/<code> befriends the bot, any number of times). 12-64 letters, digits,
+# "_" or "-"; generate one with: openssl rand -hex 12. Change it to stop new people adding the bot.
+TEST_BOT_USER_ID=""
+TEST_BOT_INVITE=""
+
 # The account API (setup-api.sh, deploy-api.sh). APPLE_TEAM_ID defaults to APNS_TEAM_ID.
 # The Sign in with Apple key revokes a user's Apple tokens when they delete their account:
 # developer portal → Keys → + → Sign in with Apple, configured for the iPhone app's App ID.
