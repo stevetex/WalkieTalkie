@@ -2,10 +2,12 @@ import OverAndOutKit
 import SwiftUI
 
 /// Talking to one friend, pushed from the friends list: the mascot fills the screen and its
-/// mouth is the Talk button, as on the iPhone. The friend's picture sits under the back
-/// button and the status line below always names them (everyone starts with the same
-/// mascot, so the picture alone may not say who it is). End sits top right during a
-/// conversation, away from the mouth.
+/// mouth is the Talk button, as on the iPhone, with "Hold to talk" curved inside it while
+/// idle. The friend's picture sits under the back button and their name below the mascot
+/// (everyone starts with the same mascot picture, so the picture alone may not say who it
+/// is), with the connection's glyph. End sits top right during a conversation, away from the
+/// mouth. Only this friend shows here: how conversations ended, and a conversation with
+/// someone else, show in the friends list.
 struct TalkView: View {
     @ObservedObject var controller: ConversationController
     @ObservedObject var account: WatchAccount
@@ -36,26 +38,18 @@ struct TalkView: View {
         return .idle
     }
 
-    private var status: String {
-        if !controller.statusLine.isEmpty, controller.statusPeerId == friend.id, isCurrent { return controller.statusLine }
-        return "Hold to talk to \(friend.name)"
-    }
-
-    /// On another friend's screen during a conversation: what holding the mouth here does.
-    private var endsConversationWith: String? { isCurrent ? nil : controller.peerName }
-
-    private var statusColor: Color {
-        switch mouthState {
-        case .talking: return Brand.orange
-        case .listening: return .green
-        default: return inConversation ? .green : Brand.silver
-        }
+    /// Struck through while this friend didn't answer or can't be reached (until you ring
+    /// again or they talk); none when idle.
+    private var connection: ConnectionGlyph.Status? {
+        if let outcome = controller.outcomes[friend.id]?.outcome, outcome.isUnavailable { return .unavailable }
+        guard inConversation else { return nil }
+        return controller.talkReady ? .live : .connecting
     }
 
     var body: some View {
         ZStack(alignment: .topLeading) {
             VStack(spacing: 0) {
-                MascotTalkButton(state: mouthState, ringing: false, friendName: friend.name) { pressed in
+                MascotTalkButton(state: mouthState, ringing: false, friendName: friend.name, hint: "Hold to talk") { pressed in
                     // A release without a press is ignored by the controller.
                     guard !pressed || Date().timeIntervalSince(openedAt) >= Self.settleTime else { return }
                     pressed ? controller.talkPressed(to: friend) : controller.talkReleased()
@@ -106,30 +100,16 @@ struct TalkView: View {
     }
 
     private var statusLine: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 4) {
-                if inConversation {
-                    Circle()
-                        .fill(Color.green)
-                        .frame(width: 6, height: 6)
-                        .accessibilityHidden(true)
-                }
-                Text(status)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.7)
+        HStack(spacing: 4) {
+            if let connection {
+                ConnectionGlyph(status: connection)
             }
-            .font(.footnote)
-            .foregroundStyle(statusColor)
-            if let other = endsConversationWith {
-                // Holding the mouth here switches without asking (design decision 2026-09-29).
-                Text("Ends your talk with \(other)")
-                    .font(.caption2)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.7)
-                    .foregroundStyle(Brand.silver)
-            }
+            Text(friend.name)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
         }
-        .multilineTextAlignment(.center)
+        .font(.footnote.weight(.semibold))
+        .foregroundStyle(Brand.ivory)
         .accessibilityElement(children: .combine)
         .padding(.bottom, 10)
     }

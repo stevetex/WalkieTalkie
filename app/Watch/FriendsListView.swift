@@ -2,7 +2,8 @@ import OverAndOutKit
 import SwiftUI
 
 /// The home screen: friends with their pictures, favorites first, and the friend in a
-/// conversation at the top, marked live. Tapping one opens their Talk screen.
+/// conversation at the top, marked live. How a conversation last ended badly ("Missed",
+/// "Didn't answer") shows on that friend's row. Tapping one opens their Talk screen.
 struct FriendsListView: View {
     @ObservedObject var controller: ConversationController
     @ObservedObject var account: WatchAccount
@@ -25,7 +26,8 @@ struct FriendsListView: View {
             } else {
                 List(friends) { friend in
                     NavigationLink(value: friend) {
-                        FriendRow(friend: friend, live: liveStatus(for: friend), client: account.client)
+                        FriendRow(friend: friend, live: liveStatus(for: friend), outcome: controller.outcomes[friend.id],
+                                  client: account.client)
                     }
                     .listRowBackground(Brand.surface)
                 }
@@ -76,7 +78,8 @@ struct FriendRow: View {
 
         var color: Color {
             switch self {
-            case .connecting: return Brand.silver
+            // As the connecting glyph.
+            case .connecting: return .yellow
             case .you: return Brand.orange
             case .live, .them: return .green
             }
@@ -85,6 +88,7 @@ struct FriendRow: View {
 
     let friend: Friend
     let live: Live?
+    let outcome: ConversationController.OutcomeNote?
     let client: AccountClient?
 
     var body: some View {
@@ -103,17 +107,42 @@ struct FriendRow: View {
                 }
                 if let live {
                     HStack(spacing: 4) {
-                        Circle()
-                            .fill(live.color)
-                            .frame(width: 6, height: 6)
+                        ConnectionGlyph(status: live == .connecting ? .connecting : .live, size: 12)
                         Text(live.text)
                     }
                     .font(.caption2.weight(.semibold))
                     .foregroundStyle(live.color)
+                } else if let outcome {
+                    // Struck through, as on their Talk screen, when they couldn't be reached.
+                    HStack(spacing: 4) {
+                        if outcome.outcome.isUnavailable {
+                            ConnectionGlyph(status: .unavailable, size: 12)
+                        }
+                        Text("\(Self.text(outcome.outcome)) · \(outcome.at.formatted(date: .omitted, time: .shortened))")
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.7)
+                    }
+                    .font(.caption2)
+                    .foregroundStyle(Self.color(outcome.outcome))
                 }
             }
         }
         .padding(.vertical, 2)
         .accessibilityElement(children: .combine)
+    }
+
+    private static func color(_ outcome: ConversationController.Outcome) -> Color {
+        if outcome.isUnavailable { return .red }
+        return outcome == .missed ? Brand.orange : Brand.silver
+    }
+
+    private static func text(_ outcome: ConversationController.Outcome) -> String {
+        switch outcome {
+        case .missed: return "Missed"
+        case .didNotAnswer: return "Didn't answer"
+        case .unreachable: return "Can't reach"
+        case .continuedOnPhone: return "Continued on iPhone"
+        case .couldNotConnect: return "Couldn't connect"
+        }
     }
 }

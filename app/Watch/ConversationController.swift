@@ -33,15 +33,24 @@ final class ConversationController: NSObject, ObservableObject {
     /// Who this watch is (its session) and its friends.
     let account = WatchAccount.shared
     @Published private(set) var phase: Phase = .idle
-    @Published private(set) var statusLine = ""
-    /// The friend `statusLine` is about (it stays after a conversation, for example "Missed
-    /// Alice"), so only their Talk screen shows it.
-    @Published private(set) var statusPeerId: String?
+    /// How a conversation with a friend last ended badly, for their row in the friends list
+    /// (the Talk screen shows only the friend it's for). Cleared when a new conversation with
+    /// them starts, or they talk.
+    enum Outcome: Equatable {
+        case missed, didNotAnswer, unreachable, continuedOnPhone, couldNotConnect
+
+        /// The friend couldn't be reached: their dot is red.
+        var isUnavailable: Bool { self == .didNotAnswer || self == .unreachable || self == .couldNotConnect }
+    }
+    struct OutcomeNote: Equatable {
+        let outcome: Outcome
+        let at: Date
+    }
+    /// By friend ID.
+    @Published private(set) var outcomes: [String: OutcomeNote] = [:]
     @Published private(set) var peerName: String?
     /// Who the conversation is with, for their picture.
-    @Published private(set) var peerId: String? {
-        didSet { if let peerId { statusPeerId = peerId } }
-    }
+    @Published private(set) var peerId: String?
     @Published private(set) var isTalking = false
     @Published private(set) var remoteTalking = false
     /// In a conversation and able to record right now (relay open and audio on). The Talk
@@ -182,7 +191,7 @@ final class ConversationController: NSObject, ObservableObject {
                 registerPushToken()
             } else {
                 registrationStatus = "Signed out"
-                if conversation != nil { finish(status: "Signed out") }
+                if conversation != nil { finish() }
             }
         }
         account.activate()
@@ -278,6 +287,7 @@ final class ConversationController: NSObject, ObservableObject {
             startOutgoingConversation(peerId: friend.id, peerName: friend.name)
         } else {
             conversation?.timeline.mark("talkPressedInWindow", once: false)
+            outcomes[friend.id] = nil
             startBurstIfReady()
         }
     }
@@ -363,7 +373,7 @@ final class ConversationController: NSObject, ObservableObject {
         phase = .connecting
         peerName = ring.fromName
         peerId = ring.from
-        statusLine = "Connecting to \(ring.fromName)…"
+        outcomes[ring.from] = nil
         rejoinedOnFreshStream = false
         playPrefetched(ring.conversationId)
         if preconnect != nil, relay.isReady || relay.isConnecting {
@@ -398,7 +408,6 @@ final class ConversationController: NSObject, ObservableObject {
         guard prefetched.frameCount > 0 else { return }
         conversation?.timeline.mark("prefetchedAudioQueued", detail: "\(prefetched.bursts.count) bursts, \(prefetched.frameCount) frames")
         remoteTalking = true
-        statusLine = "\(conversation?.peerName ?? "Your friend") is talking"
         // Queued before the audio session is up: the pipeline holds frames until it starts.
         for burst in prefetched.bursts where !burst.frames.isEmpty {
             prefetchedFrames[burst.burstId] = burst.frames.count
@@ -468,7 +477,7 @@ final class ConversationController: NSObject, ObservableObject {
     private func rejoinOnFreshStream(_ why: String) {
         guard !rejoinedOnFreshStream, let conversationId = conversation?.conversationId else {
             log("Couldn't join: \(why)")
-            return finish(status: "Couldn't connect")
+            return finish(outcome: .couldNotConnect)
         }
         rejoinedOnFreshStream = true
         log("Rejoining on a fresh stream (\(why))")
@@ -496,7 +505,7 @@ final class ConversationController: NSObject, ObservableObject {
         phase = .connecting
         peerName = name
         self.peerId = peerId
-        statusLine = "Connecting to \(name)…"
+        outcomes[peerId] = nil
         connectRelay()
         activateOwnAudio()
     }
@@ -506,7 +515,7 @@ final class ConversationController: NSObject, ObservableObject {
     private func connectRelay(join: String? = nil) {
         guard let baseURL = settings.baseURL else {
             log("The server isn't configured in this build")
-            return finish(status: "No server configured")
+            return finish(outcome: .couldNotConnect)
         }
         // Normally synchronous; an expired token (a watch unused for 30 days) is refreshed first.
         let conversationId = conversation?.conversationId
@@ -514,7 +523,8 @@ final class ConversationController: NSObject, ObservableObject {
             guard conversation != nil, conversation?.conversationId == conversationId else { return }
             guard let session else {
                 log("Not signed in")
-                return finish(status: "Sign in on your iPhone")
+                // The app shows its sign-in prompt.
+                return finish()
             }
             relay.connect(baseURL: baseURL, token: session.token, userId: session.userId, join: join)
         }
@@ -536,7 +546,6 @@ final class ConversationController: NSObject, ObservableObject {
         refineClockOffset()
         if current.outgoing {
             phase = .live
-            statusLine = "Live with \(current.peerName)"
             startBurstIfReady()
             resetIdleTimer()
         }
@@ -565,8 +574,8 @@ final class ConversationController: NSObject, ObservableObject {
             conversation?.conversationId = message.conversationId
             conversation?.timeline.mark("floorGranted", detail: message.pushed == true ? "rang recipient" : "recipient live")
         case "floor-denied":
+            // Your press was refused because they're talking (the mouth shows them talking).
             WKInterfaceDevice.current().play(.failure)
-            statusLine = "\(name) is talking"
             audio.endCapture {}
             burstId = nil
         case "talk-refused":
@@ -574,13 +583,12 @@ final class ConversationController: NSObject, ObservableObject {
             WKInterfaceDevice.current().play(.failure)
             audio.endCapture {}
             burstId = nil
-            finish(status: "Can't reach \(name)")
+            finish(outcome: .unreachable)
             account.refresh()
         case "joined":
             conversation?.joined = true
             conversation?.timeline.mark("joined", detail: "\(message.replayBursts ?? 0) buffered bursts")
             phase = .live
-            statusLine = "Live with \(name)"
         case "burst-start":
             incomingBurstId = message.burstId
             let prefetched = message.burstId.flatMap { prefetchedFrames[$0] }
@@ -589,7 +597,7 @@ final class ConversationController: NSObject, ObservableObject {
                                         once: false)
             remoteTalking = true
             incomingBurstEnded = false
-            statusLine = "\(name) is talking"
+            if let id = conversation?.peerId { outcomes[id] = nil }
             idleTimer?.invalidate()
             // A prefetched burst is already playing; resetting the decoder would glitch it.
             if prefetched == nil { audio.beginPlayback() }
@@ -604,28 +612,28 @@ final class ConversationController: NSObject, ObservableObject {
             // ignores this device's leave, since it's no longer the one in the conversation.)
             audio.endCapture {}
             burstId = nil
-            finish(status: "With \(name) on your iPhone")
+            finish(outcome: .continuedOnPhone)
         case "conversation-ended":
             // A block, an unfriending or a deleted account: the relay dropped the conversation.
             guard message.conversationId == conversation?.conversationId else { return }
             WKInterfaceDevice.current().play(.failure)
             audio.endCapture {}
             burstId = nil
-            finish(status: "Can't reach \(name)")
+            finish(outcome: .unreachable)
             account.refresh()
         case "peer-left":
             log("\(name) left")
         case "ring-timeout":
             // The relay dropped what they didn't hear; the next Talk rings them again.
             WKInterfaceDevice.current().play(.failure)
-            statusLine = "\(name) didn't answer"
+            if let id = conversation?.peerId { outcomes[id] = OutcomeNote(outcome: .didNotAnswer, at: Date()) }
             conversation?.timeline.mark("ringTimedOut", detail: "\(message.droppedBursts ?? 0) bursts dropped")
         case "error":
             log("Relay error: \(message.message ?? "unknown")")
             if message.message == "unknown conversation", conversation?.outgoing == false, conversation?.joined == false {
                 // Answered after the relay gave up on the ring: the message is gone.
                 WKInterfaceDevice.current().play(.failure)
-                finish(status: "Missed \(name)")
+                finish(outcome: .missed)
             }
         default:
             break
@@ -661,7 +669,6 @@ final class ConversationController: NSObject, ObservableObject {
     private func friendStoppedTalkingIfDone() {
         guard remoteTalking, incomingBurstEnded, speakerIdle else { return }
         remoteTalking = false
-        statusLine = "Live with \(conversation?.peerName ?? "your friend")"
     }
 
     // MARK: Conversation window
@@ -738,12 +745,10 @@ final class ConversationController: NSObject, ObservableObject {
 
     // MARK: Teardown
 
-    /// Ends the conversation. `status` stays on screen afterwards (for example "Missed Alice").
-    private func finish(status: String = "") {
-        guard var ended = conversation else {
-            statusLine = status
-            return
-        }
+    /// Ends the conversation. An `outcome` stays on the friend's row in the friends list.
+    private func finish(outcome: Outcome? = nil) {
+        guard var ended = conversation else { return }
+        if let outcome { outcomes[ended.peerId] = OutcomeNote(outcome: outcome, at: Date()) }
         if let conversationId = ended.conversationId {
             relay.send(["type": "leave", "conversationId": conversationId])
         }
@@ -768,7 +773,6 @@ final class ConversationController: NSObject, ObservableObject {
         phase = .idle
         peerName = nil
         peerId = nil
-        statusLine = status
 
         guard let conversationId = ended.conversationId else { return }
         uploadTimeline(ended.timeline, conversationId: conversationId, clockOffsetMs: offset)
@@ -878,8 +882,7 @@ extension ConversationController: UNUserNotificationCenterDelegate {
             self.incomingRingTimer = Timer.scheduledTimer(withTimeInterval: Self.inAppRingTimeout, repeats: false) { _ in
                 guard self.incomingRing == ring else { return }
                 self.declineIncomingRing()
-                self.statusLine = "Missed \(ring.fromName)"
-                self.statusPeerId = ring.from
+                self.outcomes[ring.from] = OutcomeNote(outcome: .missed, at: Date())
             }
         }
     }
