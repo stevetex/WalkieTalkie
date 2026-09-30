@@ -1,5 +1,5 @@
 {
-  "//": "Budgets for perf/compare.ts. Relay counts, legs and sim times are written by `node perf/compare.ts --full <results> --update-budgets` after a deliberate change; the kit's are set by hand. enforce turns warnings into failures once thresholds are tuned (phase 4 of the plan).",
+  "//": "Budgets for perf/compare.ts. Relay counts, legs and sim times are written by `node perf/compare.ts --full <results> --update-budgets` after a deliberate change. The kit's (kit.*) are set by hand: level changes within ±1.5 dB (±0.5 dB for the capture converter), not silent (above −60 dBFS), no clipping; the SNR and pitch floors are first guesses to tune from the first weeks of runs. enforce turns warnings into failures once thresholds are tuned (phase 4 of the plan).",
   "enforce": {
     "network": false,
     "time": false,
@@ -48,6 +48,91 @@
     "G.codecs.opus.join_to_replay_done_1mbps": 809,
     "G.codecs.opus.replay_bytes_down": 12123,
     "G.codecs.pcm.join_to_replay_done_1mbps": 1608,
-    "G.codecs.pcm.replay_bytes_down": 99273
+    "G.codecs.pcm.replay_bytes_down": 99273,
+    "kit.capture.level_change_db.44k": {
+      "absMax": 0.5
+    },
+    "kit.capture.level_change_db.48k": {
+      "absMax": 0.5
+    },
+    "kit.capture.pitch_share.44k": {
+      "min": 0.9
+    },
+    "kit.capture.pitch_share.48k": {
+      "min": 0.9
+    },
+    "kit.codec.opus.clipped_samples.speech_loud": 0,
+    "kit.codec.opus.clipped_samples.tone1000_m6": 0,
+    "kit.codec.opus.clipped_samples.tone440_m6": 0,
+    "kit.codec.opus.level_change_db.tone1000_m20": {
+      "absMax": 1.5
+    },
+    "kit.codec.opus.level_change_db.tone1000_m30": {
+      "absMax": 1.5
+    },
+    "kit.codec.opus.level_change_db.tone1000_m6": {
+      "absMax": 1.5
+    },
+    "kit.codec.opus.level_change_db.tone440_m20": {
+      "absMax": 1.5
+    },
+    "kit.codec.opus.level_change_db.tone440_m30": {
+      "absMax": 1.5
+    },
+    "kit.codec.opus.level_change_db.tone440_m6": {
+      "absMax": 1.5
+    },
+    "kit.codec.opus.output_rms_dbfs.tone1000_m20": {
+      "min": -60
+    },
+    "kit.codec.opus.output_rms_dbfs.tone1000_m30": {
+      "min": -60
+    },
+    "kit.codec.opus.output_rms_dbfs.tone1000_m6": {
+      "min": -60
+    },
+    "kit.codec.opus.output_rms_dbfs.tone440_m20": {
+      "min": -60
+    },
+    "kit.codec.opus.output_rms_dbfs.tone440_m30": {
+      "min": -60
+    },
+    "kit.codec.opus.output_rms_dbfs.tone440_m6": {
+      "min": -60
+    },
+    "kit.codec.opus.pitch_share.tone1000_m20": {
+      "min": 0.8
+    },
+    "kit.codec.opus.pitch_share.tone1000_m30": {
+      "min": 0.8
+    },
+    "kit.codec.opus.pitch_share.tone1000_m6": {
+      "min": 0.8
+    },
+    "kit.codec.opus.pitch_share.tone440_m20": {
+      "min": 0.8
+    },
+    "kit.codec.opus.pitch_share.tone440_m30": {
+      "min": 0.8
+    },
+    "kit.codec.opus.pitch_share.tone440_m6": {
+      "min": 0.8
+    },
+    "kit.codec.opus.speech_level_change_db": {
+      "absMax": 1.5
+    },
+    "kit.codec.opus.speech_snr_db": {
+      "min": 3
+    },
+    "kit.codec.pcm.max_error": 0.0001,
+    "kit.e2e.level_change_db": {
+      "absMax": 1.5
+    },
+    "kit.e2e.live_level_change_db": {
+      "absMax": 1.5
+    },
+    "kit.e2e.speech_snr_db": {
+      "min": 3
+    }
   }
 }

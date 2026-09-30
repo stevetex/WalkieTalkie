@@ -24,6 +24,9 @@ import UIKit
 @MainActor
 final class TalkController: ObservableObject {
     static let conversationWindow: TimeInterval = 45
+    /// Per-burst audio levels marked per conversation, of each kind (burstLevelSent,
+    /// burstLevelPlayed), at most.
+    static let maxLevelMarks = 20
     /// An in-app ring stops after this; the relay abandons the ring at 35 s.
     static let inAppRingTimeout: TimeInterval = 30
 
@@ -113,6 +116,14 @@ final class TalkController: ObservableObject {
         }
         audio.onFirstCapturedFrame = { [weak self] t in
             self?.conversation?.timeline.mark("micFirstFrame", at: t, once: false)
+        }
+        audio.onBurstCaptured = { [weak self] level, frames in
+            self?.markLevel("burstLevelSent", level, frames: frames, context: ",in=\(AudioLevel.inputPort())")
+        }
+        audio.onBurstPlayed = { [weak self] level, frames in
+            // The system volume, so "played quietly" can be told from "volume turned down".
+            let volume = String(format: "%.2f", AVAudioSession.sharedInstance().outputVolume)
+            self?.markLevel("burstLevelPlayed", level, frames: frames, context: ",volume=\(volume)")
         }
         audio.onRestart = { [weak self] detail in
             let route = Self.routeDescription()
@@ -546,6 +557,12 @@ final class TalkController: ObservableObject {
                 }
             }
         }
+    }
+
+    /// Beta telemetry's per-burst levels: numbers only, never audio.
+    private func markLevel(_ name: String, _ level: AudioLevel, frames: Int, context: String) {
+        guard let timeline = conversation?.timeline, timeline.count(name) < Self.maxLevelMarks else { return }
+        conversation?.timeline.mark(name, detail: level.detail(frames: frames) + context, once: false)
     }
 
     // MARK: Audio session

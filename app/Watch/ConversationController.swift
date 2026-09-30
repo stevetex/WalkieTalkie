@@ -33,6 +33,9 @@ final class ConversationController: NSObject, ObservableObject {
     /// `maxStallMarks` per conversation.
     static let stallThresholdMs: Double = 200
     static let maxStallMarks = 30
+    /// Per-burst audio levels marked per conversation, of each kind (burstLevelSent,
+    /// burstLevelPlayed), at most.
+    static let maxLevelMarks = 20
 
     enum Phase: Equatable {
         case idle
@@ -224,6 +227,12 @@ final class ConversationController: NSObject, ObservableObject {
         }
         audio.onFirstCapturedFrame = { [weak self] t in
             self?.conversation?.timeline.mark("micFirstFrame", at: t, once: false)
+        }
+        audio.onBurstCaptured = { [weak self] level, frames in
+            self?.markLevel("burstLevelSent", level, frames: frames, context: ",in=\(AudioLevel.inputPort())")
+        }
+        audio.onBurstPlayed = { [weak self] level, frames in
+            self?.markLevel("burstLevelPlayed", level, frames: frames, context: "")
         }
         audio.onRestart = { [unowned self] detail in
             log("Audio: \(detail)")
@@ -800,6 +809,12 @@ final class ConversationController: NSObject, ObservableObject {
                 }
             }
         }
+    }
+
+    /// Beta telemetry's per-burst levels: numbers only, never audio.
+    private func markLevel(_ name: String, _ level: AudioLevel, frames: Int, context: String) {
+        guard let timeline = conversation?.timeline, timeline.count(name) < Self.maxLevelMarks else { return }
+        conversation?.timeline.mark(name, detail: level.detail(frames: frames) + context, once: false)
     }
 
     private func audioSessionActivated() {

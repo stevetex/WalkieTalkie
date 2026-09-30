@@ -11,6 +11,7 @@ import {
   cleanEvents,
   conversationRecord,
   deviceSummary,
+  parseLevel,
   parsePushDetail,
 } from "../src/telemetry.ts";
 import type { TimelineEntry } from "../src/store.ts";
@@ -156,6 +157,52 @@ test("the store writes one record per conversation once it goes quiet, and summa
   assert.deepEqual((await store.timeline("c1")).map((e) => `${e.source}.${e.name}`), [
     "server.talkStart", "server.pushSent", "server.pushFailed", "server.pushAccepted", "server.pushAccepted", "receiver.pttPushReceived", "receiver.log", "server.receiverJoined", "server.conversationEnded",
   ]);
+});
+
+test("per-burst audio levels: medians in the summary, silent and clipped bursts as problems", () => {
+  assert.deepEqual(parseLevel("rms=-23.4,peak=-6.1,frames=150,clipped=0,in=MicrophoneBuiltIn"), { rms: -23.4, peak: -6.1, frames: 150, clipped: 0 });
+  assert.equal(parseLevel("rms=loud"), null);
+  const level = (name: string, t: number, detail: string) => ({ name, t, detail });
+  const summary = deviceSummary({
+    conversationId: "c", userId: "u_a", role: "sender", clockOffsetMs: 0,
+    events: [
+      { name: "talkPressed", t: 100 },
+      level("burstLevelSent", 200, "rms=-24,peak=-8,frames=100,clipped=0"),
+      level("burstLevelSent", 300, "rms=-20,peak=-4,frames=100,clipped=0"),
+      // A muted microphone, and a tap too short to count.
+      level("burstLevelSent", 400, "rms=-80,peak=-70,frames=100,clipped=0"),
+      level("burstLevelSent", 450, "rms=-90,peak=-90,frames=5,clipped=0"),
+      // Distorted: 2% of the samples at full scale.
+      level("burstLevelSent", 500, "rms=-6,peak=0,frames=50,clipped=320"),
+      level("burstLevelPlayed", 600, "rms=-26,peak=-9,frames=80,clipped=0,volume=0.5"),
+      level("burstLevelPlayed", 700, "rms=-70,peak=-60,frames=80,clipped=0"),
+    ],
+  }, []);
+  assert.deepEqual(summary.levels, { sentRmsDb: -24, sentPeakDb: -8, sentBursts: 5, playedRmsDb: -48, playedPeakDb: -34.5, playedBursts: 2 });
+  assert.deepEqual(summary.problems, { silentBurstSent: 1, silentBurstPlayed: 1, clippedBurstSent: 1 });
+  const none = deviceSummary({ conversationId: "c", userId: "u_a", role: "sender", clockOffsetMs: 0, events: [{ name: "talkPressed", t: 1 }] }, []);
+  assert.equal(none.levels, undefined);
+});
+
+test("once both devices have uploaded levels, how much quieter each direction played", async () => {
+  const sink = new MemorySink();
+  const store = new TelemetryMetricsStore(sink, { endedMs: 5, quietMs: 60_000 });
+  await store.upload({ conversationId: "c2", userId: "u_bob", role: "sender", clockOffsetMs: 0, events: [
+    { name: "burstLevelSent", t: 1, detail: "rms=-22,peak=-5,frames=100,clipped=0" },
+    { name: "burstLevelPlayed", t: 2, detail: "rms=-30,peak=-12,frames=100,clipped=0" },
+  ] });
+  assert.equal(sink.of("oao.levels").length, 0);
+  await store.upload({ conversationId: "c2", userId: "u_steve", role: "receiver", clockOffsetMs: 0, events: [
+    { name: "burstLevelPlayed", t: 3, detail: "rms=-25.5,peak=-8,frames=100,clipped=0" },
+    { name: "burstLevelSent", t: 4, detail: "rms=-27,peak=-9,frames=100,clipped=0" },
+  ] });
+  assert.deepEqual(sink.of("oao.levels").map(({ from, to, sentRmsDb, playedRmsDb, levelDropDb }) => ({ from, to, sentRmsDb, playedRmsDb, levelDropDb })), [
+    { from: "u_bob", to: "u_steve", sentRmsDb: -22, playedRmsDb: -25.5, levelDropDb: 3.5 },
+    { from: "u_steve", to: "u_bob", sentRmsDb: -27, playedRmsDb: -30, levelDropDb: 3 },
+  ]);
+  // A second upload from the same device doesn't write them again.
+  await store.upload({ conversationId: "c2", userId: "u_steve", role: "receiver", clockOffsetMs: 0, events: [{ name: "burstLevelPlayed", t: 5, detail: "rms=-25,peak=-8,frames=100,clipped=0" }] });
+  assert.equal(sink.of("oao.levels").length, 2);
 });
 
 test("Cloud Logging entries go out in batches, with one retry on a server error", async () => {

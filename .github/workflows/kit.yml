@@ -1,0 +1,114 @@
+# The kit's tests on macOS: all of OverAndOutKit's tests, the audio level and quality tests,
+# and the Swift → relay → Swift test against a local relay. The measurements they record go
+# through server/perf/compare.ts like the relay's, with their own history (kit-history).
+#
+# macOS minutes count 10× against a private repo's included minutes, so this runs on pull
+# requests, pushes to main, weekly, and by hand, not on every branch push.
+
+name: Kit
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "app/Packages/**"
+      - "server/src/**"
+      - "server/perf/compare.ts"
+      - "server/perf/budgets.json"
+      - ".github/workflows/kit.yml"
+  pull_request:
+    paths:
+      - "app/Packages/**"
+      - "server/src/**"
+      - "server/perf/compare.ts"
+      - "server/perf/budgets.json"
+      - ".github/workflows/kit.yml"
+  schedule:
+    - cron: "23 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: kit-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  kit:
+    # The package needs the macOS 26 SDK and Swift 6.2 or later.
+    runs-on: macos-26
+    timeout-minutes: 30
+    env:
+      ON_MAIN: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
+      OAO_KIT_METRICS: ${{ github.workspace }}/kit-out/kit-metrics.jsonl
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+
+      - name: Newest Xcode
+        run: |
+          xcode=$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)
+          sudo xcode-select -s "$xcode"
+          xcodebuild -version
+          swift --version
+
+      - name: Local relay for the end-to-end test
+        working-directory: server
+        run: |
+          mkdir -p "$RUNNER_TEMP/relay-data" ../kit-out
+          PORT=8095 HOST=127.0.0.1 SPIKE_TOKEN=ci SHARED_TOKEN_CLIENTS=1 DATA_DIR="$RUNNER_TEMP/relay-data" \
+            nohup node src/main.ts > ../kit-out/relay.log 2>&1 &
+          for _ in $(seq 1 40); do
+            if curl -sf http://127.0.0.1:8095/healthz > /dev/null; then echo "relay up"; exit 0; fi
+            sleep 0.25
+          done
+          cat ../kit-out/relay.log
+          exit 1
+
+      - name: swift test
+        working-directory: app/Packages/OverAndOutKit
+        env:
+          OAO_E2E_RELAY: http://127.0.0.1:8095
+          OAO_E2E_TOKEN: ci
+        run: swift test
+
+      - name: History from the last main run
+        if: always() && env.ON_MAIN == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p kit-out/history
+          run_id=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=kit-history&per_page=30" \
+            --jq '[.artifacts[] | select(.expired == false and .workflow_run.head_branch == "main")][0].workflow_run.id // empty')
+          if [ -n "$run_id" ]; then gh run download "$run_id" -n kit-history -D kit-out/history; fi
+          touch kit-out/history/kit-history.jsonl
+
+      - name: Compare
+        if: always() && hashFiles('kit-out/kit-metrics.jsonl') != ''
+        run: |
+          args=(--kit-lines kit-out/kit-metrics.jsonl --title "Kit audio" --summary "$GITHUB_STEP_SUMMARY")
+          if [ "$ON_MAIN" = true ]; then args+=(--history kit-out/history/kit-history.jsonl --append-history kit-out/kit-history.jsonl); fi
+          node server/perf/compare.ts "${args[@]}"
+
+      - name: Keep the results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kit-results
+          path: |
+            kit-out/kit-metrics.jsonl
+            kit-out/relay.log
+          retention-days: 30
+          if-no-files-found: ignore
+
+      - name: Keep the history
+        if: always() && env.ON_MAIN == 'true' && hashFiles('kit-out/kit-history.jsonl') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: kit-history
+          path: kit-out/kit-history.jsonl
+          retention-days: 90

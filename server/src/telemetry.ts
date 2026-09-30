@@ -6,6 +6,8 @@
 //                     results, the outcome, a few intervals, and the relay's own events
 //   oao.device        one device's summary of a conversation, worked out here from the timeline
 //                     it uploads (which isn't kept): outcome, how it answered, latencies
+//   oao.levels        how much quieter one device played a friend's bursts than the friend's
+//                     device sent them (once both have uploaded their per-burst levels)
 //   oao.timeline      a device's whole timeline, only for accounts in FULL_TIMELINE_USERS
 //   oao.apns          a push APNs refused, or that went out only on a retry
 //   oao.event         a device event outside conversations (the API's POST /v1/events)
@@ -287,7 +289,44 @@ export interface DeviceSummary extends TelemetryEntry {
   route?: string;
   intervals: Record<string, number>;
   problems: Record<string, number>;
+  // Medians over the conversation's bursts (dBFS), from burstLevelSent / burstLevelPlayed.
+  levels?: Levels;
 }
+
+export interface Levels {
+  sentRmsDb?: number;
+  sentPeakDb?: number;
+  sentBursts?: number;
+  playedRmsDb?: number;
+  playedPeakDb?: number;
+  playedBursts?: number;
+}
+
+// A burst's level as the apps mark it: "rms=-23.4,peak=-6.1,frames=150,clipped=0,in=…".
+export interface BurstLevel {
+  rms: number;
+  peak: number;
+  frames: number;
+  clipped: number;
+}
+
+export function parseLevel(detail: string | undefined): BurstLevel | null {
+  const fields = Object.fromEntries((detail ?? "").split(",").map((part) => part.split("=") as [string, string]));
+  const [rms, peak, frames, clipped] = [fields.rms, fields.peak, fields.frames, fields.clipped ?? "0"].map(Number);
+  return [rms, peak, frames, clipped].every(Number.isFinite) ? { rms, peak, frames, clipped } : null;
+}
+
+// Thresholds for the level problems (the plan: tuned from the first week of data). Bursts
+// shorter than half a second are left out: a tap on Talk is silent on purpose.
+export const LEVEL_PROBLEMS = {
+  minFrames: 25,
+  // A muted or covered microphone.
+  silentSentRmsDb: -50,
+  // Frames arrived but what was played is next to nothing.
+  silentPlayedRmsDb: -60,
+  // More than this share of a sent burst's samples at full scale.
+  clippedShare: 0.01,
+};
 
 // Events that mean something went wrong or was slow, counted in the summary.
 const PROBLEMS = ["relayClosed", "relayDropped", "ringTimedOut", "nseFetchFailed", "mainStall", "processPaused", "pttLeft", "transmitFailed", "audioRestarted", "joinFailed"];
@@ -337,6 +376,17 @@ export function deviceSummary(upload: MetricsUpload & { device?: DeviceInfo; dev
   else outcome = "ended";
   const problems: Record<string, number> = {};
   for (const e of events) if (PROBLEMS.includes(e.name)) problems[e.name] = (problems[e.name] ?? 0) + 1;
+  const sent = events.filter((e) => e.name === "burstLevelSent").map((e) => parseLevel(e.detail)).filter((l): l is BurstLevel => l !== null);
+  const played = events.filter((e) => e.name === "burstLevelPlayed").map((e) => parseLevel(e.detail)).filter((l): l is BurstLevel => l !== null);
+  const add = (name: string, n: number) => n && (problems[name] = n);
+  const long = (l: BurstLevel) => l.frames >= LEVEL_PROBLEMS.minFrames;
+  add("silentBurstSent", sent.filter((l) => long(l) && l.rms < LEVEL_PROBLEMS.silentSentRmsDb).length);
+  add("silentBurstPlayed", played.filter((l) => long(l) && l.rms < LEVEL_PROBLEMS.silentPlayedRmsDb).length);
+  add("clippedBurstSent", sent.filter((l) => long(l) && l.clipped / (l.frames * 320) > LEVEL_PROBLEMS.clippedShare).length);
+  const levels: Levels = {
+    ...(sent.length ? { sentRmsDb: medianOf(sent.map((l) => l.rms)), sentPeakDb: medianOf(sent.map((l) => l.peak)), sentBursts: sent.length } : {}),
+    ...(played.length ? { playedRmsDb: medianOf(played.map((l) => l.rms)), playedPeakDb: medianOf(played.map((l) => l.peak)), playedBursts: played.length } : {}),
+  };
   // Output ports only ("BluetoothHFP", "Speaker"); the route never names a device.
   const route = at("audioActivated")?.detail?.split(",")[0];
   return {
@@ -354,7 +404,15 @@ export function deviceSummary(upload: MetricsUpload & { device?: DeviceInfo; dev
     ...(route ? { route } : {}),
     intervals,
     problems,
+    ...(Object.keys(levels).length ? { levels } : {}),
   };
+}
+
+function medianOf(values: number[]): number {
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  const m = sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+  return Math.round(m * 10) / 10;
 }
 
 function inferPlatform(events: Array<{ name: string; detail?: string }>): string {
@@ -413,6 +471,8 @@ export class TelemetryMetricsStore implements MetricsStore {
   // Devices' uploaded events, kept as long as `recent` for GET /v1/metrics/<id> (tools/report.ts
   // and the bot during a measurement run), never written anywhere.
   private uploaded = new Map<string, { events: TimelineEntry[]; at: number }>();
+  // Each device's levels by conversation and user, until the other side's arrive (oao.levels).
+  private levels = new Map<string, { byUser: Map<string, Levels>; written: Set<string>; at: number }>();
 
   constructor(sink: LogSink, options: TelemetryStoreOptions = {}) {
     this.sink = sink;
@@ -448,6 +508,33 @@ export class TelemetryMetricsStore implements MetricsStore {
     const summary = deviceSummary(upload, server);
     this.sink.write(summary, Object.keys(summary.problems).length ? "WARNING" : "INFO");
     if (this.fullUsers.has(upload.userId)) this.sink.write(timelineEntry(upload));
+    if (summary.levels) this.levelDrops(upload.conversationId, upload.userId, summary.levels, now);
+  }
+
+  // Once both sides have uploaded levels: for each direction, how much quieter the listener's
+  // device played the talker's bursts than the talker's device sent them. A few dB is the
+  // codec; more means audio is getting quieter between the two.
+  private levelDrops(conversationId: string, userId: string, levels: Levels, now: number): void {
+    let seen = this.levels.get(conversationId);
+    if (!seen) this.levels.set(conversationId, (seen = { byUser: new Map(), written: new Set(), at: now }));
+    seen.byUser.set(userId, levels);
+    seen.at = now;
+    for (const [from, a] of seen.byUser) {
+      for (const [to, b] of seen.byUser) {
+        const key = `${from}>${to}`;
+        if (from === to || seen.written.has(key) || a.sentRmsDb === undefined || b.playedRmsDb === undefined) continue;
+        seen.written.add(key);
+        this.sink.write({
+          kind: "oao.levels",
+          conversationId,
+          from,
+          to,
+          sentRmsDb: a.sentRmsDb,
+          playedRmsDb: b.playedRmsDb,
+          levelDropDb: Math.round((a.sentRmsDb - b.playedRmsDb) * 10) / 10,
+        });
+      }
+    }
   }
 
   async conversations(): Promise<ConversationSummary[]> {
@@ -479,7 +566,7 @@ export class TelemetryMetricsStore implements MetricsStore {
     this.sink.write({ ...record, node: this.opts.node }, bad ? "WARNING" : "INFO");
     const now = this.opts.now();
     this.recent.set(conversationId, { events: pending.events, at: now });
-    for (const map of [this.recent, this.uploaded]) {
+    for (const map of [this.recent, this.uploaded, this.levels]) {
       for (const [id, r] of map) if (now - r.at > this.opts.recentMs) map.delete(id);
     }
   }

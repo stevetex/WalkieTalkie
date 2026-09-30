@@ -10,7 +10,7 @@
 // 1 on a failure. `npm run perf` is `--suite full --check`.
 
 import { execFileSync } from "node:child_process";
-import { writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { cpus, arch, platform } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -99,6 +99,7 @@ const output: RunResults = {
   metrics: results.metrics,
   errors: results.errors,
 };
+mkdirSync(dirname(resolve(values.out!)), { recursive: true });
 writeFileSync(values.out!, JSON.stringify(output, null, 2) + "\n");
 
 const width = Math.max(...Object.keys(output.metrics).map((k) => k.length));
