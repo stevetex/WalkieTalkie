@@ -12,6 +12,13 @@
 //       One conversation: the relay's record, each device's summary, and whole timelines when
 //       the account is in FULL_TIMELINE_USERS.
 //
+//   node tools/beta.ts run <conversation id> | run latest <name or account ID>
+//       One test run in the steps the feasibility doc compares runs by: a first press
+//       (press → go-ahead, → the relay), an answer (tap → audio session, the join and the
+//       replay each way, arrival → handling, → first audio, whether the extension ran), the
+//       network (interfaces, proxy, each request's timings) and main-queue stalls. Needs the
+//       device's whole timeline (FULL_TIMELINE_USERS).
+//
 //   node tools/beta.ts pull <name or account ID>
 //       Asks the account's iPhone and watch for their diagnostics logs (silently, during the
 //       TestFlight Beta); they upload the next time the app refreshes.
@@ -177,6 +184,82 @@ switch (command) {
       console.log(`\n  ${await nameOf(s.userId)}'s ${s.platform} (${s.role}${s.build ? `, build ${s.build}` : ""}): ${s.outcome}${s.via ? ` via ${s.via}` : ""}${s.route ? `, ${s.route}` : ""}`);
       for (const [k, v] of Object.entries(s.intervals ?? {})) console.log(`    ${ms(v as number).padStart(9)}  ${k.replace(/Ms$/, "")}`);
       if (Object.keys(s.problems ?? {}).length) console.log(`    problems: ${JSON.stringify(s.problems)}`);
+    }
+    break;
+  }
+  case "run": {
+    let conversationId = arg;
+    if (arg === "latest") {
+      const id = await resolveTester(arg2);
+      const recent = await readEntries({ kinds: ["oao.conversation"], since, anyOf: [["from", id], ["to", id]], local });
+      conversationId = recent.sort((a, b) => a.timestamp.localeCompare(b.timestamp)).at(-1)?.conversationId;
+      if (!conversationId) fail(`No conversations for ${arg2} since ${since.toISOString().slice(0, 10)}.`);
+    }
+    if (!conversationId) fail("usage: run <conversation id> | run latest <name>");
+    const entries = await readEntries({ kinds: ["oao.conversation", "oao.device", "oao.timeline"], since: new Date(Date.now() - 30 * 86_400_000), anyOf: [["conversationId", conversationId]], local });
+    const record = entries.find((e) => e.kind === "oao.conversation");
+    type Ev = { t: number; name: string; detail?: string };
+    const relay: Ev[] = (record?.events ?? []).slice().sort((a: Ev, b: Ev) => a.t - b.t);
+    const find = (events: Ev[], name: string, after = -Infinity) => events.find((e) => e.name === name && e.t >= after);
+    const span = (from?: Ev, to?: Ev) => (from && to ? ms(Math.round(to.t - from.t)) : "—");
+    const row = (label: string, value: string, note = "") => console.log(`    ${label.padEnd(34)} ${value.padStart(9)}${note ? `  ${note}` : ""}`);
+    console.log(record
+      ? `${conversationId}: ${record.outcome}, ${await nameOf(record.from)} → ${await nameOf(record.to)}, ${time(record)}`
+      : `${conversationId}: no relay record (yet)`);
+    const timelines = entries.filter((e) => e.kind === "oao.timeline");
+    if (!timelines.length) console.log("\n  No device timeline: the device's account isn't in FULL_TIMELINE_USERS, or it hasn't uploaded.");
+    for (const d of timelines) {
+      const events: Ev[] = d.events.slice().sort((a: Ev, b: Ev) => a.t - b.t);
+      const summary = entries.find((e) => e.kind === "oao.device" && e.deviceId === d.deviceId);
+      // A bot's timeline (no platform) says only what the relay did with its talk.
+      if (!summary?.platform || summary.platform === "unknown") {
+        const press = find(events, "talkPressed");
+        console.log(`\n  ${await nameOf(d.userId)} (a bot, ${d.role}): press → talk-start at the relay ${span(press, find(relay, "talkStart", press?.t))}, → floor granted ${span(press, find(events, "floorGranted", press?.t))}`);
+        continue;
+      }
+      console.log(`\n  ${await nameOf(d.userId)}'s ${summary.platform}${summary.build ? `, build ${summary.build}` : ""} (${d.role})`);
+      const network = find(events, "network");
+      if (network) row("network", "", network.detail);
+      if (d.role === "sender") {
+        const press = find(events, "talkPressed");
+        const preconnected = find(events, "preconnected");
+        row("stream open before the press", preconnected && press && preconnected.t <= press.t ? span(preconnected, press) : "no", preconnected ? "" : "a cold connection");
+        row("press → audio session", span(press, find(events, "audioActivated", press?.t)));
+        row("press → go-ahead (mic, haptic)", span(press, find(events, "captureStarted", press?.t)));
+        row("press → stream open", span(press, find(events, "helloAckArrived", press?.t) ?? find(events, "socketOpen", press?.t)));
+        row("press → talk-start at the relay", span(press, find(relay, "talkStart", press?.t)));
+        row("press → floor granted", span(press, find(events, "floorGranted", press?.t)));
+      } else {
+        const tap = find(events, "answerTapped");
+        const nse = find(events, "nseReceived");
+        const fetched = find(events, "nseFetchEnded");
+        row("answered", "", tap?.detail ?? "not answered");
+        row("extension downloaded the message", nse ? "yes" : "no", fetched?.detail ?? (nse ? "" : "watchOS didn't run it, or the app was frontmost"));
+        const preconnected = find(events, "preconnected");
+        if (preconnected) row("stream open before the tap", preconnected.t <= (tap?.t ?? Infinity) ? span(preconnected, tap) : "no");
+        const joinSent = find(events, "joinSent", tap?.t);
+        const helloAck = find(events, "helloAckArrived", tap?.t);
+        const joined = find(relay, "receiverJoined", tap?.t);
+        const replay = find(relay, "replayStarted", tap?.t) ?? joined;
+        const arrived = find(events, "joinedArrived", tap?.t) ?? find(events, "firstFrameArrived", tap?.t);
+        const handled = find(events, "joined", tap?.t);
+        row("tap → audio session", span(tap, find(events, "audioActivated", tap?.t)), (() => {
+          const returned = find(events, "audioActivationReturned", tap?.t);
+          const activated = find(events, "audioActivated", tap?.t);
+          return returned && activated ? `(returned ${span(tap, returned)}, then ${span(returned, activated)} on the main queue)` : "";
+        })());
+        if (helloAck) row("tap → stream open", span(tap, helloAck), "(a new stream)");
+        row("join sent", joinSent ? span(tap, joinSent) : "—", joinSent?.detail ?? "");
+        row("join sent → relay joined", span(joinSent, joined));
+        row("relay replay → arrived at the device", span(replay, arrived));
+        row("arrived → handled (main queue)", span(arrived, handled));
+        row("tap → first audio", span(tap, find(events, "burstAudioStarted", tap?.t)));
+      }
+      const stalls = events.filter((e) => e.name === "mainStall");
+      row("main-queue stalls ≥ 200 ms", String(stalls.length), stalls.length ? `longest ${Math.max(...stalls.map((s) => parseInt(s.detail ?? "0")))} ms` : "");
+      for (const e of events.filter((e) => e.name.startsWith("net-"))) row(e.name, "", e.detail);
+      for (const e of events.filter((e) => /^post\d$/.test(e.name))) row(e.name, "", e.detail);
+      if (summary && Object.keys(summary.problems ?? {}).length) row("problems", "", JSON.stringify(summary.problems));
     }
     break;
   }
