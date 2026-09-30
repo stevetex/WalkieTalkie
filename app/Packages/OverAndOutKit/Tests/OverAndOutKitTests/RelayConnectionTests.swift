@@ -35,9 +35,10 @@ final class RelayStub: URLProtocol, @unchecked Sendable {
     static var heldSends: Int { state.withLock { $0.held.count } }
 
     static func releaseHeldSends() {
-        let held = state.withLock {
-            defer { $0.held = [] }
-            return $0.held
+        // A named parameter: Swift 6.2 (Xcode 26) rejects $0 inside the defer.
+        let held = state.withLock { locked in
+            defer { locked.held = [] }
+            return locked.held
         }
         held.forEach { $0() }
     }

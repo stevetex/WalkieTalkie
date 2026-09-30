@@ -11,18 +11,14 @@ import Testing
 ///   SPIKE_TOKEN=ci SHARED_TOKEN_CLIENTS=1 PORT=8095 node server/src/main.ts
 ///   OAO_E2E_RELAY=http://127.0.0.1:8095 swift test
 @MainActor
-@Suite(.serialized, .enabled(if: RelayEndToEndTests.relay != nil, "set OAO_E2E_RELAY to a local relay"))
+@Suite(.serialized, .enabled(if: e2eRelay != nil, "set OAO_E2E_RELAY to a local relay"))
 struct RelayEndToEndTests {
-    nonisolated static var relay: URL? {
-        ProcessInfo.processInfo.environment["OAO_E2E_RELAY"].flatMap(URL.init(string:))
-    }
-
-    nonisolated static var token: String {
+    static var token: String {
         ProcessInfo.processInfo.environment["OAO_E2E_TOKEN"] ?? "ci"
     }
 
     @Test func speechCrossesTheRelayIntactAndAtItsLevel() async throws {
-        let base = try #require(Self.relay)
+        let base = try #require(e2eRelay)
         let id = UUID().uuidString.prefix(8)
         let alice = "kit-a-\(id)", bob = "kit-b-\(id)"
         try await register(base, userId: alice, pushToken: "local:\(alice)")
@@ -126,6 +122,10 @@ struct RelayEndToEndTests {
         #expect((response as? HTTPURLResponse)?.statusCode == 200, "registering \(userId)")
     }
 }
+
+/// The relay the test runs against. At file scope: the suite's trait can't refer to the suite's
+/// own type (a circular reference resolving the macro).
+private let e2eRelay: URL? = ProcessInfo.processInfo.environment["OAO_E2E_RELAY"].flatMap(URL.init(string:))
 
 /// Waits on the main actor, so the connections' callbacks run meanwhile.
 @MainActor
