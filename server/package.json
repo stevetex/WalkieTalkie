@@ -11,6 +11,7 @@
     "test": "node --test --test-timeout=20000 \"test/**/*.test.ts\"",
     "bot": "node tools/bot.ts",
     "report": "node tools/report.ts",
-    "test:firestore": "scripts/test-firestore.sh"
+    "test:firestore": "scripts/test-firestore.sh",
+    "perf": "node perf/run.ts --suite full --check"
   }
 }

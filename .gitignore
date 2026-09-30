@@ -3,6 +3,8 @@
 # Server
 server/data/
 server/node_modules/
+server/perf-results.json
+server/perf-out/
 *.p8
 deploy/gcp/config.sh
 

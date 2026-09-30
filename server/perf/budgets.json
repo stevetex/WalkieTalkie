@@ -1,0 +1,53 @@
+{
+  "//": "Budgets for perf/compare.ts. Relay counts, legs and sim times are written by `node perf/compare.ts --full <results> --update-budgets` after a deliberate change; the kit's are set by hand. enforce turns warnings into failures once thresholds are tuned (phase 4 of the plan).",
+  "enforce": {
+    "network": false,
+    "time": false,
+    "kit": false
+  },
+  "baseVsHead": {
+    "relative": 0.2,
+    "absoluteMs": 3
+  },
+  "drift": {
+    "runs": 10,
+    "relative": 0.2,
+    "absoluteMs": 3
+  },
+  "metrics": {
+    "A.ring_to_start.http.answer_to_first_frame_legs": 4,
+    "A.ring_to_start.http.answer_to_replay_done_legs": 4,
+    "A.ring_to_start.http.press_to_grant_legs": 2,
+    "A.ring_to_start.http.receiver_bytes_down": 4523,
+    "A.ring_to_start.http.receiver_bytes_up": 293,
+    "A.ring_to_start.http.receiver_connections": 1,
+    "A.ring_to_start.http.receiver_messages": 4,
+    "A.ring_to_start.ws.answer_to_first_frame_legs": 8,
+    "A.ring_to_start.ws.answer_to_replay_done_legs": 8,
+    "A.ring_to_start.ws.press_to_grant_legs": 2,
+    "A.ring_to_start.ws.receiver_bytes_down": 3947,
+    "A.ring_to_start.ws.receiver_bytes_up": 534,
+    "A.ring_to_start.ws.receiver_connections": 1,
+    "A.ring_to_start.ws.receiver_messages": 4,
+    "B.live.ws.first_frame_latency_legs": 2,
+    "B.live.ws.press_to_grant_legs": 2,
+    "B.live.ws.receiver_bytes_per_burst": 3638,
+    "B.live.ws.receiver_messages_per_burst": 2,
+    "B.live.ws.release_to_burst_end_legs": 2,
+    "B.live.ws.sender_bytes_per_burst": 3713,
+    "C.back_and_forth.ws.messages_per_turn": 3,
+    "C.back_and_forth.ws.turn_gap_legs": 4,
+    "D.http_sender.first_frame_latency_legs": 2,
+    "D.http_sender.posts_per_burst": 66,
+    "D.http_sender.posts_per_burst_delayed": 9,
+    "D.http_sender.release_to_burst_end_legs": 4,
+    "E.first_press.http.cold.press_to_grant_legs": 8,
+    "E.first_press.http.preconnected.press_to_grant_legs": 4,
+    "E.first_press.ws.cold.press_to_grant_legs": 8,
+    "E.first_press.ws.preconnected.press_to_grant_legs": 2,
+    "G.codecs.opus.join_to_replay_done_1mbps": 809,
+    "G.codecs.opus.replay_bytes_down": 12123,
+    "G.codecs.pcm.join_to_replay_done_1mbps": 1608,
+    "G.codecs.pcm.replay_bytes_down": 99273
+  }
+}
