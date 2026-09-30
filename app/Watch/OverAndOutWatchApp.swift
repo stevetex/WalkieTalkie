@@ -8,9 +8,7 @@ struct OverAndOutWatchApp: App {
 
     var body: some Scene {
         WindowGroup {
-            NavigationStack {
-                ContentView(controller: .shared, account: .shared)
-            }
+            ContentView(controller: .shared, account: .shared)
         }
     }
 }

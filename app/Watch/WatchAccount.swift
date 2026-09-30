@@ -6,16 +6,13 @@ import WatchConnectivity
 /// The watch's account (design decision 2026-09-27): its own session, made by the iPhone and
 /// sent over WatchConnectivity, then refreshed with the API directly. The session lives in
 /// the Keychain under the app group, so the notification service extension can use the
-/// token too. Also the account's friends, and the one picked for the Talk button.
+/// token too. Also the account's friends.
 final class WatchAccount: NSObject, ObservableObject {
     static let shared = WatchAccount()
 
     @Published private(set) var session: AccountSession?
     @Published private(set) var friends: [Friend] = []
     @Published private(set) var friendsLoaded = false
-    @Published var selectedFriendId: String? {
-        didSet { UserDefaults.standard.set(selectedFriendId, forKey: Key.selectedFriend) }
-    }
     /// Waiting for the iPhone: "Open Over&Out on your iPhone" until a session arrives.
     @Published private(set) var phoneSignedIn: Bool?
 
@@ -29,6 +26,7 @@ final class WatchAccount: NSObject, ObservableObject {
 
     private enum Key {
         static let friends = "friends"
+        /// Whom Talk rang before the friends list (2026-09-29); removed on launch.
         static let selectedFriend = "selectedFriendId"
     }
 
@@ -40,16 +38,12 @@ final class WatchAccount: NSObject, ObservableObject {
         super.init()
         session = store.load()
         if let data = UserDefaults.standard.data(forKey: Key.friends), let cached = try? JSONDecoder().decode([Friend].self, from: data) {
-            friends = cached
+            friends = Friend.favoritesFirst(cached)
         }
-        selectedFriendId = UserDefaults.standard.string(forKey: Key.selectedFriend)
+        UserDefaults.standard.removeObject(forKey: Key.selectedFriend)
         NotificationCenter.default.addObserver(forName: AccountClient.signedOutNotification, object: nil, queue: .main) { [weak self] _ in
             self?.signedOut(askPhone: true)
         }
-    }
-
-    var selectedFriend: Friend? {
-        friends.first { $0.id == selectedFriendId } ?? (friends.count == 1 ? friends.first : nil)
     }
 
     func name(of userId: String) -> String? {
@@ -139,11 +133,10 @@ final class WatchAccount: NSObject, ObservableObject {
     }
 
     private func setFriends(_ loaded: [Friend]) {
-        // Favorites (starred on the iPhone) first in the picker.
+        // Favorites (starred on the iPhone) first in the friends list.
         friends = Friend.favoritesFirst(loaded)
         friendsLoaded = true
         if let data = try? JSONEncoder().encode(loaded) { UserDefaults.standard.set(data, forKey: Key.friends) }
-        if let selected = selectedFriendId, !loaded.contains(where: { $0.id == selected }) { selectedFriendId = nil }
     }
 
     // MARK: Getting a session from the iPhone
@@ -155,7 +148,6 @@ final class WatchAccount: NSObject, ObservableObject {
         if changedAccount {
             friends = []
             friendsLoaded = false
-            selectedFriendId = nil
         }
         updateContext()
         onSessionChanged?(new)
@@ -170,7 +162,6 @@ final class WatchAccount: NSObject, ObservableObject {
         session = nil
         friends = []
         friendsLoaded = false
-        selectedFriendId = nil
         UserDefaults.standard.removeObject(forKey: Key.friends)
         if hadSession { onSessionChanged?(nil) }
         updateContext()

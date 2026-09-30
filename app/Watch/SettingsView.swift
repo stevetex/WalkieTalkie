@@ -1,8 +1,7 @@
 import OverAndOutKit
 import SwiftUI
 
-/// The account and the version; diagnostics in debug builds. Whom Talk rings is chosen on
-/// the main screen (the name at top left).
+/// The account and the version; diagnostics in debug builds. Opened from the friends list.
 struct SettingsView: View {
     @ObservedObject var controller: ConversationController
     @ObservedObject var account: WatchAccount
