@@ -152,6 +152,10 @@ struct IncomingRingView: View {
                         .tint(Brand.orange)
                         .foregroundStyle(Brand.ink)
                 }
+                // One line, shrunk if it must: on 40 and 41 mm watches the labels broke into
+                // "De-cline" and "An-swer".
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
                 .padding(.horizontal, 8)
                 .padding(.bottom, 8)
             }

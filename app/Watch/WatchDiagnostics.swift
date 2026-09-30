@@ -18,7 +18,14 @@ enum WatchDiagnostics {
         let defaults = UserDefaults.standard
         let since = defaults.double(forKey: activeKey)
         if since > 0 {
-            Telemetry.shared.event("uncleanExit", ["activeForSeconds": Int((Clock.nowMs() - since) / 1000)])
+            // Xcode's Stop and installing over the running app end it this way too: a debug
+            // build's is logged under another name, outside the "app crashed" alert.
+            #if DEBUG
+            let name = "uncleanExitDebug"
+            #else
+            let name = "uncleanExit"
+            #endif
+            Telemetry.shared.event(name, ["activeForSeconds": Int((Clock.nowMs() - since) / 1000)])
             defaults.removeObject(forKey: activeKey)
         }
         Telemetry.shared.event("appLaunched")

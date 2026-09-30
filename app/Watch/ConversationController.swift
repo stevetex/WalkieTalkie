@@ -159,6 +159,11 @@ final class ConversationController: NSObject, ObservableObject {
         guard !started else { return }
         started = true
         UNUserNotificationCenter.current().delegate = self
+        // Timelines left unsent when the watch was suspended go at the next flush.
+        Telemetry.shared.sendTimeline = { [settings] body in
+            let token = await WatchAccount.shared.session?.token
+            try await APIClient(settings: settings, token: token).uploadMetrics(body)
+        }
 
         relay.onReady = { [unowned self] offset in relayReady(clockOffsetMs: offset, helloAckArrivedAt: relay.lastArrivalMs) }
         relay.onMessage = { [unowned self] message in handle(message) }
@@ -217,9 +222,9 @@ final class ConversationController: NSObject, ObservableObject {
         }
 
         audio.onFrame = { [weak self] frame in self?.sendCaptured(frame) }
-        audio.onFirstPlayback = { [weak self] in
-            self?.conversation?.timeline.mark("firstAudioScheduled")
-            self?.conversation?.timeline.mark("burstAudioStarted", once: false)
+        audio.onFirstPlayback = { [weak self] t in
+            self?.conversation?.timeline.mark("firstAudioScheduled", at: t)
+            self?.conversation?.timeline.mark("burstAudioStarted", at: t, once: false)
         }
         audio.onPlaybackDrained = { [weak self] in
             self?.speakerIdle = true
@@ -894,17 +899,13 @@ final class ConversationController: NSObject, ObservableObject {
 
     /// The relay turns the timeline into a summary (outcome, latencies) and keeps only that
     /// (the Beta telemetry spec); the whole timeline stays in the watch's diagnostics log.
+    /// Saved to disk before it's sent, in case the watch suspends first (run 63).
     private func uploadTimeline(_ timeline: Timeline, conversationId: String, clockOffsetMs: Double) {
         Telemetry.shared.timeline(timeline, conversationId: conversationId)
         var body = timeline.upload(conversationId: conversationId, userId: account.session?.userId ?? "", clockOffsetMs: clockOffsetMs)
         body["device"] = Telemetry.shared.device
-        let api = APIClient(settings: settings, token: account.session?.token)
         Task { @MainActor in
-            do {
-                try await api.uploadMetrics(body)
-            } catch {
-                log("Metrics upload failed: \(error.localizedDescription)")
-            }
+            await Telemetry.shared.uploadTimeline(body, conversationId: conversationId)
             await Telemetry.shared.flush()
         }
     }

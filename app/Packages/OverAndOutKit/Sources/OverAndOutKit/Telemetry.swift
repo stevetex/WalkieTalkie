@@ -20,6 +20,8 @@ public final class Telemetry: Sendable {
     public typealias Fields = [String: any Sendable]
     /// Sends a batch of events and this device's details.
     public typealias Sender = @Sendable (_ events: [Fields], _ device: [String: String]) async throws -> Void
+    /// Sends one conversation's timeline to the relay (the body of POST /v1/metrics).
+    public typealias TimelineSender = @Sendable (_ body: Fields) async throws -> Void
 
     private struct State {
         var send: Sender?
@@ -29,10 +31,19 @@ public final class Telemetry: Sendable {
         /// Events not yet sent, kept on disk: a PushToTalk push can launch the app in the
         /// background and iOS can end it before the next send (run 56).
         var pendingFile: URL?
+        var sendTimeline: TimelineSender?
+        /// Timelines not yet sent, a file each: the watch can be suspended before an upload
+        /// finishes (run 63), and the conversation's summary then had no watch side.
+        var timelineDirectory: URL?
+        /// Timeline files being sent now, so a flush and an upload don't send one twice.
+        var sendingTimelines: Set<String> = []
     }
 
     private let state = OSAllocatedUnfairLock(initialState: State())
     private static let maxPending = 200
+    /// Unsent timelines kept at most: the newest, and none older than 3 days.
+    private static let maxPendingTimelines = 20
+    private static let maxTimelineAgeMs: Double = 3 * 24 * 3600 * 1000
     private let saveQueue = DispatchQueue(label: "com.cypressoakstudios.overandout.telemetry")
 
     public init() {}
@@ -41,6 +52,11 @@ public final class Telemetry: Sendable {
     public var send: Sender? {
         get { state.withLock { $0.send } }
         set { state.withLock { $0.send = newValue } }
+    }
+    /// Set by the app once it knows the relay and has a session.
+    public var sendTimeline: TimelineSender? {
+        get { state.withLock { $0.sendTimeline } }
+        set { state.withLock { $0.sendTimeline = newValue } }
     }
     public var log: DiagnosticsLog? { state.withLock { $0.log } }
     public var device: [String: String] { state.withLock { $0.device } }
@@ -56,6 +72,7 @@ public final class Telemetry: Sendable {
             $0.device = device
             $0.log = log
             $0.pendingFile = file
+            $0.timelineDirectory = directory.appendingPathComponent("pending-timelines")
             $0.pending = events + $0.pending
             if $0.pending.count > Self.maxPending { $0.pending.removeFirst($0.pending.count - Self.maxPending) }
         }
@@ -121,8 +138,9 @@ public final class Telemetry: Sendable {
         log?.appendTimeline(timeline, conversationId: conversationId)
     }
 
-    /// Sends what's queued. Events that fail to send are kept for the next try.
+    /// Sends what's queued: events, then timelines. What fails to send is kept for the next try.
     public func flush() async {
+        await sendPendingTimelines()
         guard let send else { return }
         let batch: [Fields] = state.withLock {
             let taken = Array($0.pending.prefix(50))
@@ -136,6 +154,66 @@ public final class Telemetry: Sendable {
             state.withLock { $0.pending.insert(contentsOf: batch, at: 0) }
         }
         savePending()
+    }
+
+    // MARK: Timelines
+
+    /// A finished conversation's timeline for the relay: onto disk first, then sent with
+    /// `sendTimeline`, and removed once the relay has it. Unsent ones go at the next flush.
+    public func uploadTimeline(_ body: Fields, conversationId: String) async {
+        guard let directory = state.withLock({ $0.timelineDirectory }) else { return }
+        let name = "\(Int(Clock.nowMs()))-\(conversationId.prefix(64)).json"
+        let file = directory.appendingPathComponent(name)
+        guard JSONSerialization.isValidJSONObject(body), let data = try? JSONSerialization.data(withJSONObject: body) else { return }
+        // Before the request starts, so a suspension mid-upload leaves it on disk.
+        saveQueue.sync {
+            try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            try? data.write(to: file, options: .atomic)
+        }
+        await sendPendingTimelines()
+    }
+
+    /// Sends every saved timeline, oldest first, that isn't being sent already. Stops at the
+    /// first failure: the relay is out of reach, and the rest can wait for the next try.
+    private func sendPendingTimelines() async {
+        let (directory, send) = state.withLock { ($0.timelineDirectory, $0.sendTimeline) }
+        guard let directory, let send else { return }
+        for file in pruneTimelines(in: directory) {
+            let name = file.lastPathComponent
+            let claimed = state.withLock { $0.sendingTimelines.insert(name).inserted }
+            guard claimed else { continue }
+            defer { state.withLock { _ = $0.sendingTimelines.remove(name) } }
+            guard let data = try? Data(contentsOf: file),
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                try? FileManager.default.removeItem(at: file)
+                continue
+            }
+            do {
+                try await send(Self.fields(json))
+                try? FileManager.default.removeItem(at: file)
+            } catch {
+                note("timelineUploadFailed", ["error": String(describing: error).prefix(120).description])
+                return
+            }
+        }
+    }
+
+    /// The saved timelines, oldest first, after dropping the oldest past the limits.
+    private func pruneTimelines(in directory: URL) -> [URL] {
+        let files = ((try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? [])
+            .filter { $0.pathExtension == "json" }
+            .sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
+        let now = Clock.nowMs()
+        var kept: [URL] = []
+        for (index, file) in files.enumerated() {
+            let savedAt = Double(file.lastPathComponent.prefix { $0 != "-" }) ?? 0
+            if files.count - index > Self.maxPendingTimelines || now - savedAt > Self.maxTimelineAgeMs {
+                try? FileManager.default.removeItem(at: file)
+            } else {
+                kept.append(file)
+            }
+        }
+        return kept
     }
 
     /// The server asked for this device's log (GET /v1/me) after its last upload: sends it.
