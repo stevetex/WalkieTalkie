@@ -22,6 +22,14 @@ final class ConversationController: NSObject, ObservableObject {
     static let conversationWindow: TimeInterval = 45
     /// An in-app ring stops after this; the relay abandons the ring at 35 s.
     static let inAppRingTimeout: TimeInterval = 30
+    /// Talk starts before the relay stream opens; a stream that hasn't opened by then fails.
+    static let connectTimeout: TimeInterval = 10
+    /// A stream a Talk screen opened ahead of a press closes after this with no conversation.
+    static let preconnectIdle: TimeInterval = 60
+    /// Main-queue delays at least this long are marked in the timeline (runs 64–65), at most
+    /// `maxStallMarks` per conversation.
+    static let stallThresholdMs: Double = 200
+    static let maxStallMarks = 30
 
     enum Phase: Equatable {
         case idle
@@ -53,9 +61,12 @@ final class ConversationController: NSObject, ObservableObject {
     @Published private(set) var peerId: String?
     @Published private(set) var isTalking = false
     @Published private(set) var remoteTalking = false
-    /// In a conversation and able to record right now (relay open and audio on). The Talk
-    /// button shows "Wait…" until then.
+    /// In a conversation and able to record right now (audio on). What's said before the
+    /// relay stream opens is held and sent when it does, so the go-ahead doesn't wait for a
+    /// cold connection (2.1 s in run 66). The mouth shows the hourglass until then.
     @Published private(set) var talkReady = false
+    /// In a conversation with the relay stream open: the antenna is green, not yellow.
+    @Published private(set) var connected = false
     /// A ring that arrived while the app was on screen, waiting for Answer or Decline.
     @Published private(set) var incomingRing: Ring?
     /// Set when a ring is answered (in the app or from its notification), so the app shows
@@ -88,9 +99,13 @@ final class ConversationController: NSObject, ObservableObject {
         var audioActive = false
         /// Receiver: the relay confirmed the join.
         var joined = false
+        /// The relay stream opened (hello-ack) at least once.
+        var relayOpened = false
+        let id = UUID()
     }
 
-    private let relay = RelayConnection()
+    /// Stamps when relay data arrives, off the main queue, for the timeline.
+    private let relay = RelayConnection(stampsArrivals: true)
     private let audio = AudioPipeline()
 
     private var started = false
@@ -120,6 +135,10 @@ final class ConversationController: NSObject, ObservableObject {
     /// Uplink POSTs logged since the current burst started (only the first few are kept).
     private var postsThisBurst = 0
     private var watchdog: DispatchSourceTimer?
+    private var stallMarks = 0
+    /// The friend whose Talk screen is showing, which keeps a stream open ahead of a press.
+    private var preparingFor: String?
+    private var preconnectTimer: Timer?
 
     /// Called from applicationDidFinishLaunching: a notification tap can launch the app, and
     /// its response is only delivered if the notification delegate is set by then.
@@ -128,13 +147,16 @@ final class ConversationController: NSObject, ObservableObject {
         started = true
         UNUserNotificationCenter.current().delegate = self
 
-        relay.onReady = { [unowned self] offset in relayReady(clockOffsetMs: offset) }
+        relay.onReady = { [unowned self] offset in relayReady(clockOffsetMs: offset, helloAckArrivedAt: relay.lastArrivalMs) }
         relay.onMessage = { [unowned self] message in handle(message) }
         relay.onFrame = { [unowned self] frame in
             // Already played from the prefetch download.
             if let burst = incomingBurstId, let played = prefetchedFrames[burst],
                let seq = VoiceFrame.decode(frame)?.seq, seq < played { return }
-            if conversation?.timeline.has("firstFrameReceived") == false { conversation?.timeline.mark("firstFrameReceived") }
+            if conversation?.timeline.has("firstFrameReceived") == false {
+                conversation?.timeline.mark("firstFrameArrived", at: relay.lastArrivalMs)
+                conversation?.timeline.mark("firstFrameReceived")
+            }
             speakerIdle = false
             audio.enqueue(frame)
         }
@@ -146,6 +168,13 @@ final class ConversationController: NSObject, ObservableObject {
             if !current.outgoing, !current.joined {
                 return rejoinOnFreshStream("relay closed before joining: \(reason)")
             }
+            if current.outgoing, !current.relayOpened {
+                // Talk started without the relay, so say it didn't go out.
+                log("Couldn't open the relay: \(reason)")
+                conversation?.timeline.mark("relayClosed", detail: String(reason.prefix(80)), once: false)
+                WKInterfaceDevice.current().play(.failure)
+                return finish(outcome: .couldNotConnect)
+            }
             log("Relay closed: \(reason)")
             // The stream ended without the app closing it, mid-conversation.
             conversation?.timeline.mark("relayClosed", detail: String(reason.prefix(80)), once: false)
@@ -153,7 +182,8 @@ final class ConversationController: NSObject, ObservableObject {
             finish()
         }
         relay.onPostFinished = { [unowned self] started, finished, bytes, status in
-            guard burstId != nil || talkHeld, postsThisBurst < 3 else { return }
+            let joining = conversation?.outgoing == false && conversation?.joined == false
+            guard burstId != nil || talkHeld || joining, postsThisBurst < 3 else { return }
             postsThisBurst += 1
             conversation?.timeline.mark("post\(postsThisBurst)", at: finished,
                                         detail: "\(bytes) bytes, \(Int(finished - started)) ms, HTTP \(status)", once: false)
@@ -322,6 +352,7 @@ final class ConversationController: NSObject, ObservableObject {
         let ring = incomingRing
         clearIncomingRing()
         closePreconnect()
+        if let friendId = preparingFor { prepare(for: friendId) }
         guard let ring else { return }
         var timeline = Timeline(role: .receiver)
         if let sentAt = ring.pushSentAt { timeline.mark("pushSentAtServer", detail: String(Int(sentAt))) }
@@ -506,8 +537,27 @@ final class ConversationController: NSObject, ObservableObject {
         peerName = name
         self.peerId = peerId
         outcomes[peerId] = nil
-        connectRelay()
+        preconnectTimer?.invalidate()
+        if let preconnect, relay.isReady || relay.isConnecting {
+            // The stream this friend's Talk screen opened: no cold connection to wait for.
+            conversation?.timeline.mark("preconnectStarted", at: preconnect.startedAt)
+            if let readyAt = preconnect.readyAt { conversation?.timeline.mark("preconnected", at: readyAt) }
+            self.preconnect = nil
+            if relay.isReady { relayReady(clockOffsetMs: relay.clockOffsetMs) }
+        } else {
+            preconnect = nil
+            connectRelay()
+        }
         activateOwnAudio()
+        // Talk has started without the relay; give up if its stream never opens.
+        let id = conversation?.id
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.connectTimeout) { [weak self] in
+            guard let self, let current = conversation, current.id == id, !current.relayOpened else { return }
+            log("The relay didn't open in \(Int(Self.connectTimeout)) s")
+            conversation?.timeline.mark("connectTimedOut")
+            WKInterfaceDevice.current().play(.failure)
+            finish(outcome: .couldNotConnect)
+        }
     }
 
     // MARK: Relay
@@ -531,16 +581,25 @@ final class ConversationController: NSObject, ObservableObject {
     }
 
     private func updateTalkReady() {
-        talkReady = conversation != nil && relay.isReady && conversation?.audioActive == true
+        talkReady = conversation?.audioActive == true
+        connected = conversation != nil && relay.isReady
     }
 
-    private func relayReady(clockOffsetMs: Double) {
+    /// `helloAckArrivedAt`: when the stream's hello-ack arrived, if this is it (not a stream
+    /// opened earlier and reused).
+    private func relayReady(clockOffsetMs: Double, helloAckArrivedAt: Double? = nil) {
         guard let current = conversation else {
             if preconnect != nil, preconnect?.readyAt == nil { preconnect?.readyAt = Clock.nowMs() }
             return
         }
         defer { updateTalkReady() }
+        conversation?.relayOpened = true
+        if let helloAckArrivedAt { conversation?.timeline.mark("helloAckArrived", at: helloAckArrivedAt) }
         conversation?.timeline.mark("socketOpen")
+        // What was said before the stream opened goes out now (the relay held it).
+        if conversation?.timeline.has("firstFrameQueued") == true, conversation?.timeline.has("firstFrameSent") == false {
+            conversation?.timeline.mark("firstFrameSent", detail: "queued before the stream opened")
+        }
         self.clockOffsetMs = clockOffsetMs
         bestClockRoundTripMs = .infinity
         refineClockOffset()
@@ -586,6 +645,7 @@ final class ConversationController: NSObject, ObservableObject {
             finish(outcome: .unreachable)
             account.refresh()
         case "joined":
+            conversation?.timeline.mark("joinedArrived", at: relay.lastArrivalMs)
             conversation?.joined = true
             conversation?.timeline.mark("joined", detail: "\(message.replayBursts ?? 0) buffered bursts")
             phase = .live
@@ -642,8 +702,9 @@ final class ConversationController: NSObject, ObservableObject {
 
     // MARK: Talking
 
+    /// Doesn't wait for the relay stream: talk-start and the frames queue until it opens.
     private func startBurstIfReady() {
-        guard talkHeld, burstId == nil, relay.isReady, let current = conversation, current.audioActive else { return }
+        guard talkHeld, burstId == nil, let current = conversation, current.audioActive else { return }
         let id = UUID().uuidString
         burstId = id
         sentFirstFrame = false
@@ -660,7 +721,7 @@ final class ConversationController: NSObject, ObservableObject {
         relay.send(frame: frame)
         if !sentFirstFrame {
             sentFirstFrame = true
-            conversation?.timeline.mark("firstFrameSent")
+            conversation?.timeline.mark(relay.isReady ? "firstFrameSent" : "firstFrameQueued")
         }
     }
 
@@ -699,9 +760,11 @@ final class ConversationController: NSObject, ObservableObject {
             log("Audio session setup failed: \(error.localizedDescription)")
         }
         session.activate(options: []) { success, error in
+            let returnedAt = Clock.nowMs()
             DispatchQueue.main.async {
                 self.activatingAudio = false
                 if success {
+                    self.conversation?.timeline.mark("audioActivationReturned", at: returnedAt)
                     self.audioSessionActivated()
                 } else {
                     self.log("Audio activation failed: \(error?.localizedDescription ?? "unknown")")
@@ -770,9 +833,16 @@ final class ConversationController: NSObject, ObservableObject {
         remoteTalking = false
         burstId = nil
         idleTimer?.invalidate()
+        stallMarks = 0
+        postsThisBurst = 0
+        connected = false
         phase = .idle
         peerName = nil
         peerId = nil
+        // Still on a Talk screen: ready for the next press.
+        if let friendId = preparingFor {
+            DispatchQueue.main.async { self.prepare(for: friendId) }
+        }
 
         guard let conversationId = ended.conversationId else { return }
         uploadTimeline(ended.timeline, conversationId: conversationId, clockOffsetMs: offset)
@@ -800,6 +870,46 @@ final class ConversationController: NSObject, ObservableObject {
     /// Application state changes (wrist down, app in the background), for the timeline.
     func noteAppState(_ state: String) {
         conversation?.timeline.mark("app", detail: state, once: false)
+        switch state {
+        case "background":
+            // A suspended app's stream dies anyway; the Talk screen reopens it when it's back.
+            preconnectTimer?.invalidate()
+            if incomingRing == nil { closePreconnect() }
+        case "active":
+            if let friendId = preparingFor { prepare(for: friendId) }
+        default:
+            break
+        }
+    }
+
+    // MARK: Pre-connecting from a Talk screen
+
+    /// A friend's Talk screen appeared: mark it, and open the relay stream ahead of a press.
+    func talkScreenShown(_ friendId: String) {
+        conversation?.timeline.mark("talkScreenShown", once: false)
+        prepare(for: friendId)
+    }
+
+    /// Opens the relay stream while a Talk screen shows, so the first press doesn't wait for
+    /// a cold connection. It closes when the screen goes, the app goes to the background, or
+    /// after `preconnectIdle` with no conversation.
+    func prepare(for friendId: String) {
+        preparingFor = friendId
+        guard conversation == nil, incomingRing == nil else { return }
+        preconnectRelay()
+        preconnectTimer?.invalidate()
+        preconnectTimer = Timer.scheduledTimer(withTimeInterval: Self.preconnectIdle, repeats: false) { [weak self] _ in
+            guard let self, conversation == nil, incomingRing == nil else { return }
+            log("Closing the idle pre-connected stream")
+            closePreconnect()
+        }
+    }
+
+    func stopPreparing(for friendId: String) {
+        guard preparingFor == friendId else { return }
+        preparingFor = nil
+        preconnectTimer?.invalidate()
+        if incomingRing == nil { closePreconnect() }
     }
 
     func log(_ line: String) {
@@ -829,7 +939,8 @@ final class ConversationController: NSObject, ObservableObject {
             }
             DispatchQueue.main.async {
                 let lag = Clock.nowMs() - queuedAt
-                guard lag > 750, let self, self.conversation != nil else { return }
+                guard lag >= Self.stallThresholdMs, let self, self.conversation != nil, self.stallMarks < Self.maxStallMarks else { return }
+                self.stallMarks += 1
                 self.conversation?.timeline.mark("mainStall", at: queuedAt, detail: "\(Int(lag)) ms", once: false)
             }
         }

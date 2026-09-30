@@ -74,7 +74,9 @@ public enum RelayRecord {
 ///             retried, since a POST that failed may still have been applied, and resending
 ///             it would repeat its audio. Closing the stream also ends it on the relay.
 ///
-/// All callbacks and calls happen on the main queue.
+/// All callbacks and calls happen on the main queue. With `stampsArrivals`, the session
+/// delivers to a queue of its own first, so `lastArrivalMs` says when what a callback is
+/// handling actually arrived, however busy the main queue was (the watch's diagnostics).
 public final class RelayConnection: NSObject, URLSessionDataDelegate {
     public var onReady: ((_ clockOffsetMs: Double) -> Void)?
     public var onMessage: ((RelayMessage) -> Void)?
@@ -85,6 +87,9 @@ public final class RelayConnection: NSObject, URLSessionDataDelegate {
 
     public private(set) var isReady = false
     public private(set) var clockOffsetMs: Double = 0
+    /// When the data the current callback handles arrived (ms): off the main queue with
+    /// `stampsArrivals`, else when the main queue got it.
+    public private(set) var lastArrivalMs: Double = 0
     /// A stream request is in flight or open (it may not have answered yet).
     public var isConnecting: Bool { streamTask != nil }
 
@@ -96,9 +101,32 @@ public final class RelayConnection: NSObject, URLSessionDataDelegate {
     private var token = ""
     private var outbox = Data()
     private var posting = false
+    private let delegateQueue: OperationQueue
 
-    public override init() {
+    public init(stampsArrivals: Bool = false) {
+        if stampsArrivals {
+            let queue = OperationQueue()
+            queue.maxConcurrentOperationCount = 1
+            queue.name = "RelayConnection"
+            delegateQueue = queue
+        } else {
+            delegateQueue = .main
+        }
         super.init()
+    }
+
+    /// Delegate work runs on the main queue, stamped with when it arrived: directly when the
+    /// session delivers to the main queue, else after a hop.
+    private func onMain(_ work: @escaping () -> Void) {
+        let arrived = Clock.nowMs()
+        if OperationQueue.current === OperationQueue.main {
+            lastArrivalMs = arrived
+            return work()
+        }
+        DispatchQueue.main.async {
+            self.lastArrivalMs = arrived
+            work()
+        }
     }
 
     /// `join` also answers and joins that conversation in the stream request itself, so
@@ -109,7 +137,7 @@ public final class RelayConnection: NSObject, URLSessionDataDelegate {
         let configuration = URLSessionConfiguration.default
         // Idle timeout for the stream; the relay sends a keepalive every 15 s.
         configuration.timeoutIntervalForRequest = 45
-        let session = URLSession(configuration: configuration, delegate: self, delegateQueue: .main)
+        let session = URLSession(configuration: configuration, delegate: self, delegateQueue: delegateQueue)
         self.session = session
 
         helloSentAt = Clock.nowMs()
@@ -168,16 +196,18 @@ public final class RelayConnection: NSObject, URLSessionDataDelegate {
         outbox = Data()
         let startedAt = Clock.nowMs()
         session.dataTask(with: request) { [weak self] _, response, error in
-            guard let self, self.session === session else { return }
-            posting = false
-            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-            onPostFinished?(startedAt, Clock.nowMs(), bytes, error == nil ? status : 0)
-            if let error {
-                return finish("send failed: \(error.localizedDescription)")
-            } else if status != 200 {
-                return finish("send: HTTP \(status)")
+            self?.onMain { [weak self] in
+                guard let self, self.session === session else { return }
+                posting = false
+                let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+                onPostFinished?(startedAt, lastArrivalMs, bytes, error == nil ? status : 0)
+                if let error {
+                    return finish("send failed: \(error.localizedDescription)")
+                } else if status != 200 {
+                    return finish("send: HTTP \(status)")
+                }
+                flush()
             }
-            flush()
         }.resume()
     }
 
@@ -191,34 +221,40 @@ public final class RelayConnection: NSObject, URLSessionDataDelegate {
 
     public func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive response: URLResponse,
                            completionHandler: @escaping (URLSession.ResponseDisposition) -> Void) {
-        guard dataTask === streamTask else { return completionHandler(.allow) }
-        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-        if status == 200 {
-            completionHandler(.allow)
-        } else {
-            completionHandler(.cancel)
-            finish("stream HTTP \(status)")
+        onMain { [self] in
+            guard dataTask === streamTask else { return completionHandler(.allow) }
+            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+            if status == 200 {
+                completionHandler(.allow)
+            } else {
+                completionHandler(.cancel)
+                finish("stream HTTP \(status)")
+            }
         }
     }
 
     public func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
-        guard dataTask === streamTask else { return }
-        do {
-            for record in try parser.push(data) {
-                if record.type == RelayRecord.audio {
-                    onFrame?(record.payload)
-                } else {
-                    handle(record.payload)
+        onMain { [self] in
+            guard dataTask === streamTask else { return }
+            do {
+                for record in try parser.push(data) {
+                    if record.type == RelayRecord.audio {
+                        onFrame?(record.payload)
+                    } else {
+                        handle(record.payload)
+                    }
                 }
+            } catch {
+                finish("bad data from relay")
             }
-        } catch {
-            finish("bad data from relay")
         }
     }
 
     public func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
-        guard task === streamTask else { return }
-        finish(error?.localizedDescription ?? "stream ended")
+        onMain { [self] in
+            guard task === streamTask else { return }
+            finish(error?.localizedDescription ?? "stream ended")
+        }
     }
 
     private func handle(_ payload: Data) {
