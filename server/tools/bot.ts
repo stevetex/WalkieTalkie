@@ -8,6 +8,9 @@
 //       watch app that's closed until a notification opens it). --again sends a second
 //       message that many seconds after the first (for testing with the wrist down).
 //
+//   Audio is Opus, as the apps send it (encoded by tools/opus-frames.swift with the system's
+//   encoder, so macOS only); --pcm sends raw 16 kHz PCM instead, about 10× the bytes.
+//
 //   node tools/bot.ts listen [--answer-delay 1500] [--stay 45]
 //       Registers as a bot, waits to be rung, "answers" after the delay, and saves what it
 //       hears. Use it to test the watch as the sender.
@@ -43,6 +46,7 @@ const { positionals, values } = parseArgs({
     "say-again": { type: "string", default: "This is the second message. Did it play with your wrist down? Over." },
     "answer-delay": { type: "string", default: "1500" },
     account: { type: "boolean", default: false },
+    pcm: { type: "boolean", default: false },
   },
 });
 
@@ -83,8 +87,9 @@ if (mode === "send") {
   const pcm = values.wav ? readPcm16Mono16k(values.wav) : synthesize(values.say!);
   await register();
   await client.connect();
-  console.log(`Talking to ${values.to} for ${(pcm.length / 32000).toFixed(1)} s…`);
-  let { conversationId, pushed } = await client.talk(values.to, pcm);
+  const audio = encode(pcm);
+  console.log(`Talking to ${values.to} for ${(pcm.length / 32000).toFixed(1)} s (${audio.codec === Codec.opus16k ? "Opus" : "PCM"}, ${audio.frames.reduce((n, f) => n + f.length, 0)} bytes)…`);
+  let { conversationId, pushed } = await client.talkFrames(values.to, audio);
   console.log(pushed ? `Rang ${values.to} (conversation ${conversationId})` : `${values.to} was already live`);
   reportIncoming(client);
   if (values["ring-until-answered"] && pushed) {
@@ -95,7 +100,7 @@ if (mode === "send") {
       const events = await serverEvents(conversationId);
       if (events.includes("receiverJoined")) break;
       if (events.filter((e) => e === "ringTimedOut").length >= attempt - 1) {
-        ({ conversationId } = await client.talk(values.to, pcm));
+        ({ conversationId } = await client.talkFrames(values.to, audio));
         console.log(`Rang again, attempt ${attempt}`);
         attempt++;
       }
@@ -104,7 +109,7 @@ if (mode === "send") {
   if (values.again) {
     await sleep(Number(values.again) * 1000);
     console.log(`Sending the second message…`);
-    ({ conversationId } = await client.talk(values.to, synthesize(values["say-again"]!)));
+    ({ conversationId } = await client.talkFrames(values.to, encode(synthesize(values["say-again"]!))));
   }
   await sleep(Number(values.stay) * 1000);
   client.send({ type: "leave", conversationId });
@@ -176,6 +181,27 @@ function reportIncoming(c: SpikeClient): void {
     frames++;
     previous(f);
   };
+}
+
+// Opus packets from 16 kHz mono PCM16, as the apps encode it (tools/opus-frames.swift), or
+// the PCM itself in 20 ms frames with --pcm.
+function encode(pcm: Buffer): { codec: number; frames: Buffer[] } {
+  if (values.pcm) {
+    const frames: Buffer[] = [];
+    for (let offset = 0; offset < pcm.length; offset += 640) frames.push(pcm.subarray(offset, offset + 640));
+    return { codec: Codec.pcm16le16k, frames };
+  }
+  const dir = mkdtempSync(join(tmpdir(), "walkie-opus-"));
+  writeFileSync(join(dir, "in.pcm"), pcm);
+  execFileSync("swift", [join(import.meta.dirname, "opus-frames.swift"), join(dir, "in.pcm"), join(dir, "out.packets")], { stdio: ["ignore", "ignore", "inherit"] });
+  const packed = readFileSync(join(dir, "out.packets"));
+  const frames: Buffer[] = [];
+  for (let offset = 0; offset < packed.length; ) {
+    const length = packed.readUInt16BE(offset);
+    frames.push(packed.subarray(offset + 2, offset + 2 + length));
+    offset += 2 + length;
+  }
+  return { codec: Codec.opus16k, frames };
 }
 
 // Uses macOS `say` to make 16 kHz mono PCM.

@@ -84,6 +84,9 @@ public final class RelayConnection: NSObject, URLSessionDataDelegate {
     public var onClose: ((_ reason: String) -> Void)?
     /// Each uplink POST: when it started and finished (ms), bytes, HTTP status (0 = error).
     public var onPostFinished: ((_ startedAt: Double, _ finishedAt: Double, _ bytes: Int, _ status: Int) -> Void)?
+    /// The network's own timings for a finished request: `kind` is "stream", "send" or
+    /// "warmUp". The stream's arrive when it ends.
+    public var onTaskMetrics: ((_ kind: String, _ metrics: URLSessionTaskMetrics) -> Void)?
 
     public private(set) var isReady = false
     public private(set) var clockOffsetMs: Double = 0
@@ -152,6 +155,7 @@ public final class RelayConnection: NSObject, URLSessionDataDelegate {
         self.sendURL = sendURL
 
         let task = session.dataTask(with: request(streamURL))
+        task.taskDescription = "stream"
         streamTask = task
         task.resume()
     }
@@ -163,6 +167,20 @@ public final class RelayConnection: NSObject, URLSessionDataDelegate {
 
     public func send(frame: Data) {
         enqueue(RelayRecord.encode(RelayRecord.audio, frame))
+    }
+
+    /// An empty POST, on its own beside the queue, so the watch's network is awake by the time
+    /// what's said goes out (the first POST after a pause took 0.9 s to arrive, run 67). Only
+    /// on an open stream; the relay answers it and applies nothing.
+    public func warmUp() {
+        guard isReady, let session, let sendURL else { return }
+        var request = request(sendURL)
+        request.httpMethod = "POST"
+        request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
+        request.httpBody = Data()
+        let task = session.dataTask(with: request) { _, _, _ in }
+        task.taskDescription = "warmUp"
+        task.resume()
     }
 
     public func close() {
@@ -195,7 +213,7 @@ public final class RelayConnection: NSObject, URLSessionDataDelegate {
         let bytes = outbox.count
         outbox = Data()
         let startedAt = Clock.nowMs()
-        session.dataTask(with: request) { [weak self] _, response, error in
+        let task = session.dataTask(with: request) { [weak self] _, response, error in
             self?.onMain { [weak self] in
                 guard let self, self.session === session else { return }
                 posting = false
@@ -208,7 +226,9 @@ public final class RelayConnection: NSObject, URLSessionDataDelegate {
                 }
                 flush()
             }
-        }.resume()
+        }
+        task.taskDescription = "send"
+        task.resume()
     }
 
     private func request(_ url: URL) -> URLRequest {
@@ -248,6 +268,11 @@ public final class RelayConnection: NSObject, URLSessionDataDelegate {
                 finish("bad data from relay")
             }
         }
+    }
+
+    public func urlSession(_ session: URLSession, task: URLSessionTask, didFinishCollecting metrics: URLSessionTaskMetrics) {
+        let kind = task.taskDescription ?? "?"
+        onMain { [self] in onTaskMetrics?(kind, metrics) }
     }
 
     public func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
