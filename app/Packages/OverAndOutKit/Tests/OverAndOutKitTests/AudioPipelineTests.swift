@@ -67,6 +67,9 @@ struct AudioPipelineTests {
         for frame in frames { audio.enqueue(frame) }
         audio.endPlayback()
         try await Task.sleep(nanoseconds: 150_000_000)
+        // A CI runner's virtual output device can play faster than real time: the burst is
+        // over before the stop, so there's nothing cut short to replay (as without a device).
+        guard drainedAt == nil else { return }
         audio.stopEngineForTesting()
         let stoppedAt = Date()
         audio.restartAfterConfigurationChange()
