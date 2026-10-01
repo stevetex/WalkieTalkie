@@ -395,18 +395,38 @@ final class ConversationController: NSObject, ObservableObject {
         answer(ring, via: "in app", delivered: incomingRingDelivered)
     }
 
-    /// The relay abandons an unanswered ring by itself; nothing to tell it. The decline is
+    /// The relay abandons an unanswered ring by itself. Decline tells it, so the ring doesn't
+    /// roll over to the iPhone (`byPerson`; not when the ring just ran out here). The decline is
     /// uploaded as a short timeline, so the relay's summaries can tell it from a missed ring.
-    func declineIncomingRing() {
+    func declineIncomingRing(byPerson: Bool = true) {
         let ring = incomingRing
         clearIncomingRing()
         closePreconnect()
         if let friendId = preparingFor { prepare(for: friendId) }
         guard let ring else { return }
+        if byPerson { reportDecline(ring.conversationId) }
         var timeline = Timeline(role: .receiver)
         if let sentAt = ring.pushSentAt { timeline.mark("pushSentAtServer", detail: String(Int(sentAt))) }
         timeline.mark("ringDeclined", detail: "in app")
         uploadTimeline(timeline, conversationId: ring.conversationId, clockOffsetMs: clockOffsetMs)
+    }
+
+    /// POST /v1/rings/decline, so a rollover (the recipient's Roll Over to iPhone) doesn't ring
+    /// the iPhone. Fire and forget: if it doesn't arrive, the iPhone rings, as without it.
+    private func reportDecline(_ conversationId: String) {
+        guard let baseURL = settings.baseURL else { return }
+        account.withToken { session in
+            guard let session else { return }
+            var request = URLRequest(url: baseURL.appendingPathComponent("v1/rings/decline"), timeoutInterval: 20)
+            request.httpMethod = "POST"
+            request.setValue("Bearer \(session.token)", forHTTPHeaderField: "Authorization")
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = try? JSONSerialization.data(withJSONObject: ["conversationId": conversationId])
+            URLSession.shared.dataTask(with: request) { _, response, error in
+                let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+                Telemetry.shared.event("declineReported", ["status": status, "failed": error != nil])
+            }.resume()
+        }
     }
 
     private func clearIncomingRing() {
@@ -1191,7 +1211,7 @@ extension ConversationController: UNUserNotificationCenterDelegate {
             self.incomingRingTimer = Timer.scheduledTimer(withTimeInterval: Self.inAppRingTimeout, repeats: false) { _ in
                 MainActor.assumeIsolated {
                     guard self.incomingRing == ring else { return }
-                    self.declineIncomingRing()
+                    self.declineIncomingRing(byPerson: false)
                     self.outcomes[ring.from] = OutcomeNote(outcome: .missed, at: Date())
                 }
             }

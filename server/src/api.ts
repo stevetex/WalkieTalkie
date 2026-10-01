@@ -11,7 +11,8 @@
 //   POST   /v1/auth/device           {deviceId, platform} → a session for another device (the watch)
 //   POST   /v1/auth/signout          ends this session and its device's push registration
 //   GET    /v1/me                    → the user, plus platforms: the kinds of device registered for rings
-//   PATCH  /v1/me                    {name?, ringOn?: "watch" | "iphone" | null, avatar?: <mascot ID> | null}
+//   PATCH  /v1/me                    {name?, ringOn?: "watch" | "iphone" | null, rollOver?: boolean,
+//                                     avatar?: <mascot ID> | null}
 //                                     (a mascot replaces the photo, and a new photo replaces the mascot)
 //   DELETE /v1/me                    {authorizationCode} → revokes the Apple token, deletes everything
 //   PUT    /v1/me/device             {platform, pushToken, pushType?, apnsEnvironment} for this session's
@@ -141,12 +142,13 @@ export function createApi(options: ApiOptions): ApiHandler {
     }],
     ["PATCH", /^\/v1\/me$/, async (req) => {
       const claims = await authorize(req);
-      const { name, ringOn, avatar } = await readBody(req);
-      if (name === undefined && ringOn === undefined && avatar === undefined) {
-        throw new AccountError(400, "bad-request", "name, ringOn or avatar is required");
+      const { name, ringOn, rollOver, avatar } = await readBody(req);
+      if (name === undefined && ringOn === undefined && rollOver === undefined && avatar === undefined) {
+        throw new AccountError(400, "bad-request", "name, ringOn, rollOver or avatar is required");
       }
       if (name !== undefined && typeof name !== "string") throw new AccountError(400, "bad-name");
       if (ringOn !== undefined && ringOn !== null && !isPlatform(ringOn)) throw new AccountError(400, "bad-ring-on");
+      if (rollOver !== undefined && typeof rollOver !== "boolean") throw new AccountError(400, "bad-roll-over");
       let user: User | undefined;
       if (avatar !== undefined && avatar !== null && !isAvatar(avatar)) throw new AccountError(400, "bad-avatar");
       if (typeof name === "string") {
@@ -156,6 +158,10 @@ export function createApi(options: ApiOptions): ApiHandler {
       if (ringOn !== undefined) {
         user = await accounts.setRingOn(claims.sub, ringOn as Platform | null);
         act("ring_on", claims.sub, { ringOn: (ringOn as string | null) ?? "default" });
+      }
+      if (typeof rollOver === "boolean") {
+        user = await accounts.setRollOver(claims.sub, rollOver);
+        act("roll_over", claims.sub, { rollOver });
       }
       if (avatar !== undefined) {
         user = await accounts.setAvatar(claims.sub, avatar as string | null);
@@ -400,13 +406,14 @@ function header(req: IncomingMessage, name: string): string | undefined {
   return typeof value === "string" && value ? value.replace(/[^\w .()-]/g, "").slice(0, 40) : undefined;
 }
 
-function userJSON(user: User): { id: string; name: string; photoVersion?: number; avatar?: string; ringOn?: Platform; diagnosticsRequestedAt?: number } {
+function userJSON(user: User): { id: string; name: string; photoVersion?: number; avatar?: string; ringOn?: Platform; rollOver?: boolean; diagnosticsRequestedAt?: number } {
   return {
     id: user.id,
     name: user.name,
     ...(user.photoVersion !== undefined ? { photoVersion: user.photoVersion } : {}),
     ...(user.avatar !== undefined ? { avatar: user.avatar } : {}),
     ...(user.ringOn !== undefined ? { ringOn: user.ringOn } : {}),
+    ...(user.rollOver ? { rollOver: true } : {}),
     ...(user.diagnosticsRequestedAt !== undefined ? { diagnosticsRequestedAt: user.diagnosticsRequestedAt } : {}),
   };
 }
