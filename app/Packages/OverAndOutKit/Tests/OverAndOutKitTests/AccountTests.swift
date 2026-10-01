@@ -10,7 +10,11 @@ import Testing
 /// `@unchecked Sendable`: URLProtocol isn't Sendable, and a held reply finishes on the test's
 /// task. This subclass adds no stored state; the shared replies and requests are behind `state`.
 final class StubProtocol: URLProtocol, @unchecked Sendable {
-    struct Reply: Sendable { let status: Int; let json: String; var held = false }
+    struct Reply: Sendable {
+        let status: Int; let json: String; var held = false; var failure: URLError.Code?
+        /// The request fails before any response, as on a closed connection.
+        static func failing(_ code: URLError.Code) -> Reply { Reply(status: 0, json: "", failure: code) }
+    }
 
     private struct State {
         var replies: [Reply] = []
@@ -47,6 +51,10 @@ final class StubProtocol: URLProtocol, @unchecked Sendable {
         let reply: Reply = Self.state.withLock {
             $0.requests.append(request)
             return $0.replies.isEmpty ? Reply(status: 500, json: "{}") : $0.replies.removeFirst()
+        }
+        if let failure = reply.failure {
+            client?.urlProtocol(self, didFailWithError: URLError(failure))
+            return
         }
         let finish: @Sendable () -> Void = { [self] in
             let response = HTTPURLResponse(url: request.url!, statusCode: reply.status, httpVersion: nil, headerFields: nil)!
@@ -171,6 +179,28 @@ struct AccountTests {
         StubProtocol.reset([])
         try await client(store).refreshIfNeeded()
         #expect(StubProtocol.requests.isEmpty)
+    }
+
+    @Test func aLostConnectionIsRetriedOnceForAGet() async throws {
+        let store = MemorySessionStore(session(expiresIn: 29 * 24 * 3600))
+        StubProtocol.reset([
+            .failing(.networkConnectionLost),
+            .init(status: 200, json: #"{"friends":[{"id":"u_b","name":"Bob","since":1}]}"#),
+        ])
+        let friends = try await client(store).friends()
+        #expect(friends.map(\.name) == ["Bob"])
+        #expect(StubProtocol.requests.count == 2)
+
+        StubProtocol.reset([.failing(.networkConnectionLost), .failing(.networkConnectionLost)])
+        await #expect(throws: URLError.self) { try await client(store).friends() }
+        #expect(StubProtocol.requests.count == 2)
+    }
+
+    @Test func aLostConnectionIsNotRetriedForAPost() async throws {
+        let store = MemorySessionStore(session(expiresIn: 29 * 24 * 3600))
+        StubProtocol.reset([.failing(.networkConnectionLost), .init(status: 200, json: "{}")])
+        await #expect(throws: URLError.self) { _ = try await client(store).acceptInvite(code: "abc") }
+        #expect(StubProtocol.requests.count == 1)
     }
 
     @Test func anEndedSessionSignsOut() async throws {

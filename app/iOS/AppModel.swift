@@ -162,7 +162,9 @@ final class AppModel: ObservableObject {
 
     // MARK: Profile, friends and blocks
 
-    func refresh() async {
+    /// `quietly`: the refresh on coming to the foreground, which the person didn't ask for. Its
+    /// failure (often the network not back yet after unlocking) goes to telemetry, not an alert.
+    func refresh(quietly: Bool = false) async {
         guard session != nil else { return }
         do {
             try await client.refreshIfNeeded()
@@ -186,7 +188,12 @@ final class AppModel: ObservableObject {
                 try await client.uploadDiagnostics(data, platform: .iphone)
             }
         } catch {
-            if session != nil { errorMessage = describe(error) }
+            guard session != nil else { return }
+            if quietly {
+                Telemetry.shared.event("refreshFailed", ["error": Self.errorCode(error)])
+            } else {
+                errorMessage = describe(error)
+            }
         }
     }
 
