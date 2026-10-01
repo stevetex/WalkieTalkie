@@ -29,6 +29,20 @@ struct TalkView: View {
         }
     }
 
+    /// The connection with this friend, as on the watch: connecting, live, or struck through
+    /// when they didn't answer or couldn't be reached; none otherwise.
+    private var connection: ConnectionGlyph.Status? {
+        guard isCurrent else { return nil }
+        if talk.peerId == friend.id {
+            switch talk.phase {
+            case .connecting: return .connecting
+            case .live: return .live
+            case .idle: break
+            }
+        }
+        return talk.unavailablePeer == friend.id ? .unavailable : nil
+    }
+
     private var status: String {
         if let other = talk.peerName, !isCurrent { return "In a conversation with \(other)" }
         if !talk.statusLine.isEmpty { return talk.statusLine }
@@ -43,12 +57,16 @@ struct TalkView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .padding(.horizontal, 40)
             .padding(.vertical, 12)
-            Text(status)
-                .font(.callout.weight(.semibold))
-                .foregroundStyle(statusColor)
-                .multilineTextAlignment(.center)
-                .lineLimit(2)
-                .padding(.horizontal, 24)
+            HStack(spacing: 6) {
+                if let connection { ConnectionGlyph(status: connection) }
+                Text(status)
+                    .foregroundStyle(statusColor)
+                    .multilineTextAlignment(.center)
+                    .lineLimit(2)
+            }
+            .font(.callout.weight(.semibold))
+            .accessibilityElement(children: .combine)
+            .padding(.horizontal, 24)
             // Always laid out, so the mascot doesn't move when a conversation starts or ends.
             Button(role: .destructive) { talk.end() } label: {
                 Label("End Conversation", systemImage: "xmark")

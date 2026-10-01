@@ -2,9 +2,9 @@ import SwiftUI
 
 /// The connection with a friend, beside their name on the Talk screen and in the friends
 /// list: one antenna, told apart by its shape as well as its colour (design decision
-/// 2026-09-29). None when idle.
-struct ConnectionGlyph: View {
-    enum Status {
+/// 2026-09-29). None when idle. On the watch and the iPhone.
+public struct ConnectionGlyph: View {
+    public enum Status: Sendable {
         /// Waves animating outward, yellow.
         case connecting
         /// A conversation is open: the antenna with its waves, green.
@@ -16,7 +16,12 @@ struct ConnectionGlyph: View {
     let status: Status
     var size: CGFloat = 15
 
-    var body: some View {
+    public init(status: Status, size: CGFloat = 15) {
+        self.status = status
+        self.size = size
+    }
+
+    public var body: some View {
         symbol
             .font(.system(size: size, weight: .semibold))
             .foregroundStyle(color)

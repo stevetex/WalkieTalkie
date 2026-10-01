@@ -187,7 +187,13 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
     // round trips on a network that's still waking up (option C: the notification carries
     // the ID). "pending" joins the user's newest queued ring (see Relay.join).
     const join = url.searchParams.get("join");
-    if (join) relay.handleMessage(peer, { type: "join", conversationId: join });
+    // &resumeBurst=<id>&resumeFrom=<seq>: a rejoin after the stream dropped mid-burst.
+    const resumeBurst = url.searchParams.get("resumeBurst");
+    const resumeFrom = Number(url.searchParams.get("resumeFrom"));
+    const resume = resumeBurst && resumeBurst.length <= 128 && Number.isInteger(resumeFrom) && resumeFrom >= 0
+      ? { burstId: resumeBurst, fromSeq: resumeFrom }
+      : undefined;
+    if (join) relay.handleMessage(peer, { type: "join", conversationId: join, ...(resume ? { resume } : {}) });
     // Keepalive, so idle proxies and carrier NATs don't drop the connection.
     const ping = setInterval(() => peer.sendJSON({ type: "ping" }), 15_000);
     req.on("close", () => {

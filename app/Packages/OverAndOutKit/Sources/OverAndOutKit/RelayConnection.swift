@@ -1,5 +1,17 @@
 import Foundation
 
+/// A rejoin after the relay stream dropped mid-message: the burst being heard and the
+/// sequence number of the first frame that didn't arrive.
+public struct RelayResume: Sendable, Equatable {
+    public let burstId: String
+    public let fromSeq: UInt32
+
+    public init(burstId: String, fromSeq: UInt32) {
+        self.burstId = burstId
+        self.fromSeq = fromSeq
+    }
+}
+
 /// Messages from the relay. See server/src/protocol.ts.
 public struct RelayMessage: Decodable, Sendable {
     public let type: String
@@ -11,12 +23,16 @@ public struct RelayMessage: Decodable, Sendable {
     public var holder: String?
     public var peer: String?
     public var replayBursts: Int?
+    /// joined, after a rejoin with a resume: how many frames of that burst are replayed.
+    public var resumedFrames: Int?
     public var droppedBursts: Int?
     public var from: String?
     /// ring (over the stream, to an app on screen): the caller's name and when it was sent.
     public var fromName: String?
     public var pushSentAt: Double?
     public var replay: Bool?
+    /// burst-start: the replay continues a burst this device was hearing when its stream dropped.
+    public var resumed: Bool?
     public var message: String?
     /// talk-refused: why ("not-friends", or "unavailable": none of their devices can ring).
     public var reason: String?
@@ -140,8 +156,10 @@ public final class RelayConnection: NSObject, URLSessionDataDelegate {
     }
 
     /// `join` also answers and joins that conversation in the stream request itself, so
-    /// the relay starts replaying the buffered message without another round trip.
-    public func connect(baseURL: URL, token: String, userId: String, join: String? = nil) {
+    /// the relay starts replaying the buffered message without another round trip. `resume`,
+    /// with it, rejoins after the stream dropped mid-message: the relay replays that burst
+    /// from the first frame missed.
+    public func connect(baseURL: URL, token: String, userId: String, join: String? = nil, resume: RelayResume? = nil) {
         close()
         self.token = token
         let configuration = URLSessionConfiguration.default
@@ -157,6 +175,8 @@ public final class RelayConnection: NSObject, URLSessionDataDelegate {
             URLQueryItem(name: "userId", value: userId),
             URLQueryItem(name: "clientTime", value: String(Int(helloSentAt))),
         ] + (join.map { [URLQueryItem(name: "join", value: $0)] } ?? [])
+            + (join != nil ? resume.map { [URLQueryItem(name: "resumeBurst", value: $0.burstId),
+                                          URLQueryItem(name: "resumeFrom", value: String($0.fromSeq))] } ?? [] : [])
         var send = URLComponents(url: baseURL.appendingPathComponent("v1/relay/send"), resolvingAgainstBaseURL: false)
         send?.queryItems = [URLQueryItem(name: "userId", value: userId)]
         guard let streamURL = stream?.url, let sendURL = send?.url else { return }

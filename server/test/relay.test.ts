@@ -116,6 +116,86 @@ test("a burst still in progress when the recipient joins continues live", async 
   });
 });
 
+test("a member whose stream drops mid-burst rejoins and resumes from the first frame missed", async () => {
+  await withServer(async (s) => {
+    const alice = client(s, "alice");
+    const bob = client(s, "bob");
+    await alice.register("Alice");
+    await bob.register("Bob");
+    await alice.connect();
+    await bob.connect();
+
+    const burstId = "b1";
+    alice.send({ type: "talk-start", to: "bob", burstId });
+    await alice.waitFor("floor-granted");
+    const ring = await bob.waitFor("ring");
+    bob.send({ type: "join", conversationId: ring.conversationId });
+    await bob.waitFor("burst-start");
+    for (let seq = 0; seq < 3; seq++) alice.sendFrame(2, seq, Buffer.alloc(640));
+    await new Promise((r) => setTimeout(r, 50));
+    assert.deepEqual(bob.frames.map((f) => f.readUInt32BE(1)), [0, 1, 2]);
+
+    // Run 106: the stream dies (airplane mode) while the friend keeps talking and finishes.
+    bob.close();
+    await new Promise((r) => setTimeout(r, 50));
+    for (let seq = 3; seq < 8; seq++) alice.sendFrame(2, seq, Buffer.alloc(640));
+    alice.send({ type: "talk-end", burstId });
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Back online: a fresh stream that rejoins and asks for the burst from frame 3.
+    const back = client(s, "bob");
+    await back.connect();
+    back.send({ type: "join", conversationId: ring.conversationId, resume: { burstId, fromSeq: 3 } });
+    const joined = await back.waitFor("joined");
+    assert.equal(joined.replayBursts, 1);
+    assert.equal(joined.resumedFrames, 5);
+    const start = await back.waitFor("burst-start");
+    assert.equal(start.burstId, burstId);
+    assert.equal(start.resumed, true);
+    await back.waitFor("burst-end");
+    assert.deepEqual(back.frames.map((f) => f.readUInt32BE(1)), [3, 4, 5, 6, 7]);
+    alice.close();
+    back.close();
+  });
+});
+
+test("a rejoin can resume a burst that's still going, then hear the rest live", async () => {
+  await withServer(async (s) => {
+    const alice = client(s, "alice");
+    const bob = new SpikeClient({ server: `http://localhost:${s.port}`, userId: "bob", token: "secret", transport: "http" });
+    await alice.register("Alice");
+    await bob.register("Bob");
+    await alice.connect();
+    await bob.connect();
+
+    const burstId = "b1";
+    alice.send({ type: "talk-start", to: "bob", burstId });
+    await alice.waitFor("floor-granted");
+    const ring = await bob.waitFor("ring");
+    bob.send({ type: "join", conversationId: ring.conversationId });
+    await bob.waitFor("burst-start");
+    for (let seq = 0; seq < 2; seq++) alice.sendFrame(2, seq, Buffer.alloc(640));
+    await new Promise((r) => setTimeout(r, 50));
+    bob.close();
+    await new Promise((r) => setTimeout(r, 50));
+    for (let seq = 2; seq < 4; seq++) alice.sendFrame(2, seq, Buffer.alloc(640));
+    await new Promise((r) => setTimeout(r, 50));
+
+    // The apps rejoin in the request that opens the stream (?join=…&resumeBurst=…&resumeFrom=…).
+    const back = new SpikeClient({ server: `http://localhost:${s.port}`, userId: "bob", token: "secret", transport: "http" });
+    await back.connect(ring.conversationId, { burstId, fromSeq: 2 });
+    assert.equal((await back.waitFor("joined")).resumedFrames, 2);
+    await back.waitFor("burst-start");
+    await new Promise((r) => setTimeout(r, 50));
+    for (let seq = 4; seq < 6; seq++) alice.sendFrame(2, seq, Buffer.alloc(640));
+    alice.send({ type: "talk-end", burstId });
+    await back.waitFor("burst-end");
+    assert.deepEqual(back.frames.map((f) => f.readUInt32BE(1)), [2, 3, 4, 5]);
+    alice.close();
+    back.close();
+  });
+});
+
 test("half duplex: the floor is denied while the other side is talking", async () => {
   await withServer(async (s) => {
     const alice = client(s, "alice");

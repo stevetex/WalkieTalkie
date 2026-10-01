@@ -58,9 +58,10 @@ export class SpikeClient {
     return this.api("POST", "/v1/devices", { userId: this.userId, name, pushToken, apnsEnvironment: "sandbox" });
   }
 
-  // `join` (HTTP transport only) joins a conversation in the request that opens the stream.
-  async connect(join?: string): Promise<void> {
-    if (this.opts.transport === "http") return this.connectHttp(join);
+  // `join` (HTTP transport only) joins a conversation in the request that opens the stream;
+  // `resume` (with it) rejoins after a dropped stream, from that burst's first missed frame.
+  async connect(join?: string, resume?: { burstId: string; fromSeq: number }): Promise<void> {
+    if (this.opts.transport === "http") return this.connectHttp(join, resume);
     const url = new URL("/v1/relay", this.opts.server);
     url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
     url.searchParams.set("userId", this.userId);
@@ -83,10 +84,14 @@ export class SpikeClient {
     this.clockOffsetMs = ack.serverTime - (sentAt + receivedAt) / 2;
   }
 
-  private async connectHttp(join?: string): Promise<void> {
+  private async connectHttp(join?: string, resume?: { burstId: string; fromSeq: number }): Promise<void> {
     const url = new URL("/v1/relay/stream", this.opts.server);
     url.searchParams.set("userId", this.userId);
     if (join) url.searchParams.set("join", join);
+    if (join && resume) {
+      url.searchParams.set("resumeBurst", resume.burstId);
+      url.searchParams.set("resumeFrom", String(resume.fromSeq));
+    }
     const sentAt = Date.now();
     url.searchParams.set("clientTime", String(sentAt));
     this.stream = new AbortController();

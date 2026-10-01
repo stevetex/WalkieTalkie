@@ -16,6 +16,7 @@ final class RelayStub: URLProtocol, @unchecked Sendable {
         var holdSends = false
         var sends: [Data] = []
         var held: [@Sendable () -> Void] = []
+        var streamURLs: [URL] = []
     }
 
     private static let state = OSAllocatedUnfairLock(initialState: State())
@@ -34,6 +35,9 @@ final class RelayStub: URLProtocol, @unchecked Sendable {
 
     static var heldSends: Int { state.withLock { $0.held.count } }
 
+    /// The URLs the stream was opened with, oldest first.
+    static var streamURLs: [URL] { state.withLock { $0.streamURLs } }
+
     static func releaseHeldSends() {
         // A named parameter: Swift 6.2 (Xcode 26) rejects $0 inside the defer.
         let held = state.withLock { locked in
@@ -49,6 +53,7 @@ final class RelayStub: URLProtocol, @unchecked Sendable {
     override func startLoading() {
         let url = request.url!
         if url.path.hasSuffix("/v1/relay/stream") {
+            Self.state.withLock { $0.streamURLs.append(url) }
             let hello = RelayRecord.encode(RelayRecord.json, Data(#"{"type":"hello-ack","serverTime":1000}"#.utf8))
             let records = Self.state.withLock { $0.streamRecords }
             // As the relay sends it: with a type, so URLSession doesn't hold data back to sniff one.
@@ -120,6 +125,26 @@ struct RelayConnectionTests {
         let records = RelayStub.sends[0]
         #expect(records.map(\.type) == [RelayRecord.json, RelayRecord.audio, RelayRecord.audio])
         #expect(records.dropFirst().map(\.payload) == [Data([1]), Data([2])])
+        relay.close()
+    }
+
+    /// Run 106: a rejoin after the stream dropped asks, in the stream's own request, for the
+    /// burst being heard from its first missed frame. Without a join there's nothing to resume.
+    @Test func aRejoinAsksForTheBurstFromItsFirstMissedFrame() async throws {
+        RelayStub.reset()
+        let relay = connection(stampsArrivals: false)
+        relay.connect(baseURL: base, token: "t", userId: "u", join: "c1", resume: RelayResume(burstId: "b1", fromSeq: 42))
+        try await waitUntil { relay.isReady }
+        relay.connect(baseURL: base, token: "t", userId: "u", resume: RelayResume(burstId: "b1", fromSeq: 42))
+        try await waitUntil { RelayStub.streamURLs.count == 2 }
+        let query = { (url: URL) in
+            Dictionary(uniqueKeysWithValues: (URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []).map { ($0.name, $0.value ?? "") })
+        }
+        let rejoin = query(RelayStub.streamURLs[0])
+        #expect(rejoin["join"] == "c1")
+        #expect(rejoin["resumeBurst"] == "b1")
+        #expect(rejoin["resumeFrom"] == "42")
+        #expect(query(RelayStub.streamURLs[1])["resumeBurst"] == nil)
         relay.close()
     }
 

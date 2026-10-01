@@ -38,6 +38,18 @@ export interface Peer {
   sendBinary(frame: Buffer): void;
 }
 
+// A rejoin's resume: the burst the member was hearing and the first frame (by its sequence
+// number) they didn't get.
+export interface Resume {
+  burstId: string;
+  fromSeq: number;
+}
+
+// A voice frame's sequence number (protocol.ts: kind byte, then a 32-bit big-endian seq).
+function frameSeq(frame: Buffer): number {
+  return frame.length >= 5 ? frame.readUInt32BE(1) : 0;
+}
+
 interface Burst {
   id: string;
   from: string;
@@ -51,6 +63,11 @@ interface Burst {
   startedAt: number;
   // Members this burst has started playing for; later frames are forwarded live to them.
   deliveredTo: Set<string>;
+  // Every frame sent to the other member (replayed or live), kept until resumeTtlMs after the
+  // burst ends, so a member whose stream dropped mid-burst can rejoin and resume from the
+  // first frame it missed (Relay.completeJoin, the join's resume).
+  sent: Buffer[];
+  endedAt: number | null;
   firstLiveFrameLogged: boolean;
   // Ends the burst at maxBurstMs if the sender never does.
   timer: NodeJS.Timeout | null;
@@ -119,6 +136,9 @@ export interface RelayOptions {
   // in time doesn't lose the message. (Design decision: unheard messages are dropped
   // rather than kept as clips; see the feasibility doc's "Design decisions".)
   ringTimeoutMs?: number;
+  // How long a heard burst's frames are kept after it ends, for a member who rejoins after
+  // their stream dropped (run 106: the iPhone lost the network mid-message).
+  resumeTtlMs?: number;
   // After the watch reports it answered, how long it has to open the relay socket and
   // join before the ring is abandoned. Socket setup on a real watch took ~7 s.
   answerJoinTimeoutMs?: number;
@@ -149,6 +169,7 @@ export class Relay {
       accounts: { ringLookup: async () => ({ allowed: false }) },
       now: Date.now,
       bufferTtlMs: 120_000,
+      resumeTtlMs: 30_000,
       ringTimeoutMs: 35_000,
       answerJoinTimeoutMs: 30_000,
       prefetchPushAfterMs: 0,
@@ -219,7 +240,7 @@ export class Relay {
         this.talkEnd(peer.userId, message.burstId);
         break;
       case "join":
-        this.join(peer, message.conversationId);
+        this.join(peer, message.conversationId, message.resume);
         break;
       case "leave": {
         const conversation = this.byId.get(message.conversationId);
@@ -242,7 +263,9 @@ export class Relay {
     if (burst.frameCount > this.opts.maxBurstMs / FRAME_MS) return this.cutOff(peer.userId, "burst too long");
     const other = otherMember(conversation, peer.userId);
     if (burst.deliveredTo.has(other)) {
-      // Heard live, so there's nothing to keep for a replay.
+      // Heard live, so there's nothing to keep for a replay; kept only to resume a member
+      // whose stream drops (sent to a dead stream, or to nobody until they rejoin).
+      burst.sent.push(frame);
       this.memberPeer(conversation, other)?.sendBinary(frame);
       if (!burst.firstLiveFrameLogged) {
         burst.firstLiveFrameLogged = true;
@@ -335,6 +358,8 @@ export class Relay {
       ended: false,
       startedAt: now,
       deliveredTo: new Set(),
+      sent: [],
+      endedAt: null,
       firstLiveFrameLogged: false,
       timer: null,
     };
@@ -426,6 +451,7 @@ export class Relay {
     this.dropActiveBurst(userId);
     const { conversation, burst } = active;
     burst.ended = true;
+    burst.endedAt = this.opts.now();
     if (conversation.floor?.burstId === burst.id) conversation.floor = null;
     for (const member of burst.deliveredTo) {
       this.memberPeer(conversation, member)?.sendJSON({ type: "burst-end", conversationId: conversation.id, burstId: burst.id });
@@ -460,7 +486,7 @@ export class Relay {
 
   // conversationId "pending" joins the user's newest queued ring instead, for the watch's
   // local-notification test, which can't know the ID in advance.
-  private join(peer: Peer, conversationId: string): void {
+  private join(peer: Peer, conversationId: string, resume?: Resume): void {
     if (conversationId === PENDING_RING) {
       const newest = this.takePolledRings(peer.userId).at(-1);
       if (!newest) return peer.sendJSON({ type: "error", message: "no pending ring" });
@@ -472,7 +498,7 @@ export class Relay {
       return;
     }
     // Replay only to a friend: check again unless that was just checked (by the ring, usually).
-    if (!peer.account || this.recentlyAuthorized(conversation)) return this.completeJoin(peer, conversation);
+    if (!peer.account || this.recentlyAuthorized(conversation)) return this.completeJoin(peer, conversation, resume);
     void this.authorize(conversation, peer.userId, otherMember(conversation, peer.userId)).then((allowed) => {
       // Disconnected meanwhile.
       if (this.devicePeer(peer.userId, peer.deviceId) !== peer) return;
@@ -480,20 +506,31 @@ export class Relay {
       if (!allowed || this.byId.get(conversation.id) !== conversation) {
         return peer.sendJSON({ type: "error", message: "unknown conversation" });
       }
-      this.completeJoin(peer, conversation);
+      this.completeJoin(peer, conversation, resume);
     });
   }
 
-  private completeJoin(peer: Peer, conversation: Conversation): void {
+  private completeJoin(peer: Peer, conversation: Conversation, resume?: Resume): void {
     const conversationId = conversation.id;
     const now = this.opts.now();
     this.pruneBursts(conversation);
     this.enter(conversation, peer);
     this.clearRing(conversation);
+    // A rejoin after the stream dropped: the burst they were hearing, from the first frame
+    // they didn't get. Then anything they haven't heard at all, as on a first join.
+    const resumed = resume
+      ? conversation.bursts.find((b) => b.id === resume.burstId && b.from !== peer.userId && b.deliveredTo.has(peer.userId))
+      : undefined;
     const pending = conversation.bursts.filter((b) => b.from !== peer.userId && !b.deliveredTo.has(peer.userId));
     const other = otherMember(conversation, peer.userId);
-    peer.sendJSON({ type: "joined", conversationId, peer: other, replayBursts: pending.length });
-    this.opts.metrics.server(conversation.id, "receiverJoined", now, `${pending.length} buffered`);
+    const missed = resumed && resume ? resumed.sent.filter((f) => frameSeq(f) >= resume.fromSeq) : [];
+    peer.sendJSON({ type: "joined", conversationId, peer: other, replayBursts: pending.length + (resumed ? 1 : 0), ...(resumed ? { resumedFrames: missed.length } : {}) });
+    this.opts.metrics.server(conversation.id, "receiverJoined", now, `${pending.length} buffered${resume ? `, resumed ${missed.length} frames` : ""}`);
+    if (resumed) {
+      peer.sendJSON({ type: "burst-start", conversationId, burstId: resumed.id, from: resumed.from, replay: true, resumed: true });
+      for (const frame of missed) peer.sendBinary(frame);
+      if (resumed.ended) peer.sendJSON({ type: "burst-end", conversationId, burstId: resumed.id });
+    }
     for (const burst of pending) this.startDelivery(conversation, burst, peer.userId, true);
   }
 
@@ -514,6 +551,7 @@ export class Relay {
       this.opts.metrics.server(conversation.id, "replayStarted", this.opts.now(), `${burst.frames.length} frames`);
     }
     for (const frame of burst.frames) peer.sendBinary(frame);
+    burst.sent.push(...burst.frames);
     // Heard: nothing left to replay (the sender never gets their own bursts).
     burst.frames = [];
     burst.bytes = 0;
@@ -822,7 +860,9 @@ export class Relay {
     conversation.bursts = conversation.bursts.filter((b) => {
       if (!b.ended) return true;
       const other = otherMember(conversation, b.from);
-      return !b.deliveredTo.has(other) && now - b.startedAt < this.opts.bufferTtlMs;
+      // Heard: kept a little longer, only to resume a member whose stream dropped.
+      if (b.deliveredTo.has(other)) return now - (b.endedAt ?? b.startedAt) < this.opts.resumeTtlMs;
+      return now - b.startedAt < this.opts.bufferTtlMs;
     });
   }
 
@@ -830,7 +870,9 @@ export class Relay {
   // so the next Talk starts a fresh conversation (and a fresh ring).
   private prune(conversation: Conversation): void {
     this.pruneBursts(conversation);
-    if (conversation.joined.size === 0 && conversation.bursts.length === 0 && !conversation.floor) {
+    // Bursts kept only for resuming don't keep the conversation: nobody's in it to resume.
+    const waiting = conversation.bursts.some((b) => !b.ended || !b.deliveredTo.has(otherMember(conversation, b.from)));
+    if (conversation.joined.size === 0 && !waiting && !conversation.floor) {
       this.clearRing(conversation);
       this.byId.delete(conversation.id);
       this.byPair.delete(pairKey(...conversation.members));
