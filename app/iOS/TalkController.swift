@@ -124,9 +124,8 @@ final class TalkController: ObservableObject {
         audio.onFirstCapturedFrame = { [weak self] t in
             self?.conversation?.timeline.mark("micFirstFrame", at: t, once: false)
         }
-        audio.onBurstCaptured = { [weak self] level, frames, rawPeak in
-            self?.markLevel("burstLevelSent", level, frames: frames,
-                            context: ",in=\(AudioLevel.inputPort()),raw=\(String(format: "%.1f", rawPeak))")
+        audio.onBurstCaptured = { [weak self] level, frames, detail in
+            self?.markLevel("burstLevelSent", level, frames: frames, context: ",in=\(AudioLevel.inputPort())" + detail)
         }
         audio.onCaptureFormat = { [weak self] format in
             self?.conversation?.timeline.mark("micFormat", detail: format, once: false)
