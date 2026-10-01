@@ -80,6 +80,13 @@ The plan is the Claude Doc in Links. Merged to `main` as PR #18; nothing deploye
 - **Kit CI** (`.github/workflows/kit.yml`, macOS, PRs and pushes to `main` touching the kit or relay, weekly, by hand): all the kit's tests plus `AudioLevelTests` (tones and a speech clip through Opus and the capture converter: level, pitch, clipping, SNR) and `RelayEndToEndTests` (Swift → a local relay → Swift). Their measurements go to `kit-history`. Written without a Mac: the first run is the first compile. Open question: whether `macos-26` has a new enough Xcode; Steve's Mac as a self-hosted runner is the fallback.
 - **Per-burst audio levels** (Steve's OK 2026-09-30; no privacy-policy change): the kit's `AudioLevel`; the apps mark `burstLevelSent`/`burstLevelPlayed` (RMS, peak, frames, clipped; the mic's port kind; the iPhone's volume); `oao.device` gets `levels` and the `silentBurstSent`, `silentBurstPlayed`, `clippedBurstSent` problems; `oao.levels` says how much quieter a listener played than the talker sent; `beta.ts` shows them; a silent-sends chart (metric `oao_silent_sends`, chart only). Needs a relay deploy, `telemetry-monitoring.ts apply` and a TestFlight build, each with Steve's OK.
 
+## Done on 2026-10-01: the screen-name filter (branch `screen-name-filter`)
+
+- **Why:** App Review guideline 1.2 asks apps with user-generated content to filter objectionable material; screen names were unchecked. Photos stay report-based for the Beta (Cloud Vision SafeSearch is the later option, a billed resource).
+- `server/src/name-filter.ts` with `server/src/name-blocklist.txt` (Shutterstock's LDNOOBW English list, CC BY 4.0, attributed in the file): whole words after folding accents, case and look-alike digits; runs of single letters joined; listed phrases; the whole name from six letters; four roots matched inside words. Exceptions for real names: Dick, Butt, Mong (and "s&m", which matched initials). No name in macOS's 1,308 proper names is refused.
+- `Accounts.rename` refuses with 400 `name-not-allowed` ("That name isn't allowed. Choose another one.", shown by existing builds); a disallowed name from Apple at first sign-in becomes "Friend". Existing names aren't rechecked.
+- Server only: needs an API deploy. `npm test` 126 pass (5 new).
+
 ## Done on 2026-09-30: device runs 73–89 on build 106 (the Swift 6 check)
 
 Each run's telemetry went to the `run-analyst` subagent in the background (Start here, step 7). Results are in the feasibility doc's Prototype results; follow-ups are backlog rows.

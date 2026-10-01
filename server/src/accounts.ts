@@ -33,6 +33,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { PreconditionFailed, type FirestoreData, type TransactionGet, type Write } from "./firestore.ts";
 import type { ApnsEnvironment } from "./apns.ts";
 import type { Docs } from "./docs.ts";
+import { nameAllowed } from "./name-filter.ts";
 
 export const USER_ID_PREFIX = "u_";
 export const PLATFORMS = ["watch", "iphone"] as const;
@@ -153,7 +154,10 @@ export class Accounts {
       }
       const id = newUserId();
       const createdAt = this.opts.now();
-      const user = { id, name: cleanName(name) ?? "Friend", createdAt };
+      // Apple's name is only offered once, so a disallowed one becomes "Friend" rather than
+      // failing the sign-in; onboarding asks for a screen name next anyway.
+      const clean = cleanName(name);
+      const user = { id, name: clean && nameAllowed(clean) ? clean : "Friend", createdAt };
       try {
         await this.docs.commit([
           // A mapping left behind with no user (shouldn't happen) is replaced.
@@ -190,6 +194,7 @@ export class Accounts {
   async rename(id: string, name: string): Promise<User> {
     const clean = cleanName(name);
     if (!clean) throw new AccountError(400, "bad-name", "the name is empty");
+    if (!nameAllowed(clean)) throw new AccountError(400, "name-not-allowed", "That name isn't allowed. Choose another one.");
     try {
       await this.docs.commit([{ set: `users/${requireUserId(id)}`, data: { name: clean }, fields: ["name"], exists: true }]);
     } catch (err) {
