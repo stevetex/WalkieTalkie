@@ -1311,7 +1311,7 @@
     "height": 1024,
     "mode": "RGB",
     "dpi": null,
-    "sha256": "ee1a4dde749bc3e7302e9daebd5500e4df85994f67e7a6286b5b80aa6f45b19e"
+    "sha256": "3b6727cb209b915dd303283c90285a9ef3b21e16601f4dc22d568c797ac1d363"
   },
   {
     "path": "11-fox/icons/exports/icon-180.png",
@@ -1319,7 +1319,7 @@
     "height": 180,
     "mode": "RGB",
     "dpi": null,
-    "sha256": "41071605b6959e96e87aa59afe40a142df3a6856b336e4f545e1e9a6a95a12bb"
+    "sha256": "ec8f799bdafb66c63769e68e50e9d03cc024187382ca9e5d7faa9e0cb47e1638"
   },
   {
     "path": "11-fox/icons/exports/icon-256.png",
@@ -1327,7 +1327,7 @@
     "height": 256,
     "mode": "RGB",
     "dpi": null,
-    "sha256": "c5f1c5ae4886851e61d486c88ccd69a61ea94567d35335eb358fc9b94d103b08"
+    "sha256": "7664c3d2caa3297f029e7147bf5607111bdf9c4ef81606bd85820a5985148120"
   },
   {
     "path": "11-fox/icons/exports/icon-48.png",
@@ -1335,7 +1335,7 @@
     "height": 48,
     "mode": "RGB",
     "dpi": null,
-    "sha256": "c4032910b3c78f36ede840b03763e6bc8ff4714d3175860e65b81a562c20b8ca"
+    "sha256": "f8a3351c06e04f8add0d66b604db473b6cb4e51b04c7d3ac12f98d1361e22493"
   },
   {
     "path": "11-fox/icons/exports/icon-512.png",
@@ -1343,7 +1343,7 @@
     "height": 512,
     "mode": "RGB",
     "dpi": null,
-    "sha256": "d08dd8dffc7f3819e6d86442198be1291c040efe8b3a0592cf4946a2c7426cf9"
+    "sha256": "eef74f1e7e69fd42d618e11d84c70d6224449a468d14f9aa2e86de001f042302"
   },
   {
     "path": "11-fox/icons/exports/icon-96.png",
@@ -1351,7 +1351,7 @@
     "height": 96,
     "mode": "RGB",
     "dpi": null,
-    "sha256": "10314c8c9dcab235faaa45a5e95eb53571180aa99087ed1965352ba63d69dccc"
+    "sha256": "5687ee728016e5a0787da7ac8d833175f7958147eb16d33408d66486951fb0d7"
   },
   {
     "path": "11-fox/icons/iPhone.xcassets/OAOFoxIcon.appiconset/icon-1024.png",
@@ -1359,7 +1359,7 @@
     "height": 1024,
     "mode": "RGB",
     "dpi": null,
-    "sha256": "ee1a4dde749bc3e7302e9daebd5500e4df85994f67e7a6286b5b80aa6f45b19e"
+    "sha256": "3b6727cb209b915dd303283c90285a9ef3b21e16601f4dc22d568c797ac1d363"
   },
   {
     "path": "11-fox/icons/icon-1024.png",
@@ -1367,7 +1367,7 @@
     "height": 1024,
     "mode": "RGB",
     "dpi": null,
-    "sha256": "ee1a4dde749bc3e7302e9daebd5500e4df85994f67e7a6286b5b80aa6f45b19e"
+    "sha256": "3b6727cb209b915dd303283c90285a9ef3b21e16601f4dc22d568c797ac1d363"
   },
   {
     "path": "11-fox/master.png",
@@ -1819,7 +1819,7 @@
     "height": 1024,
     "mode": "RGB",
     "dpi": null,
-    "sha256": "7bc49518ac97f96e2bfca24cd8f4c94df97992a4fb6586d2aaecb41c92e82b29"
+    "sha256": "e53ed43d84afd8ccc3b0ac6173f28867c7038f8b5f47b592233e50b1af1e4ac9"
   },
   {
     "path": "15-morticia/icons/exports/icon-180.png",
@@ -1827,7 +1827,7 @@
     "height": 180,
     "mode": "RGB",
     "dpi": null,
-    "sha256": "14a205a03d43ef19242838826b12609ee7525db14121ac337b00683f4daa64c4"
+    "sha256": "7f4e6b7c4ddab03fef8dceb1eb6e5de6ea429ba3d4e972cbcd7957dd845d7b2c"
   },
   {
     "path": "15-morticia/icons/exports/icon-256.png",
@@ -1835,7 +1835,7 @@
     "height": 256,
     "mode": "RGB",
     "dpi": null,
-    "sha256": "f992cd74829ffbaec480036a731d1c19489eab4a3c556efdc56301c0856cb64d"
+    "sha256": "78516841bff0db56bcdf96195eb45de8a2f323cddf4a82c3462f82d0da857baf"
   },
   {
     "path": "15-morticia/icons/exports/icon-48.png",
@@ -1843,7 +1843,7 @@
     "height": 48,
     "mode": "RGB",
     "dpi": null,
-    "sha256": "bde0a59b91ae36f3ea04d7cb6ea8059a1f1fc91ea66ce8d88b26b32c1a07f4c8"
+    "sha256": "ffbed524d4034c506c02affc9f72e00231239e69dc585bc6dc3a0b168d8c4e88"
   },
   {
     "path": "15-morticia/icons/exports/icon-512.png",
@@ -1851,7 +1851,7 @@
     "height": 512,
     "mode": "RGB",
     "dpi": null,
-    "sha256": "bebbf448203600362c7fc12c23517be39ebb6b3e1e4cd69efa7f897a6b17efff"
+    "sha256": "f97b35e06b5c4d3d9c353c1f3a7f7a6506f64cdd7bd9bd9469f414963b29309d"
   },
   {
     "path": "15-morticia/icons/exports/icon-96.png",
@@ -1859,7 +1859,7 @@
     "height": 96,
     "mode": "RGB",
     "dpi": null,
-    "sha256": "f481e892100c94aab47d696e1a0034441fcdecbf0322df96999c10e0a1b1ae6e"
+    "sha256": "446bffb095abc27f3dd929947fc0d5768f49ee7e00be7dee040abf17857b93b7"
   },
   {
     "path": "15-morticia/icons/iPhone.xcassets/OAOMorticiaIcon.appiconset/icon-1024.png",
@@ -1867,7 +1867,7 @@
     "height": 1024,
     "mode": "RGB",
     "dpi": null,
-    "sha256": "7bc49518ac97f96e2bfca24cd8f4c94df97992a4fb6586d2aaecb41c92e82b29"
+    "sha256": "e53ed43d84afd8ccc3b0ac6173f28867c7038f8b5f47b592233e50b1af1e4ac9"
   },
   {
     "path": "15-morticia/icons/icon-1024.png",
@@ -1875,7 +1875,7 @@
     "height": 1024,
     "mode": "RGB",
     "dpi": null,
-    "sha256": "7bc49518ac97f96e2bfca24cd8f4c94df97992a4fb6586d2aaecb41c92e82b29"
+    "sha256": "e53ed43d84afd8ccc3b0ac6173f28867c7038f8b5f47b592233e50b1af1e4ac9"
   },
   {
     "path": "15-morticia/master.png",

@@ -38,6 +38,6 @@ These are full-color RGB PNGs, with no cut contours, bleed, color separations, e
 
 ## Provenance and visual consistency
 
-The built-in image generation tool produced an individual transparent master for each approved character, then an opaque indigo icon adaptation from that master. Image edits were performed with that tool. macOS `sips` produced size and DPI exports. The icon adaptations may have small rendering differences from the transparent masters; they are not claimed to be pixel-identical composites. Generated indigo backgrounds can contain slight color variation.
+The built-in image generation tool produced an individual transparent master for each approved character, then an opaque indigo icon adaptation from that master. Image edits were performed with that tool. macOS `sips` produced size and DPI exports. The icon adaptations may have small rendering differences from the transparent masters; they are not claimed to be pixel-identical composites. Generated indigo backgrounds can contain slight color variation. Fox's and Morticia's icons are the exception: since October 1, 2026 they are composited from their masters by `icon-from-master.swift` (see GENERATION.md).
 
 Exact generation prompts are in [GENERATION.md](GENERATION.md). Validation results are in [VALIDATION.md](VALIDATION.md). All artwork is raster; no SVG, editable layers or vector source is implied.

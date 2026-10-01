@@ -29,3 +29,7 @@ Characters 04 and 05 were updated, and 16 Honey and 17 Cocoa bow variants were a
 - `xcodebuild -project app/OverAndOut.xcodeproj -scheme OverAndOut -destination 'generic/platform=iOS Simulator' -derivedDataPath /private/tmp/oao-pirate-build CODE_SIGNING_ALLOWED=NO build` succeeded for the iPhone app and embedded Watch app. Both generated asset symbol files include `MascotPirate`. Warnings in unchanged concurrency code remain.
 
 The avatar picker consumes `Mascot.allCases`, which now includes Pirate. No signed device build, live account selection test, runtime app-icon switching, or physical print proof was performed for this addition.
+
+## Fox and Morticia rescale — October 1, 2026
+
+- Fox and Morticia were rescaled on 2026-10-01 because the 78 percent circular-mask refinement had left them visibly smaller than the other 16 avatars (288-pixel content 131 × 156 and 156 × 151, now 176 × 216 and 210 × 208, against 157–194 × 203–235); their icons are now composited from the unchanged masters (largest foreground radius 489.64 and 486.12 px, `pixel-validation.json`), their exports and both apps' avatars were regenerated with `sips`, `manifest.json` hashes were refreshed, and both apps' asset catalogs and the four icon catalogs compiled with `actool`.
