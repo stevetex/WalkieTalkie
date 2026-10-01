@@ -36,7 +36,8 @@ export type ClientMessage =
   | { type: "talk-start"; to: string; burstId: string }
   | { type: "talk-end"; burstId: string }
   // Receiver answered the ring: replay anything buffered, then go live.
-  | { type: "join"; conversationId: string }
+  // resume: a rejoin after the stream dropped mid-burst; replays that burst from fromSeq.
+  | { type: "join"; conversationId: string; resume?: { burstId: string; fromSeq: number } }
   | { type: "leave"; conversationId: string };
 
 const MAX_ID_LENGTH = 128;
@@ -53,7 +54,14 @@ export function parseClientMessage(value: unknown): ClientMessage | null {
       return id(m.to) && id(m.burstId) ? { type: "talk-start", to: m.to, burstId: m.burstId } : null;
     case "talk-end":
       return id(m.burstId) ? { type: "talk-end", burstId: m.burstId } : null;
-    case "join":
+    case "join": {
+      if (!id(m.conversationId)) return null;
+      const r = m.resume as Record<string, unknown> | undefined;
+      const resume = r && typeof r === "object" && id(r.burstId) && Number.isInteger(r.fromSeq) && (r.fromSeq as number) >= 0
+        ? { burstId: r.burstId, fromSeq: r.fromSeq as number }
+        : undefined;
+      return { type: "join", conversationId: m.conversationId, ...(resume ? { resume } : {}) };
+    }
     case "leave":
       return id(m.conversationId) ? { type: m.type, conversationId: m.conversationId } : null;
     default:
@@ -71,8 +79,9 @@ export type ServerMessage =
   // The user joined or talked in this conversation from another of their devices, which now
   // has it; this device should end its side.
   | { type: "moved"; conversationId: string }
-  | { type: "joined"; conversationId: string; peer: string; replayBursts: number }
-  | { type: "burst-start"; conversationId: string; burstId: string; from: string; replay: boolean }
+  // resumedFrames: on a rejoin with resume, how many frames of that burst are replayed.
+  | { type: "joined"; conversationId: string; peer: string; replayBursts: number; resumedFrames?: number }
+  | { type: "burst-start"; conversationId: string; burstId: string; from: string; replay: boolean; resumed?: boolean }
   | { type: "burst-end"; conversationId: string; burstId: string }
   | { type: "peer-left"; conversationId: string; peer: string }
   // The two may no longer talk (a block, an unfriending or a deleted account): the relay

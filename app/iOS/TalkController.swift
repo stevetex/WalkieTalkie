@@ -29,6 +29,9 @@ final class TalkController: ObservableObject {
     static let maxLevelMarks = 20
     /// An in-app ring stops after this; the relay abandons the ring at 35 s.
     static let inAppRingTimeout: TimeInterval = 30
+    /// How long to keep trying to rejoin after the stream drops mid-conversation; the relay
+    /// keeps a heard message 30 s after it ends for the resume.
+    static let reconnectWindowMs: Double = 30_000
 
     enum Phase: Equatable {
         case idle
@@ -48,6 +51,10 @@ final class TalkController: ObservableObject {
     @Published private(set) var incomingRing: Ring?
     /// A conversation someone else started, for the UI to show that friend's Talk screen.
     @Published var arrivedFrom: String?
+    /// The friend who didn't answer, can't be reached, or was lost when the connection couldn't
+    /// be restored: their Talk screen shows the struck-through antenna, as on the watch, until
+    /// the next conversation with them.
+    @Published private(set) var unavailablePeer: String?
 
     let ptt: PushToTalkChannel
     private let client: AccountClient
@@ -74,6 +81,11 @@ final class TalkController: ObservableObject {
     private var idleTimer: Timer?
     private var incomingRingTimer: Timer?
     private var incomingBurstEnded = false
+    /// The burst being heard and the next frame expected in it, for resuming after a drop.
+    private var incomingBurstId: String?
+    private var nextIncomingSeq: UInt32 = 0
+    /// Reconnecting after the stream dropped mid-conversation: since when, and attempts so far.
+    private var reconnecting: (since: Double, attempts: Int)?
     private var speakerIdle = true
     private var clockOffsetMs: Double = 0
     private var bestClockRoundTripMs = Double.infinity
@@ -99,6 +111,7 @@ final class TalkController: ObservableObject {
         relay.onReady = { [unowned self] offset in relayReady(clockOffsetMs: offset) }
         relay.onMessage = { [unowned self] message in handle(message) }
         relay.onFrame = { [unowned self] frame in
+            if let seq = VoiceFrame.decode(frame)?.seq { nextIncomingSeq = max(nextIncomingSeq, seq + 1) }
             if conversation?.timeline.has("firstFrameReceived") == false { conversation?.timeline.mark("firstFrameReceived") }
             speakerIdle = false
             audio.enqueue(frame)
@@ -110,7 +123,7 @@ final class TalkController: ObservableObject {
             // The stream ended without the app closing it, mid-conversation.
             conversation?.timeline.mark("relayClosed", detail: String(reason.prefix(80)), once: false)
             Telemetry.shared.event("relayDropped", ["reason": String(reason.prefix(80)), "conversationId": conversation?.conversationId ?? ""])
-            finish()
+            reconnectAfterDrop()
         }
         audio.onFrame = { [weak self] frame in self?.sendCaptured(frame) }
         audio.onFirstPlayback = { [weak self] t in
@@ -313,6 +326,7 @@ final class TalkController: ObservableObject {
         conversation = Conversation(outgoing: false, conversationId: ring.conversationId,
                                     peerId: ring.from, peerName: ring.fromName, timeline: timeline)
         phase = .connecting
+        if unavailablePeer == ring.from { unavailablePeer = nil }
         peerId = ring.from
         peerName = ring.fromName
         statusLine = "Connecting to \(ring.fromName)…"
@@ -349,6 +363,7 @@ final class TalkController: ObservableObject {
         timeline.mark("talkPressed")
         conversation = Conversation(outgoing: true, conversationId: nil, peerId: peerId, peerName: peerName, timeline: timeline)
         phase = .connecting
+        if unavailablePeer == peerId { unavailablePeer = nil }
         self.peerId = peerId
         self.peerName = peerName
         statusLine = "Connecting…"
@@ -363,7 +378,7 @@ final class TalkController: ObservableObject {
 
     // MARK: Relay
 
-    private func connectRelay(join: String? = nil) {
+    private func connectRelay(join: String? = nil, resume: RelayResume? = nil) {
         guard let baseURL = relayBaseURL else { return finish(status: "No server configured") }
         let conversationId = conversation?.conversationId
         withToken { [weak self] session in
@@ -373,7 +388,46 @@ final class TalkController: ObservableObject {
                 return finish(status: "You're signed out")
             }
             log(join.map { "Connecting to the relay, joining \($0)" } ?? "Connecting to the relay")
-            relay.connect(baseURL: baseURL, token: session.token, userId: session.userId, join: join)
+            relay.connect(baseURL: baseURL, token: session.token, userId: session.userId, join: join, resume: resume)
+        }
+    }
+
+    /// The stream dropped mid-conversation (run 106: airplane mode for 20 s ended it at once).
+    /// Try for a while to rejoin on a fresh stream, resuming the message being heard from its
+    /// first missed frame, before giving up.
+    private func reconnectAfterDrop() {
+        guard let current = conversation, let conversationId = current.conversationId else { return finish() }
+        if talkHeld || burstId != nil {
+            // The relay ended the burst when the stream went; what's said now wouldn't go out.
+            cancelBurst()
+            talkHeld = false
+            isTalking = false
+        }
+        if reconnecting == nil { reconnecting = (Clock.nowMs(), 0) }
+        phase = .connecting
+        statusLine = "Reconnecting…"
+        updateTalkReady()
+        guard let drop = reconnecting, Clock.nowMs() - drop.since < Self.reconnectWindowMs else {
+            log("Couldn't reconnect")
+            conversation?.timeline.mark("reconnectGaveUp", detail: "\(reconnecting?.attempts ?? 0) attempts", once: false)
+            reconnecting = nil
+            UINotificationFeedbackGenerator().notificationOccurred(.error)
+            unavailablePeer = current.peerId
+            return finish(status: "Lost the connection to \(current.peerName)")
+        }
+        // At most 2 s apart, so it's back within about 2 s of the network (run 106's test:
+        // with 4 and 8 s it waited 7 s after the network returned).
+        let delays: [Double] = [0, 1, 2]
+        let delay = delays[min(drop.attempts, delays.count - 1)]
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+            guard let self, conversation?.conversationId == conversationId, var attempt = reconnecting else { return }
+            attempt.attempts += 1
+            reconnecting = attempt
+            let resume = incomingBurstId.flatMap { burst in
+                incomingBurstEnded && speakerIdle ? nil : RelayResume(burstId: burst, fromSeq: nextIncomingSeq)
+            }
+            conversation?.timeline.mark("joinSent", detail: "reconnect \(attempt.attempts)" + (resume.map { ", resume from \($0.fromSeq)" } ?? ""), once: false)
+            connectRelay(join: conversationId, resume: resume)
         }
     }
 
@@ -451,6 +505,7 @@ final class TalkController: ObservableObject {
         case "talk-refused":
             UINotificationFeedbackGenerator().notificationOccurred(.error)
             cancelBurst()
+            unavailablePeer = conversation?.peerId
             finish(status: message.reason == "unavailable" ? "\(name) isn't available" : "Can't reach \(name)")
         case "moved":
             // Answered or talked on the watch: the conversation is there now.
@@ -459,22 +514,32 @@ final class TalkController: ObservableObject {
             // A block, an unfriending or a deleted account: the relay dropped the conversation.
             guard message.conversationId == conversation?.conversationId else { return }
             cancelBurst()
+            unavailablePeer = conversation?.peerId
             finish(status: "Can't reach \(name)")
         case "joined":
             log("Joined")
             conversation?.joined = true
-            conversation?.timeline.mark("joined", detail: "\(message.replayBursts ?? 0) buffered bursts")
+            conversation?.timeline.mark("joined", detail: "\(message.replayBursts ?? 0) buffered bursts", once: false)
             phase = .live
+            if let drop = reconnecting {
+                reconnecting = nil
+                conversation?.timeline.mark("rejoinedAfterDrop", detail: "attempt \(drop.attempts), \(Int(Clock.nowMs() - drop.since)) ms, resumed \(message.resumedFrames ?? 0) frames", once: false)
+            }
             statusLine = "With \(name)"
             ptt.setServiceStatus(.ready)
             updateTalkReady()
         case "burst-start":
-            conversation?.timeline.mark("burstStartReceived", detail: message.replay == true ? "replay" : "live", once: false)
+            let resumed = message.resumed == true && message.burstId == incomingBurstId
+            if !resumed { nextIncomingSeq = 0 }
+            incomingBurstId = message.burstId
+            unavailablePeer = nil
+            conversation?.timeline.mark("burstStartReceived", detail: resumed ? "resumed" : message.replay == true ? "replay" : "live", once: false)
             remoteTalking = true
             incomingBurstEnded = false
             statusLine = "\(name) is talking"
             idleTimer?.invalidate()
-            audio.beginPlayback()
+            // A resumed burst carries on where it stopped; resetting the decoder would glitch it.
+            if !resumed { audio.beginPlayback() }
             // PushToTalk: the system activates audio for the speaker (a push already did).
             if usesPushToTalk, !audioActive { ptt.setRemoteSpeaker(name) }
         case "burst-end":
@@ -487,11 +552,16 @@ final class TalkController: ObservableObject {
         case "ring-timeout":
             UINotificationFeedbackGenerator().notificationOccurred(.error)
             statusLine = "\(name) didn't answer"
+            unavailablePeer = conversation?.peerId
             conversation?.timeline.mark("ringTimedOut", detail: "\(message.droppedBursts ?? 0) bursts dropped")
         case "error":
             log("Relay error: \(message.message ?? "unknown")")
             if message.message == "unknown conversation", conversation?.outgoing == false, conversation?.joined == false {
                 finish(status: "Missed \(name)")
+            } else if message.message == "unknown conversation", reconnecting != nil {
+                // Back after a drop, but the relay has ended the conversation meanwhile.
+                reconnecting = nil
+                finish(status: "Lost the connection to \(name)")
             }
         default:
             break
@@ -690,6 +760,9 @@ final class TalkController: ObservableObject {
 
         conversation = nil
         incomingBurstEnded = false
+        incomingBurstId = nil
+        nextIncomingSeq = 0
+        reconnecting = nil
         speakerIdle = true
         talkReady = false
         talkHeld = false

@@ -25,6 +25,9 @@ final class ConversationController: NSObject, ObservableObject {
     static let conversationWindow: TimeInterval = 45
     /// An in-app ring stops after this; the relay abandons the ring at 35 s.
     static let inAppRingTimeout: TimeInterval = 30
+    /// How long to keep trying to rejoin after the stream drops mid-conversation; the relay
+    /// keeps a heard message 30 s after it ends for the resume.
+    static let reconnectWindowMs: Double = 30_000
     /// Talk starts before the relay stream opens; a stream that hasn't opened by then fails.
     static let connectTimeout: TimeInterval = 10
     /// A stream a Talk screen opened ahead of a press closes after this with no conversation.
@@ -125,6 +128,10 @@ final class ConversationController: NSObject, ObservableObject {
     private var activatingAudio = false
     /// Answering already retried on a fresh stream once.
     private var rejoinedOnFreshStream = false
+    /// Reconnecting after the stream dropped mid-conversation: since when, and attempts so far.
+    private var reconnecting: (since: Double, attempts: Int)?
+    /// The next frame expected in the burst being heard, for resuming it after a drop.
+    private var nextIncomingSeq: UInt32 = 0
     /// Prototype: frames of each burst already played from the extension's download, so
     /// the relay's replay of them is skipped (see playPrefetched).
     private var prefetchedFrames: [String: Int] = [:]
@@ -170,8 +177,10 @@ final class ConversationController: NSObject, ObservableObject {
         relay.onMessage = { [unowned self] message in handle(message) }
         relay.onFrame = { [unowned self] frame in
             // Already played from the prefetch download.
+            let seq = VoiceFrame.decode(frame)?.seq
+            if let seq { nextIncomingSeq = max(nextIncomingSeq, seq + 1) }
             if let burst = incomingBurstId, let played = prefetchedFrames[burst],
-               let seq = VoiceFrame.decode(frame)?.seq, seq < played { return }
+               let seq, seq < played { return }
             if conversation?.timeline.has("firstFrameReceived") == false {
                 conversation?.timeline.mark("firstFrameArrived", at: relay.lastArrivalMs)
                 conversation?.timeline.mark("firstFrameReceived")
@@ -198,7 +207,7 @@ final class ConversationController: NSObject, ObservableObject {
             // The stream ended without the app closing it, mid-conversation.
             conversation?.timeline.mark("relayClosed", detail: String(reason.prefix(80)), once: false)
             Telemetry.shared.event("relayDropped", ["reason": String(reason.prefix(80)), "conversationId": current.conversationId ?? ""])
-            finish()
+            reconnectAfterDrop()
         }
         relay.onTaskMetrics = { [unowned self] kind, metrics in
             guard let network = Self.describe(metrics) else { return }
@@ -448,6 +457,7 @@ final class ConversationController: NSObject, ObservableObject {
         outcomes[ring.from] = nil
         rejoinedOnFreshStream = false
         playPrefetched(ring.conversationId)
+        reportAnswer(ring.conversationId)
         if preconnect != nil, relay.isReady || relay.isConnecting {
             joinOverPreconnectedStream(ring.conversationId)
         } else {
@@ -516,6 +526,34 @@ final class ConversationController: NSObject, ObservableObject {
         }
     }
 
+    /// Tells the relay at once that the ring was answered, so it keeps the message for the
+    /// join rather than dropping it when the ring's 35 s run out. The join itself can take
+    /// that long after a tap that woke a frozen app (run 103: the stream took 14 s to open,
+    /// and the rest of the message was gone by then). A separate request, so it doesn't
+    /// wait behind the stream.
+    private func reportAnswer(_ conversationId: String) {
+        guard let baseURL = settings.baseURL else { return }
+        account.withToken { [weak self] session in
+            guard let session else { return }
+            var request = URLRequest(url: baseURL.appendingPathComponent("v1/rings/answer"), timeoutInterval: 20)
+            request.httpMethod = "POST"
+            request.setValue("Bearer \(session.token)", forHTTPHeaderField: "Authorization")
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = try? JSONSerialization.data(withJSONObject: ["conversationId": conversationId])
+            let sentAt = Clock.nowMs()
+            URLSession.shared.dataTask(with: request) { _, response, error in
+                let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+                let detail = error.map { "error: \($0.localizedDescription.prefix(60))" } ?? "HTTP \(status)"
+                let doneAt = Clock.nowMs()
+                DispatchQueue.main.async {
+                    guard let self, self.conversation?.conversationId == conversationId else { return }
+                    self.conversation?.timeline.mark("answerReportSent", at: sentAt)
+                    self.conversation?.timeline.mark("answerReported", at: doneAt, detail: detail)
+                }
+            }.resume()
+        }
+    }
+
     /// Opens the relay stream without joining while an in-app ring is showing.
     private func preconnectRelay() {
         guard conversation == nil, preconnect == nil, let baseURL = settings.baseURL else { return }
@@ -555,6 +593,45 @@ final class ConversationController: NSObject, ObservableObject {
         log("Rejoining on a fresh stream (\(why))")
         conversation?.timeline.mark("joinSent", detail: "fresh stream", once: false)
         connectRelay(join: conversationId)
+    }
+
+    /// The stream dropped mid-conversation (run 106: the network went away for 20 s). Try for
+    /// a while to rejoin on a fresh stream, resuming the message being heard from its first
+    /// missed frame, before giving up.
+    private func reconnectAfterDrop() {
+        guard let current = conversation, let conversationId = current.conversationId else { return finish() }
+        if talkHeld || burstId != nil {
+            // The relay ended the burst when the stream went; what's said now wouldn't go out.
+            audio.endCapture {}
+            burstId = nil
+            isTalking = false
+            talkHeld = false
+        }
+        if reconnecting == nil { reconnecting = (Clock.nowMs(), 0) }
+        phase = .connecting
+        updateTalkReady()
+        guard let drop = reconnecting, Clock.nowMs() - drop.since < Self.reconnectWindowMs else {
+            log("Couldn't reconnect")
+            conversation?.timeline.mark("reconnectGaveUp", detail: "\(reconnecting?.attempts ?? 0) attempts", once: false)
+            reconnecting = nil
+            WKInterfaceDevice.current().play(.failure)
+            return finish(outcome: .couldNotConnect)
+        }
+        // At most 2 s apart, so it's back within about 2 s of the network (run 106's test:
+        // with 4 and 8 s it waited 7 s after the network returned).
+        let delays: [Double] = [0, 1, 2]
+        let delay = delays[min(drop.attempts, delays.count - 1)]
+        let id = current.id
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+            guard let self, conversation?.id == id, var attempt = reconnecting else { return }
+            attempt.attempts += 1
+            reconnecting = attempt
+            let resume = incomingBurstId.flatMap { burst in
+                incomingBurstEnded && speakerIdle ? nil : RelayResume(burstId: burst, fromSeq: nextIncomingSeq)
+            }
+            conversation?.timeline.mark("joinSent", detail: "reconnect \(attempt.attempts)" + (resume.map { ", resume from \($0.fromSeq)" } ?? ""), once: false)
+            connectRelay(join: conversationId, resume: resume)
+        }
     }
 
     private func removeDeliveredNotifications(for conversationId: String) {
@@ -603,7 +680,7 @@ final class ConversationController: NSObject, ObservableObject {
 
     // MARK: Relay
 
-    private func connectRelay(join: String? = nil) {
+    private func connectRelay(join: String? = nil, resume: RelayResume? = nil) {
         guard let baseURL = settings.baseURL else {
             log("The server isn't configured in this build")
             return finish(outcome: .couldNotConnect)
@@ -617,7 +694,7 @@ final class ConversationController: NSObject, ObservableObject {
                 // The app shows its sign-in prompt.
                 return finish()
             }
-            relay.connect(baseURL: baseURL, token: session.token, userId: session.userId, join: join)
+            relay.connect(baseURL: baseURL, token: session.token, userId: session.userId, join: join, resume: resume)
         }
     }
 
@@ -688,20 +765,36 @@ final class ConversationController: NSObject, ObservableObject {
         case "joined":
             conversation?.timeline.mark("joinedArrived", at: relay.lastArrivalMs)
             conversation?.joined = true
-            conversation?.timeline.mark("joined", detail: "\(message.replayBursts ?? 0) buffered bursts")
+            conversation?.timeline.mark("joined", detail: "\(message.replayBursts ?? 0) buffered bursts", once: false)
             phase = .live
+            if let drop = reconnecting {
+                reconnecting = nil
+                conversation?.timeline.mark("rejoinedAfterDrop", detail: "attempt \(drop.attempts), \(Int(Clock.nowMs() - drop.since)) ms, resumed \(message.resumedFrames ?? 0) frames", once: false)
+            }
+            if message.replayBursts ?? 0 == 0, !prefetchedFrames.isEmpty, incomingBurstId == nil, remoteTalking {
+                // The downloaded start of a message, and the relay has nothing more: it dropped
+                // the rest when the ring timed out. Play what's here, then stop listening
+                // (run 103: the mouth stayed on "listening" until End).
+                conversation?.timeline.mark("prefetchedRestLost")
+                incomingBurstEnded = true
+                audio.endPlayback()
+                friendStoppedTalkingIfDone()
+                resetIdleTimer()
+            }
         case "burst-start":
+            let resumed = message.resumed == true && message.burstId == incomingBurstId
+            if !resumed { nextIncomingSeq = 0 }
             incomingBurstId = message.burstId
             let prefetched = message.burstId.flatMap { prefetchedFrames[$0] }
             conversation?.timeline.mark("burstStartReceived",
-                                        detail: (message.replay == true ? "replay" : "live") + (prefetched.map { ", \($0) frames prefetched" } ?? ""),
+                                        detail: (resumed ? "resumed" : message.replay == true ? "replay" : "live") + (prefetched.map { ", \($0) frames prefetched" } ?? ""),
                                         once: false)
             remoteTalking = true
             incomingBurstEnded = false
             if let id = conversation?.peerId { outcomes[id] = nil }
             idleTimer?.invalidate()
-            // A prefetched burst is already playing; resetting the decoder would glitch it.
-            if prefetched == nil { audio.beginPlayback() }
+            // A prefetched or resumed burst is already playing; resetting the decoder would glitch it.
+            if prefetched == nil, !resumed { audio.beginPlayback() }
         case "burst-end":
             // Still talking until the speaker has played it all.
             incomingBurstEnded = true
@@ -735,6 +828,11 @@ final class ConversationController: NSObject, ObservableObject {
                 // Answered after the relay gave up on the ring: the message is gone.
                 WKInterfaceDevice.current().play(.failure)
                 finish(outcome: .missed)
+            } else if message.message == "unknown conversation", reconnecting != nil {
+                // Back after a drop, but the relay has ended the conversation meanwhile.
+                reconnecting = nil
+                WKInterfaceDevice.current().play(.failure)
+                finish(outcome: .couldNotConnect)
             }
         default:
             break
@@ -874,6 +972,8 @@ final class ConversationController: NSObject, ObservableObject {
         conversation = nil
         preconnect = nil
         prefetchedFrames = [:]
+        reconnecting = nil
+        nextIncomingSeq = 0
         incomingBurstId = nil
         incomingBurstEnded = false
         speakerIdle = true
