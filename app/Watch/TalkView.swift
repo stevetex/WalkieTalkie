@@ -79,7 +79,7 @@ struct TalkView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Brand.indigo.ignoresSafeArea())
         .toolbar {
-            ToolbarItem(placement: endPlacement) {
+            ToolbarItem(placement: .topBarTrailing) {
                 // Something is always there, so the time doesn't move when a conversation
                 // starts or ends.
                 if inConversation {
@@ -117,11 +117,6 @@ struct TalkView: View {
         .foregroundStyle(Brand.ivory)
         .accessibilityElement(children: .combine)
         .padding(.bottom, 10)
-    }
-
-    private var endPlacement: ToolbarItemPlacement {
-        if #available(watchOS 10.0, *) { return .topBarTrailing }
-        return .automatic
     }
 }
 

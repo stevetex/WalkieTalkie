@@ -36,7 +36,7 @@ struct FriendsListView: View {
         .brandScreen()
         .navigationTitle("Friends")
         .toolbar {
-            ToolbarItem(placement: settingsPlacement) {
+            ToolbarItem(placement: .topBarTrailing) {
                 NavigationLink {
                     SettingsView(controller: controller, account: account)
                 } label: {
@@ -55,11 +55,6 @@ struct FriendsListView: View {
         if controller.isTalking { return .you }
         if controller.remoteTalking { return .them }
         return controller.phase == .connecting ? .connecting : .live
-    }
-
-    private var settingsPlacement: ToolbarItemPlacement {
-        if #available(watchOS 10.0, *) { return .topBarTrailing }
-        return .automatic
     }
 }
 

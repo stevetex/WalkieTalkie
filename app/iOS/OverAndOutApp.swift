@@ -45,7 +45,7 @@ struct OverAndOutApp: App {
                 .onContinueUserActivity(NSUserActivityTypeBrowsingWeb) { activity in
                     if let url = activity.webpageURL { model.open(url) }
                 }
-                .onChange(of: scenePhase) { phase in
+                .onChange(of: scenePhase) { _, phase in
                     switch phase {
                     case .active:
                         Telemetry.shared.foreground()

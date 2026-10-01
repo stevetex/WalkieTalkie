@@ -3,15 +3,15 @@
 // audio pipeline, ported from the spike (watch/WalkieSpike). macOS is listed only so
 // `swift test` can run the tests on a Mac.
 //
-// iOS 16 / watchOS 9 is the lowest Xcode 27 can target for watchOS, and a watch on
-// watchOS 9 pairs with an iPhone on iOS 16 or later. Keep these in step with the app
-// targets' deployment targets.
+// watchOS 10.2 and iOS 17 are the oldest versions Xcode 27's simulators run here, so the
+// oldest we can test (design decision 2026-10-01); a watch on watchOS 10 pairs with an
+// iPhone on iOS 17 or later. Keep these in step with the app targets' deployment targets.
 
 import PackageDescription
 
 let package = Package(
     name: "OverAndOutKit",
-    platforms: [.iOS("16.0"), .watchOS("9.0"), .macOS("26.0")],
+    platforms: [.iOS("17.0"), .watchOS("10.2"), .macOS("26.0")],
     products: [
         .library(name: "OverAndOutKit", targets: ["OverAndOutKit"]),
     ],

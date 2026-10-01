@@ -69,18 +69,10 @@ extension AudioLevel {
     public static func microphoneSetup() -> String {
         let session = AVAudioSession.sharedInstance()
         let permission: String
-        if #available(iOS 17.0, watchOS 10.0, *) {
-            switch AVAudioApplication.shared.recordPermission {
-            case .granted: permission = "granted"
-            case .denied: permission = "denied"
-            default: permission = "undetermined"
-            }
-        } else {
-            switch session.recordPermission {
-            case .granted: permission = "granted"
-            case .denied: permission = "denied"
-            default: permission = "undetermined"
-            }
+        switch AVAudioApplication.shared.recordPermission {
+        case .granted: permission = "granted"
+        case .denied: permission = "denied"
+        default: permission = "undetermined"
         }
         let mode = session.mode.rawValue.replacingOccurrences(of: "AVAudioSessionMode", with: "")
         return "permission=\(permission),inputAvailable=\(session.isInputAvailable ? 1 : 0),in=\(inputPort())"

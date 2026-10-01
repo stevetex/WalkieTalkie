@@ -286,11 +286,7 @@ final class ConversationController: NSObject, ObservableObject {
         let completion: @Sendable (Bool) -> Void = { granted in
             DispatchQueue.main.async { if !granted { self.log("Microphone permission denied") } }
         }
-        if #available(watchOS 10.0, *) {
-            AVAudioApplication.requestRecordPermission(completionHandler: completion)
-        } else {
-            AVAudioSession.sharedInstance().requestRecordPermission(completion)
-        }
+        AVAudioApplication.requestRecordPermission(completionHandler: completion)
     }
 
     /// Asks to show notifications, then registers for remote notifications. The simulator

@@ -30,7 +30,7 @@ struct RootView: View {
                 }
                 .overlay(alignment: .top) { BackOnBanner() }
                 // A friend started a conversation: show their Talk screen.
-                .onChange(of: talk.arrivedFrom) { id in
+                .onChange(of: talk.arrivedFrom) { _, id in
                     guard let id else { return }
                     talk.arrivedFrom = nil
                     guard let friend = model.friends.first(where: { $0.id == id }), path.last?.id != id else { return }
@@ -255,7 +255,7 @@ struct BackOnBanner: View {
                 }
             }
             .animation(.easeOut(duration: 0.25), value: shown)
-        .onChange(of: ptt.rejoinedAt) { at in
+        .onChange(of: ptt.rejoinedAt) { _, at in
             guard at != nil else { return }
             shown = true
             Task {
