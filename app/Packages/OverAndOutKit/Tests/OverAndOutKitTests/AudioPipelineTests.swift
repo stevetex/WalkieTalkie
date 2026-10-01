@@ -106,4 +106,18 @@ struct AudioPipelineTests {
         try await Task.sleep(nanoseconds: 300_000_000)
         #expect(!played)
     }
+
+    /// The raw level reads every channel, so a microphone that delivers sound on a channel the
+    /// conversion ignores shows up as raw sound with a silent burst.
+    @Test func theRawPeakReadsEveryChannel() throws {
+        let format = try #require(AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 48_000, channels: 2, interleaved: false))
+        let buffer = try #require(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 480))
+        buffer.frameLength = 480
+        for i in 0..<480 {
+            buffer.floatChannelData![0][i] = 0
+            buffer.floatChannelData![1][i] = i == 100 ? -0.5 : 0
+        }
+        #expect(AudioPipeline.rawPeak(of: buffer) == 0.5)
+        #expect(AudioPipeline.describe(format) == "48000 Hz, 2 ch, float32, deinterleaved")
+    }
 }
