@@ -75,6 +75,7 @@ Target palette is in `palette.json`: indigo `#272D50`, ivory `#FFF6DF`, ink `#10
 
 - `masters/`: native-resolution artwork; start here for future exports.
 - `icons/`: importable app icon catalogs and convenience exports.
+- `favicon.swift`: the website's favicons (`web/public/favicon.ico`, `img/favicon-32.png`, `img/favicon-192.png`) from `masters/mascot-color.png`: `swift art/favicon.swift`.
 - `screens/`: screen artwork and a reusable Xcode image catalog.
 - `documentation/`: horizontal logo and avatar exports.
 - `merch/`: native-resolution transparent artwork tagged 300 DPI.
