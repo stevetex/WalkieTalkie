@@ -290,7 +290,13 @@ switch (command) {
         row("join sent → relay joined", span(joinSent, joined));
         row("relay replay → arrived at the device", span(replay, arrived));
         row("arrived → handled (main queue)", span(arrived, handled));
-        row("tap → first audio", span(tap, find(events, "burstAudioStarted", tap?.t)));
+        const engineStarted = find(events, "audioEngineStarted", tap?.t);
+        const firstAudio = find(events, "burstAudioStarted", tap?.t);
+        if (engineStarted) {
+          row("audio session → engine started", span(find(events, "audioActivated", tap?.t), engineStarted));
+          row("engine started → first audio", span(engineStarted, firstAudio));
+        }
+        row("tap → first audio", span(tap, firstAudio));
       }
       const stalls = events.filter((e) => e.name === "mainStall");
       row("main-queue stalls ≥ 200 ms", String(stalls.length), stalls.length ? `longest ${Math.max(...stalls.map((s) => parseInt(s.detail ?? "0")))} ms` : "");

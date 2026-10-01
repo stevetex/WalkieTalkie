@@ -831,6 +831,8 @@ final class ConversationController: NSObject, ObservableObject {
         } catch {
             log("Audio: \(error.localizedDescription)")
         }
+        // As on the iPhone: how long the engine takes after the session, before first audio.
+        conversation?.timeline.mark("audioEngineStarted", once: false)
         // Playback runs even if capture couldn't start.
         conversation?.audioActive = true
         updateTalkReady()
