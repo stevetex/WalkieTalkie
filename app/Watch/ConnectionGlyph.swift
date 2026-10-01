@@ -27,12 +27,8 @@ struct ConnectionGlyph: View {
     private var symbol: some View {
         switch status {
         case .connecting:
-            if #available(watchOS 10.0, *) {
-                Image(systemName: "antenna.radiowaves.left.and.right")
-                    .symbolEffect(.variableColor.iterative)
-            } else {
-                Image(systemName: "antenna.radiowaves.left.and.right")
-            }
+            Image(systemName: "antenna.radiowaves.left.and.right")
+                .symbolEffect(.variableColor.iterative)
         case .live:
             Image(systemName: "antenna.radiowaves.left.and.right")
         case .unavailable:

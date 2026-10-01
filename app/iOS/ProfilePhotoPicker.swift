@@ -108,7 +108,7 @@ struct PictureChooser: View {
             .disabled(model.updatingPhoto)
             .overlay { if model.updatingPhoto { ProgressView().controlSize(.large) } }
         }
-        .onChange(of: selection) { item in
+        .onChange(of: selection) { _, item in
             guard let item else { return }
             selection = nil
             Task {

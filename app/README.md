@@ -5,9 +5,9 @@ The product: an iPhone companion app and an Apple Watch app. The relay is in [`.
 ```
 OverAndOut.xcodeproj    Hand-written project; iOS/ and Watch/ are synchronized folders,
                         so new files are picked up without editing the project
-iOS/                    iPhone app (iOS 16+): Sign in with Apple, onboarding (name, Focus,
+iOS/                    iPhone app (iOS 17+): Sign in with Apple, onboarding (name, Focus,
                         watch), friends, invites, block and report, settings, account deletion
-Watch/                  Watch app (watchOS 9+), embedded in the iPhone app
+Watch/                  Watch app (watchOS 10.2+), embedded in the iPhone app
 WatchNotificationService/  The watch's notification service extension (ring prefetch)
 Packages/OverAndOutKit  Shared code: accounts (session, Keychain, API client), relay
                         transport, voice codec, audio pipeline

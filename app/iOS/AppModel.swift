@@ -288,14 +288,11 @@ final class AppModel: ObservableObject {
     }
 
     func requestMicrophone() async {
-        guard AVAudioSession.sharedInstance().recordPermission == .undetermined else { return }
-        _ = await withCheckedContinuation { continuation in
-            // @Sendable: iOS answers on another thread, so the block mustn't be main-actor.
-            AVAudioSession.sharedInstance().requestRecordPermission { @Sendable granted in continuation.resume(returning: granted) }
-        }
+        guard AVAudioApplication.shared.recordPermission == .undetermined else { return }
+        _ = await AVAudioApplication.requestRecordPermission()
     }
 
-    var microphoneAllowed: Bool { AVAudioSession.sharedInstance().recordPermission == .granted }
+    var microphoneAllowed: Bool { AVAudioApplication.shared.recordPermission == .granted }
 
     func rename(_ name: String) async -> Bool {
         do {

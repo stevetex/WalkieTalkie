@@ -25,7 +25,7 @@ struct ContentView: View {
             }
         }
         .brandScreen()
-        .onChange(of: account.session?.userId) { _ in path = [] }
+        .onChange(of: account.session?.userId) { path = [] }
     }
 
     private var home: some View {
@@ -42,12 +42,12 @@ struct ContentView: View {
             }
         }
         .onAppear { showArrived(controller.arrivedFrom) }
-        .onChange(of: controller.arrivedFrom) { showArrived($0) }
+        .onChange(of: controller.arrivedFrom) { _, id in showArrived(id) }
         // A friend who's gone (removed, blocked) takes their Talk screen with them.
-        .onChange(of: account.friends) { friends in
+        .onChange(of: account.friends) { _, friends in
             path.removeAll { shown in shown.id != controller.peerId && !friends.contains { $0.id == shown.id } }
         }
-        .onChange(of: scenePhase) { phase in
+        .onChange(of: scenePhase) { _, phase in
             if phase != .active {
                 if leftAt == nil { leftAt = Date() }
                 return

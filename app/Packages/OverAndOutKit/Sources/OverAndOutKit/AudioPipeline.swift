@@ -350,7 +350,7 @@ public final class AudioPipeline {
 /// in debug builds. Events for the pipeline go to
 /// the main queue in the order they happen. A serial queue rather than an actor: frames arrive
 /// from the tap's real-time thread and the player's callbacks, where awaiting isn't possible,
-/// and iOS 16/watchOS 9 can't run an actor on this queue.
+/// and an actor would need a custom executor to run on this queue.
 private final class AudioQueueState: @unchecked Sendable {
     enum Event: Sendable {
         case frame(Data)
