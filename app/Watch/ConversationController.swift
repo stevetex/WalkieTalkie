@@ -1093,6 +1093,15 @@ extension ConversationController: UNUserNotificationCenterDelegate {
                     self.outcomes[ring.from] = OutcomeNote(outcome: .missed, at: Date())
                 }
             }
+            #if DEBUG && targetEnvironment(simulator)
+            // The simulator tools' taps don't reach watchOS 10.2: OAO_DEV_AUTO_ANSWER=<seconds>
+            // answers an in-app ring after that long, to show the Talk screen in a conversation.
+            if let delay = ProcessInfo.processInfo.environment["OAO_DEV_AUTO_ANSWER"].flatMap(Double.init) {
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                    if self.incomingRing == ring { self.answerIncomingRing() }
+                }
+            }
+            #endif
         }
     }
 

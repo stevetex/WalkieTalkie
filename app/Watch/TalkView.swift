@@ -1,5 +1,6 @@
 import OverAndOutKit
 import SwiftUI
+import WatchKit
 
 /// Talking to one friend, pushed from the friends list: the mascot fills the screen and its
 /// mouth is the Talk button, as on the iPhone, with "Hold to talk" curved inside it while
@@ -57,8 +58,9 @@ struct TalkView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 // The antenna rises between the time and End.
                 .padding(.top, 8)
-                // Clear of the name at top left.
-                .offset(x: 12)
+                // Clear of the name at top left. Less on 40/41mm screens, where the buttons
+                // keep their size but the mascot shrinks: its antenna touched End.
+                .offset(x: Self.compactScreen ? 8 : 12)
 
                 statusLine
             }
@@ -103,6 +105,9 @@ struct TalkView: View {
         }
         .onDisappear { controller.stopPreparing(for: friend.id) }
     }
+
+    /// Apple Watch SE and Series 4–6 40mm, Series 7–9 41mm: 176 pt wide or less.
+    private static let compactScreen = WKInterfaceDevice.current().screenBounds.width <= 176
 
     private var statusLine: some View {
         HStack(spacing: 4) {
