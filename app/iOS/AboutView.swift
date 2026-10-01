@@ -46,6 +46,7 @@ struct AboutView: View {
                     }
                     Link("overandout.app", destination: URL(string: "https://\(model.linkDomain)")!)
                     Link("Privacy Policy", destination: URL(string: "https://\(model.linkDomain)/privacy")!)
+                    Link("Terms of Use", destination: URL(string: "https://\(model.linkDomain)/terms")!)
                     Link("Help and Support", destination: URL(string: "https://\(model.linkDomain)/support")!)
                 }
                 .listRowBackground(Brand.surface)
