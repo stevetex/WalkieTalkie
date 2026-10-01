@@ -84,9 +84,17 @@ interface Conversation {
   bursts: Burst[];
   floor: { userId: string; burstId: string } | null;
   lastRingAt: number | null;
+  // When the current ring is abandoned. A rollover to the iPhone keeps the first ring's time.
+  ringExpiresAt: number | null;
   // Set while a ring is waiting to be answered (or, once answered, to be joined).
   ringTimer: NodeJS.Timeout | null;
   ringFrom: string | null;
+  // Set while a ring to the watch waits to roll over to the iPhone (rollOverMs).
+  rollOverTimer: NodeJS.Timeout | null;
+  // The ring rolled over to the iPhone.
+  rolledOver: boolean;
+  // The recipient's latest answer report (POST /v1/rings/answer), and from which device.
+  answer: { userId: string; deviceId: string | undefined; at: number } | null;
   // When each member's talking was last recorded as "last messaged you" (recordMessage).
   messageRecordedAt: Map<string, number>;
   // Accounts: when the two were last confirmed as friends (the ring's lookup, or canTalk), and
@@ -142,6 +150,9 @@ export interface RelayOptions {
   // After the watch reports it answered, how long it has to open the relay socket and
   // join before the ring is abandoned. Socket setup on a real watch took ~7 s.
   answerJoinTimeoutMs?: number;
+  // When the recipient chose to (rollOver), a ring to their watch that isn't answered or
+  // declined in this long rings their iPhone, within the same ringTimeoutMs.
+  rollOverMs?: number;
   // Prototype: after an APNs ring, send a prefetch push once the sender's first burst ends,
   // or this long after the ring if they're still talking. 0 = no prefetch pushes.
   prefetchPushAfterMs?: number;
@@ -172,6 +183,7 @@ export class Relay {
       resumeTtlMs: 30_000,
       ringTimeoutMs: 35_000,
       answerJoinTimeoutMs: 30_000,
+      rollOverMs: 12_000,
       prefetchPushAfterMs: 0,
       authTtlMs: 10_000,
       maxBurstMs: 60_000,
@@ -308,13 +320,38 @@ export class Relay {
 
   // The watch answered (reported over HTTPS, which works before its socket can open).
   // Keep the buffered audio and give it time to connect and join.
-  answered(userId: string, conversationId: string): boolean {
+  answered(userId: string, conversationId: string, deviceId?: string): boolean {
     const conversation = this.byId.get(conversationId);
     if (!conversation || !conversation.members.includes(userId)) return false;
     this.opts.metrics.server(conversation.id, "answerReported", this.opts.now());
     if (conversation.ringTimer && !conversation.joined.has(userId)) {
+      this.clearRollOver(conversation);
+      conversation.answer = { userId, deviceId, at: this.opts.now() };
       this.armRingTimer(conversation, userId, this.opts.answerJoinTimeoutMs);
     }
+    return true;
+  }
+
+  // The watch's Decline: the ring doesn't roll over to the iPhone. Otherwise it runs out as
+  // before.
+  declined(userId: string, conversationId: string): boolean {
+    const conversation = this.byId.get(conversationId);
+    if (!conversation || !conversation.members.includes(userId)) return false;
+    this.opts.metrics.server(conversation.id, "declineReported", this.opts.now());
+    this.clearRollOver(conversation);
+    return true;
+  }
+
+  // A rolled-over ring that the watch answered just as the iPhone was rung: the iPhone's
+  // automatic join (its PushToTalk push) gives way to the watch, which is still connecting,
+  // so the message plays only there. The iPhone hears "moved", as when a conversation moves.
+  private answeredElsewhere(peer: Peer, conversation: Conversation): boolean {
+    const answer = conversation.answer;
+    if (!conversation.rolledOver || !answer || answer.userId !== peer.userId || answer.deviceId === undefined) return false;
+    if (answer.deviceId === peer.deviceId || conversation.joined.has(peer.userId)) return false;
+    if (this.opts.now() - answer.at > this.opts.answerJoinTimeoutMs) return false;
+    peer.sendJSON({ type: "moved", conversationId: conversation.id });
+    this.opts.metrics.server(conversation.id, "joinGaveWay", this.opts.now(), "answered on another device");
     return true;
   }
 
@@ -511,6 +548,7 @@ export class Relay {
   }
 
   private completeJoin(peer: Peer, conversation: Conversation, resume?: Resume): void {
+    if (this.answeredElsewhere(peer, conversation)) return;
     const conversationId = conversation.id;
     const now = this.opts.now();
     this.pruneBursts(conversation);
@@ -561,6 +599,8 @@ export class Relay {
   private async ring(conversation: Conversation, from: string, to: string, burstId: string, account: boolean): Promise<RingResult> {
     // Armed before the lookup, so a second Talk meanwhile doesn't ring again.
     conversation.ringFrom = from;
+    conversation.rolledOver = false;
+    conversation.answer = null;
     this.armRingTimer(conversation, to, this.opts.ringTimeoutMs);
     let lookup: RingLookup;
     try {
@@ -591,17 +631,58 @@ export class Relay {
         return account ? { refused: "unavailable" } : { pushed: false };
       }
       const { pushed, rejected } = await this.ringDevices(conversation, from, to, burstId, lookup.fromName, targets);
-      if (pushed || !rejected.length) return { pushed };
-      if (account) {
-        for (const device of rejected) {
-          this.opts.accounts.removeDevice?.(to, device.id, device.pushToken).then(
-            (removed) => removed && console.log(`[relay] removed ${to}'s unregistered ${device.platform} (${device.id})`),
-            (err: Error) => console.error(`[relay] removing ${to}'s device ${device.id} failed: ${err.message}`),
-          );
+      if (pushed || !rejected.length) {
+        if (pushed && account && lookup.rollOver && targets[0].platform === "watch") {
+          this.armRollOver(conversation, from, to, burstId, lookup.fromName, devices);
         }
+        return { pushed };
       }
+      if (account) this.removeRejected(to, rejected);
       devices = devices.filter((d) => !rejected.includes(d));
     }
+  }
+
+  private removeRejected(to: string, rejected: AccountDevice[]): void {
+    for (const device of rejected) {
+      this.opts.accounts.removeDevice?.(to, device.id, device.pushToken).then(
+        (removed) => removed && console.log(`[relay] removed ${to}'s unregistered ${device.platform} (${device.id})`),
+        (err: Error) => console.error(`[relay] removing ${to}'s device ${device.id} failed: ${err.message}`),
+      );
+    }
+  }
+
+  // Ring Me On's rollover (design decision 2026-10-01): the recipient chose to have their
+  // iPhone rung when they don't answer or decline on the watch in rollOverMs.
+  private armRollOver(conversation: Conversation, from: string, to: string, burstId: string, fromName: string, devices: AccountDevice[]): void {
+    this.clearRollOver(conversation);
+    // Counted from the watch's ring, not from APNs' answer to it.
+    const ms = Math.max(0, this.opts.rollOverMs - (this.opts.now() - (conversation.lastRingAt ?? this.opts.now())));
+    conversation.rollOverTimer = setTimeout(() => void this.rollOver(conversation, from, to, burstId, fromName, devices), ms);
+    conversation.rollOverTimer.unref();
+  }
+
+  private clearRollOver(conversation: Conversation): void {
+    if (conversation.rollOverTimer) clearTimeout(conversation.rollOverTimer);
+    conversation.rollOverTimer = null;
+  }
+
+  // The watch wasn't answered: ring the iPhone, until the first ring would have run out. The
+  // watch's ring stays on its screen; answering it later moves the conversation there.
+  private async rollOver(conversation: Conversation, from: string, to: string, burstId: string, fromName: string, devices: AccountDevice[]): Promise<void> {
+    conversation.rollOverTimer = null;
+    if (!conversation.ringTimer || conversation.joined.has(to) || this.byId.get(conversation.id) !== conversation) return;
+    const targets = devices.filter((d) => d.platform === "iphone" && this.canRing(to, d));
+    if (!targets.length) {
+      this.opts.metrics.server(conversation.id, "rollOverSkipped", this.opts.now(), "no iPhone to ring");
+      return;
+    }
+    this.opts.metrics.server(conversation.id, "ringRolledOver", this.opts.now());
+    conversation.rolledOver = true;
+    // The watch's prefetch push and a polling watch's queued ring are for a ring that's moved on.
+    this.clearPrefetch(conversation);
+    this.withdrawPolledRings(conversation, to);
+    const { rejected } = await this.ringDevices(conversation, from, to, burstId, fromName, targets, conversation.ringExpiresAt ?? undefined);
+    this.removeRejected(to, rejected);
   }
 
   // Rings these devices (all of one kind) and waits for APNs' answers. `pushed` if any ring
@@ -613,9 +694,11 @@ export class Relay {
     burstId: string,
     fromName: string,
     targets: AccountDevice[],
+    expiresAt?: number,
   ): Promise<{ pushed: boolean; rejected: AccountDevice[] }> {
     conversation.lastRingAt = this.opts.now();
-    this.armRingTimer(conversation, to, this.opts.ringTimeoutMs);
+    conversation.ringExpiresAt = expiresAt ?? conversation.lastRingAt + this.opts.ringTimeoutMs;
+    this.armRingTimer(conversation, to, Math.max(0, conversation.ringExpiresAt - conversation.lastRingAt));
     const payload: RingPayload = {
       conversationId: conversation.id,
       from,
@@ -625,7 +708,7 @@ export class Relay {
     };
     const platform = targets[0].platform;
     this.opts.metrics.server(conversation.id, "pushSent", conversation.lastRingAt, `${platform}${targets.length > 1 ? `, ${targets.length} devices` : ""}`);
-    const alert = ringAlert(payload, conversation.lastRingAt + this.opts.ringTimeoutMs);
+    const alert = ringAlert(payload, conversation.ringExpiresAt);
     const apnsTargets: RingTarget[] = [];
     const pushes: Array<Promise<{ target: AccountDevice; result: PushResult }>> = [];
     let pushed = false;
@@ -720,6 +803,7 @@ export class Relay {
   // starts a fresh ring instead of replaying stale audio.
   private ringTimedOut(conversation: Conversation, from: string, to: string): void {
     conversation.ringTimer = null;
+    this.clearRollOver(conversation);
     // A polling device that wasn't open to collect the ring shouldn't ring later for it.
     this.withdrawPolledRings(conversation, to);
     if (conversation.joined.has(to)) return;
@@ -804,6 +888,9 @@ export class Relay {
   private clearRing(conversation: Conversation): void {
     if (conversation.ringTimer) clearTimeout(conversation.ringTimer);
     conversation.ringTimer = null;
+    this.clearRollOver(conversation);
+    conversation.rolledOver = false;
+    conversation.answer = null;
     this.clearPrefetch(conversation);
   }
 
@@ -817,8 +904,8 @@ export class Relay {
     const prefetch = conversation.prefetch;
     if (!prefetch) return;
     this.clearPrefetch(conversation);
-    if (conversation.joined.has(prefetch.to) || !conversation.ringTimer || conversation.lastRingAt === null) return;
-    const push = prefetchAlert(prefetch.payload, conversation.lastRingAt + this.opts.ringTimeoutMs);
+    if (conversation.joined.has(prefetch.to) || !conversation.ringTimer || conversation.ringExpiresAt === null) return;
+    const push = prefetchAlert(prefetch.payload, conversation.ringExpiresAt);
     this.opts.metrics.server(conversation.id, "prefetchPushSent", this.opts.now());
     for (const target of prefetch.targets) {
       void this.opts.pusher.sendAlert(target.pushToken, target.apnsEnvironment, push).then((result) => {
@@ -841,8 +928,12 @@ export class Relay {
         bursts: [],
         floor: null,
         lastRingAt: null,
+        ringExpiresAt: null,
         ringTimer: null,
         ringFrom: null,
+        rollOverTimer: null,
+        rolledOver: false,
+        answer: null,
         messageRecordedAt: new Map(),
         authorizedAt: null,
         authorizing: null,

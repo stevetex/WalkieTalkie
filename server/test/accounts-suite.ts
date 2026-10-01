@@ -134,6 +134,14 @@ export function accountsSuite(label: string, makeDocs: () => Docs, skip: string 
     const byDefault = await accounts.ringLookup(alice.id, bob.id);
     assert.ok(byDefault.allowed);
     assert.equal(byDefault.ringOn, undefined);
+    assert.equal(byDefault.rollOver, undefined);
+
+    // His rollover: an unanswered watch rings the iPhone. Off removes it.
+    assert.equal((await accounts.setRollOver(bob.id, true)).rollOver, true);
+    const rolling = await accounts.ringLookup(alice.id, bob.id);
+    assert.ok(rolling.allowed);
+    assert.equal(rolling.rollOver, true);
+    assert.equal((await accounts.setRollOver(bob.id, false)).rollOver, undefined);
 
     await accounts.block(bob.id, alice.id);
     assert.equal((await accounts.ringLookup(alice.id, bob.id)).allowed, false);

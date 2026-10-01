@@ -2,7 +2,8 @@
 //
 //   users/{uid}                     name, appleSub, createdAt, photoVersion (when there's a photo),
 //                                   avatar (a built-in mascot's ID, instead of a photo),
-//                                   ringOn ("watch" or "iphone"; absent = the watch if there is one)
+//                                   ringOn ("watch" or "iphone"; absent = the watch if there is one),
+//                                   rollOver (true: an unanswered watch rings the iPhone; absent = off)
 //   users/{uid}/friends/{friendId}  since, favorite (the user's star), lastMessageAt (when the
 //                                   friend last talked to the user; written by the relay).
 //                                   The friendship is written on both sides in one commit
@@ -65,6 +66,8 @@ export interface User {
   avatar?: string;
   // Which device rings (design decision 2026-09-27); absent = the watch if there is one.
   ringOn?: Platform;
+  // An unanswered ring on the watch rolls over to the iPhone (design decision 2026-10-01).
+  rollOver?: boolean;
   // When Steve asked for this account's device logs (tools/beta.ts pull, or a problem report),
   // while the request is open; the devices upload theirs once.
   diagnosticsRequestedAt?: number;
@@ -112,7 +115,7 @@ export type PushType = (typeof PUSH_TYPES)[number];
 
 export type RingLookup =
   | { allowed: false }
-  | { allowed: true; fromName: string; devices: AccountDevice[]; ringOn?: Platform };
+  | { allowed: true; fromName: string; devices: AccountDevice[]; ringOn?: Platform; rollOver?: boolean };
 
 // An error the API returns as-is: an HTTP status and a stable code the apps can switch on.
 export class AccountError extends Error {
@@ -599,6 +602,16 @@ export class Accounts {
     return rows.map((r, i) => ({ id: r.id, name: users[i] ? String(users[i]!.name) : null, since: millis(r.data.since) }));
   }
 
+  async setRollOver(id: string, rollOver: boolean): Promise<User> {
+    try {
+      await this.docs.commit([{ set: `users/${requireUserId(id)}`, data: rollOver ? { rollOver } : {}, fields: ["rollOver"], exists: true }]);
+    } catch (err) {
+      if (err instanceof PreconditionFailed) throw new AccountError(404, "no-account");
+      throw err;
+    }
+    return (await this.user(id))!;
+  }
+
   // Reports are kept for moderation, with IDs only (no names), even after either account
   // is deleted. The caller logs each one so an alert can email the operator.
   async report(
@@ -636,6 +649,7 @@ export class Accounts {
       fromName: String(sender.name),
       devices: devices.map((d) => toDevice(d.id, d.data)),
       ...(isPlatform(recipient?.ringOn) ? { ringOn: recipient.ringOn } : {}),
+      ...(recipient?.rollOver === true ? { rollOver: true } : {}),
     };
   }
 
@@ -823,6 +837,7 @@ function toUser(id: string, data: FirestoreData): User {
   if (typeof data.photoVersion === "number") user.photoVersion = data.photoVersion;
   if (isAvatar(data.avatar)) user.avatar = data.avatar;
   if (isPlatform(data.ringOn)) user.ringOn = data.ringOn;
+  if (data.rollOver === true) user.rollOver = true;
   const requested = millis(data.diagnosticsRequestedAt);
   if (requested && Date.now() - requested < DIAGNOSTICS_REQUEST_MS) user.diagnosticsRequestedAt = requested;
   return user;

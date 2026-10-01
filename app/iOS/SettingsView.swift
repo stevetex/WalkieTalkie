@@ -200,6 +200,12 @@ struct WalkieTalkieSection: View {
                     Text("Apple Watch").tag(Platform.watch)
                     Text("iPhone").tag(Platform.iphone)
                 }
+                if model.ringsOn == .watch {
+                    Toggle("Roll Over to iPhone", isOn: Binding(
+                        get: { model.rollOver },
+                        set: { on in Task { await model.setRollOver(on) } }
+                    ))
+                }
             }
             if !model.microphoneAllowed {
                 Button("Allow the Microphone") {
@@ -240,6 +246,9 @@ struct WalkieTalkieSection: View {
         }
         if model.canChooseRingOn {
             lines.append("Only one device rings. If it can't be reached, the other one does.")
+            if model.ringsOn == .watch {
+                lines.append("With Roll Over to iPhone, your iPhone rings if you don't answer your watch in 12 seconds.")
+            }
         } else if watch.isWatchAppInstalled {
             lines.append("Once Over&Out on your Apple Watch is signed in, you can choose which one rings.")
         }

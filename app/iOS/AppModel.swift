@@ -32,6 +32,8 @@ final class AppModel: ObservableObject {
     @Published private(set) var avatar: String?
     /// Which device rings, as chosen; nil = the default (see `ringsOn`).
     @Published private(set) var ringOn: Platform?
+    /// A ring the watch doesn't answer rolls over to this iPhone (design decision 2026-10-01).
+    @Published private(set) var rollOver = false
     /// The kinds of device registered for rings on this account, from /v1/me.
     @Published private(set) var platforms: [Platform] = []
     /// A watch and this iPhone can both ring: ask once which one (design decision 2026-09-28).
@@ -151,6 +153,7 @@ final class AppModel: ObservableObject {
         photoVersion = nil
         avatar = nil
         ringOn = nil
+        rollOver = false
         platforms = []
         askingRingOn = false
         lastInviteAt = nil
@@ -177,6 +180,7 @@ final class AppModel: ObservableObject {
             photoVersion = user.photoVersion
             avatar = user.avatar
             ringOn = user.ringOn
+            rollOver = user.rollOver ?? false
             platforms = user.platforms ?? []
             friends = loadedFriends
             blocks = loadedBlocks
@@ -258,6 +262,17 @@ final class AppModel: ObservableObject {
             ringOn = try await client.setRingOn(platform).ringOn
         } catch {
             ringOn = previous
+            errorMessage = describe(error)
+        }
+    }
+
+    func setRollOver(_ on: Bool) async {
+        let previous = rollOver
+        rollOver = on
+        do {
+            rollOver = try await client.setRollOver(on).rollOver ?? false
+        } catch {
+            rollOver = previous
             errorMessage = describe(error)
         }
     }

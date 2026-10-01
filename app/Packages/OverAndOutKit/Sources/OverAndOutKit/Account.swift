@@ -45,6 +45,8 @@ public struct AccountUser: Codable, Equatable, Sendable {
     public var avatar: String? = nil
     /// Which device rings: nil = the watch if the account has one, else the iPhone.
     public var ringOn: Platform? = nil
+    /// An unanswered ring on the watch rolls over to the iPhone; nil = off.
+    public var rollOver: Bool? = nil
     /// The kinds of device registered for rings (GET /v1/me only).
     public var platforms: [Platform]? = nil
     /// When the server asked this account's devices for their diagnostics logs (ms), while the
@@ -414,6 +416,11 @@ public actor AccountClient {
     /// Which device rings (nil = the default: the watch if the account has one).
     public func setRingOn(_ platform: Platform?) async throws -> AccountUser {
         try await request("PATCH", "/v1/me", body: ["ringOn": platform?.rawValue ?? NSNull()])
+    }
+
+    /// Whether a ring the watch doesn't answer rolls over to the iPhone.
+    public func setRollOver(_ on: Bool) async throws -> AccountUser {
+        try await request("PATCH", "/v1/me", body: ["rollOver": on])
     }
 
     /// A built-in mascot as the profile picture (replacing any photo); nil removes it.

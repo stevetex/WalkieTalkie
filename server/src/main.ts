@@ -91,6 +91,7 @@ export interface ServerOptions {
   telemetry?: LogSink;
   ringTimeoutMs?: number;
   answerJoinTimeoutMs?: number;
+  rollOverMs?: number;
   prefetchPushAfterMs?: number;
   // Relay limits (see RelayOptions); tests shorten them.
   authTtlMs?: number;
@@ -120,6 +121,7 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
     metrics,
     ...(options.ringTimeoutMs ? { ringTimeoutMs: options.ringTimeoutMs } : {}),
     ...(options.answerJoinTimeoutMs ? { answerJoinTimeoutMs: options.answerJoinTimeoutMs } : {}),
+    ...(options.rollOverMs ? { rollOverMs: options.rollOverMs } : {}),
     ...(options.prefetchPushAfterMs ? { prefetchPushAfterMs: options.prefetchPushAfterMs } : {}),
     ...(options.authTtlMs !== undefined ? { authTtlMs: options.authTtlMs } : {}),
     ...(options.maxBurstMs ? { maxBurstMs: options.maxBurstMs } : {}),
@@ -287,14 +289,18 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
       if (req.method === "GET" && url.pathname === "/v1/time") return send(res, 200, { serverTime: Date.now() });
       // The watch answered a ring. Sent over HTTPS because the relay socket can take
       // several seconds to open after the call starts.
-      if (req.method === "POST" && url.pathname === "/v1/rings/answer") {
+      // A decline, likewise, so the ring doesn't roll over to the iPhone.
+      if (req.method === "POST" && (url.pathname === "/v1/rings/answer" || url.pathname === "/v1/rings/decline")) {
         const body = (await readJSON(req)) as Record<string, unknown>;
         const userId = caller.account ? caller.userId : body.userId;
         const conversationId = body.conversationId;
         if (typeof userId !== "string" || typeof conversationId !== "string") {
           return send(res, 400, { error: "userId and conversationId are required" });
         }
-        return send(res, relay.answered(userId, conversationId) ? 200 : 404, {});
+        const found = url.pathname === "/v1/rings/answer"
+          ? relay.answered(userId, conversationId, caller.deviceId ?? userId)
+          : relay.declined(userId, conversationId);
+        return send(res, found ? 200 : 404, {});
       }
       if (req.method === "GET" && url.pathname === "/v1/relay/stream") return openStream(req, res, url, caller);
       if (req.method === "POST" && url.pathname === "/v1/relay/send") return await receiveRecords(req, res, caller);

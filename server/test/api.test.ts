@@ -24,7 +24,7 @@ interface Harness {
 // "code:<sub>" revokes that user's token.
 async function withApi(
   fn: (h: Harness) => Promise<void>,
-  { pusher = new DryRunPusher(), ...relayOptions }: { ringTimeoutMs?: number; authTtlMs?: number; pusher?: DryRunPusher } = {},
+  { pusher = new DryRunPusher(), ...relayOptions }: { ringTimeoutMs?: number; answerJoinTimeoutMs?: number; rollOverMs?: number; authTtlMs?: number; pusher?: DryRunPusher } = {},
 ): Promise<void> {
   const now = { t: Date.now() };
   const { signingKey, publicKeys } = generateSigningKey("test");
@@ -414,6 +414,119 @@ test("one device rings: the watch by default, the iPhone when chosen, the other 
     assert.equal((await call(url, "PUT", "/v1/me/device", alice.token, { platform: "watch", pushToken: "x", pushType: "pushtotalk" })).status, 400);
     bobClient.close();
   }, { ringTimeoutMs: 200 });
+});
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+test("rollover: an unanswered watch rings the iPhone, within the first ring's time", async () => {
+  await withApi(async ({ url, pusher }) => {
+    const { alice, watchToken, bob } = await twoDevices(url);
+    await call(url, "PUT", "/v1/me/device", alice.token, { platform: "iphone", pushToken: "ptt-alice", pushType: "pushtotalk" });
+    const me = await call(url, "PATCH", "/v1/me", alice.token, { rollOver: true });
+    assert.equal(me.body.rollOver, true);
+    assert.equal((await call(url, "GET", "/v1/me", alice.token)).body.rollOver, true);
+    const aliceWatch = new SpikeClient({ server: url, userId: "alice-watch", token: watchToken });
+    const bobClient = new SpikeClient({ server: url, userId: "bob", token: bob.token });
+    await bobClient.connect();
+    const pushToTalk = () => pusher.sent.filter((p) => p.pushType === "pushtotalk");
+
+    // The watch rings first, and nothing else until the rollover.
+    const startedAt = Date.now();
+    const { conversationId } = await bobClient.talk(alice.user.id, pcm(3), { realtime: false });
+    await sleep(100);
+    assert.equal(pushToTalk().length, 0);
+
+    // Unanswered: the iPhone's PushToTalk push, and the watch's queued ring is withdrawn.
+    await sleep(300);
+    assert.equal(pushToTalk().length, 1);
+    assert.equal((pushToTalk()[0].payload as { conversationId: string }).conversationId, conversationId);
+    assert.equal((await aliceWatch.api("GET", "/v1/rings/poll")).length, 0);
+
+    // The iPhone joins and plays the message.
+    const alicePhone = new SpikeClient({ server: url, userId: "alice-phone", token: alice.token });
+    await alicePhone.connect();
+    alicePhone.send({ type: "join", conversationId });
+    await alicePhone.waitFor("burst-end");
+    assert.equal(alicePhone.frames.length, 3);
+    alicePhone.send({ type: "leave", conversationId });
+    alicePhone.close();
+    bobClient.send({ type: "leave", conversationId });
+    await sleep(50);
+
+    // Unanswered on the iPhone too: the ring runs out when the first ring would have (800 ms),
+    // not a full ring time after the rollover (1100 ms).
+    const second = await bobClient.talk(alice.user.id, pcm(1), { realtime: false });
+    const secondAt = Date.now();
+    await bobClient.waitFor("ring-timeout", (m) => m.conversationId === second.conversationId);
+    assert.ok(Date.now() - secondAt < 1_000, `ring ran ${Date.now() - secondAt} ms`);
+    assert.ok(Date.now() - startedAt > 800);
+    bobClient.close();
+  }, { ringTimeoutMs: 800, rollOverMs: 300 });
+});
+
+test("rollover: off by default, and an answer or a decline on the watch stops it", async () => {
+  await withApi(async ({ url, pusher }) => {
+    const { alice, watchToken, bob } = await twoDevices(url);
+    await call(url, "PUT", "/v1/me/device", alice.token, { platform: "iphone", pushToken: "ptt-alice", pushType: "pushtotalk" });
+    const aliceWatch = new SpikeClient({ server: url, userId: "alice-watch", token: watchToken });
+    const bobClient = new SpikeClient({ server: url, userId: "bob", token: bob.token });
+    await bobClient.connect();
+    const pushToTalk = () => pusher.sent.filter((p) => p.pushType === "pushtotalk");
+
+    // Off: the watch rings until the ring runs out, as before.
+    let ring = await bobClient.talk(alice.user.id, pcm(1), { realtime: false });
+    await hangUp(bobClient, ring.conversationId);
+    assert.equal(pushToTalk().length, 0);
+
+    // On, and Alice declines on the watch.
+    await call(url, "PATCH", "/v1/me", alice.token, { rollOver: true });
+    ring = await bobClient.talk(alice.user.id, pcm(1), { realtime: false });
+    assert.equal((await call(url, "POST", "/v1/rings/decline", watchToken, { conversationId: ring.conversationId })).status, 200);
+    await hangUp(bobClient, ring.conversationId);
+    assert.equal(pushToTalk().length, 0);
+
+    // On, and Alice answers on the watch (its join is still to come).
+    ring = await bobClient.talk(alice.user.id, pcm(1), { realtime: false });
+    assert.equal((await aliceWatch.api("POST", "/v1/rings/answer", { conversationId: ring.conversationId })) !== undefined, true);
+    await hangUp(bobClient, ring.conversationId);
+    assert.equal(pushToTalk().length, 0);
+
+    // Off again; a decline for a conversation that's gone is a 404.
+    assert.equal((await call(url, "PATCH", "/v1/me", alice.token, { rollOver: false })).body.rollOver, undefined);
+    assert.equal((await call(url, "PATCH", "/v1/me", alice.token, { rollOver: "yes" })).status, 400);
+    assert.equal((await call(url, "POST", "/v1/rings/decline", watchToken, { conversationId: ring.conversationId })).status, 404);
+    bobClient.close();
+  }, { ringTimeoutMs: 400, answerJoinTimeoutMs: 400, rollOverMs: 200 });
+});
+
+test("rollover: the watch answering just after it keeps the message, and the iPhone gives way", async () => {
+  await withApi(async ({ url, pusher }) => {
+    const { alice, watchToken, bob } = await twoDevices(url);
+    await call(url, "PUT", "/v1/me/device", alice.token, { platform: "iphone", pushToken: "ptt-alice", pushType: "pushtotalk" });
+    await call(url, "PATCH", "/v1/me", alice.token, { rollOver: true });
+    const bobClient = new SpikeClient({ server: url, userId: "bob", token: bob.token });
+    await bobClient.connect();
+
+    const { conversationId } = await bobClient.talk(alice.user.id, pcm(3), { realtime: false });
+    await sleep(200);
+    assert.equal(pusher.sent.filter((p) => p.pushType === "pushtotalk").length, 1);
+
+    // Alice taps the watch's ring just as the iPhone is rung: the watch's answer arrives first.
+    assert.equal((await call(url, "POST", "/v1/rings/answer", watchToken, { conversationId })).status, 200);
+    const alicePhone = new SpikeClient({ server: url, userId: "alice-phone", token: alice.token });
+    await alicePhone.connect();
+    alicePhone.send({ type: "join", conversationId });
+    assert.equal((await alicePhone.waitFor("moved")).conversationId, conversationId);
+    assert.equal(alicePhone.received.some((m) => m.type === "joined"), false);
+
+    // The watch connects and hears all of it.
+    const aliceWatch = new SpikeClient({ server: url, userId: "alice-watch", token: watchToken, transport: "http" });
+    await aliceWatch.connect(conversationId);
+    await aliceWatch.waitFor("burst-end");
+    assert.equal(aliceWatch.frames.length, 3);
+    assert.equal(alicePhone.frames.length, 0);
+    for (const c of [alicePhone, aliceWatch, bobClient]) c.close();
+  }, { rollOverMs: 100 });
 });
 
 test("the device in use keeps the conversation: a reply rings the iPhone Alice talked from", async () => {
