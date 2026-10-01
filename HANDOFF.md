@@ -56,6 +56,15 @@ Committed and deployed by Steve's OK (see Deployment today); TestFlight build 0.
 - **Invite page and node replacement** (worktree `agent-a98f480958a4f6303`): `invite.html` offers "Join the beta on TestFlight" when `TESTFLIGHT_URL` is set in `config.sh` (only `https://testflight.apple.com/join/…` accepted), else today's "Coming soon". **Found: the live site's images are broken**: `firebase-hosting.ts` uploaded every file as UTF-8 text; fixed there, and the next `deploy-web.sh` repairs them. `setup-node-replacement.sh`: a Cloud Scheduler job (09:00 UTC on the 1st) starts a Cloud Run job that rolling-replaces the relay group one node at a time, as `node-replacer` with a four-permission custom role; $0. Not run.
 - **Small watches** (Apple Watch SE 3 40mm simulator, watchOS 27): the friends list, the Talk screen idle and in a conversation (End, the glyph) fit; the in-app ring's buttons broke into "De-cline" and "An-swer", now one line (`lineLimit(1)`, `minimumScaleFactor(0.7)` in `IncomingRingView`). Not checked: watchOS 10.2 (the simulator tool's taps don't reach it).
 
+## Done on 2026-10-01: Terms of Use (PR #22)
+
+- **Why:** App Review guideline 1.2 (user-generated content): reviewers commonly ask that people agree to terms with zero tolerance for objectionable content or abusive users. No custom EULA: Apple's Standard EULA covers the licence (App Information → License Agreement stays default).
+- `web/public/terms.html` (overandout.app/terms; adapted from Basecamp's CC BY 4.0 policies, attribution on the page): age 13+, community rules, reports and removal ("usually within a day"), content licence, Apple's Standard EULA, no warranty, not for emergencies, liability limits. Footer links on every page. Not deployed.
+- iPhone: "By signing in, you agree to the Terms of Use and Privacy Policy" under the Sign in with Apple button; Terms of Use in Settings and About.
+- `deploy/appstore/beta-review-notes.md`: leave "Sign-in required" unticked (Sign in with Apple only; reviewers use their own Apple ID); the terms in the safety paragraph.
+- Not a lawyer's text: Steve has it reviewed before the App Store release.
+- PR #23 carries the "message whose audio never started" fix, which missed PR #19's merge.
+
 ## Done on 2026-09-30: CI performance and audio tests (PR #18, merged)
 
 The plan is the Claude Doc in Links. Merged to `main` as PR #18; nothing deployed.
