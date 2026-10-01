@@ -22,10 +22,18 @@
 //   node deploy/appstore/asc.ts diagnostics [build]
 //       Hang, launch and disk-write signatures Apple collected for a build (default: the newest).
 //
+//   node deploy/appstore/asc.ts listing
+//       The App Store version being prepared and its screenshots, by display type.
+//
+//   node deploy/appstore/asc.ts screenshots [dir] [--replace]
+//       Uploads screenshots/out (or dir) to that version's en-US listing: iphone-*.png as the
+//       6.9" iPhone set, watch-*.png as the Series 10–12 watch set, in file-name order.
+//       --replace deletes a set's current screenshots first.
+//
 // These print testers' comments and emails, so they stay on this Mac (the Beta telemetry spec).
 
-import { createPrivateKey, sign } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
+import { createHash, createPrivateKey, sign } from "node:crypto";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
@@ -43,7 +51,7 @@ const groupName = config.ASC_GROUP || "House";
 
 const { positionals, values } = parseArgs({
   allowPositionals: true,
-  options: { notes: { type: "string" }, days: { type: "string" }, log: { type: "string" } },
+  options: { notes: { type: "string" }, days: { type: "string" }, log: { type: "string" }, replace: { type: "boolean" } },
 });
 const [command, ...args] = positionals;
 
@@ -92,6 +100,31 @@ async function internalGroup(app: string): Promise<{ id: string; allBuilds: bool
   });
   console.log(`Created the internal group "${groupName}", which gets every build.`);
   return { id: created.data.id, allBuilds: true };
+}
+
+// The iOS App Store version that can still be edited (the one being prepared, or one Apple
+// rejected), and its en-US localization, where the watch's screenshots go too.
+async function editableVersion(app: string): Promise<{ version: any; localization: any }> {
+  const versions = await api("GET", `/v1/apps/${app}/appStoreVersions?filter[platform]=IOS&limit=20`);
+  const editable = ["PREPARE_FOR_SUBMISSION", "DEVELOPER_REJECTED", "REJECTED", "METADATA_REJECTED", "INVALID_BINARY"];
+  const version = versions.data.find((v: any) => editable.includes(v.attributes.appStoreState));
+  if (!version) {
+    const states = versions.data.map((v: any) => `${v.attributes.versionString} ${v.attributes.appStoreState}`).join(", ") || "none";
+    fail(`No App Store version can be edited (versions: ${states}).`);
+  }
+  const localizations = await api("GET", `/v1/appStoreVersions/${version.id}/appStoreVersionLocalizations`);
+  const localization = localizations.data.find((l: any) => l.attributes.locale === "en-US") ?? localizations.data[0];
+  if (!localization) fail(`Version ${version.attributes.versionString} has no localization.`);
+  return { version, localization };
+}
+
+async function screenshotSets(localization: string): Promise<{ set: any; shots: any[] }[]> {
+  const sets = await api("GET", `/v1/appStoreVersionLocalizations/${localization}/appScreenshotSets?include=appScreenshots&limit=50`);
+  const shots = new Map<string, any>((sets.included ?? []).map((s: any) => [s.id, s]));
+  return sets.data.map((set: any) => ({
+    set,
+    shots: (set.relationships?.appScreenshots?.data ?? []).map((r: any) => shots.get(r.id)).filter(Boolean),
+  }));
 }
 
 async function findBuild(app: string, build: string): Promise<any | undefined> {
@@ -211,8 +244,88 @@ switch (command) {
     }
     break;
   }
+  case "listing": {
+    const { version, localization } = await editableVersion(await appId());
+    console.log(`Version ${version.attributes.versionString} (${version.attributes.appStoreState}), ${localization.attributes.locale}`);
+    const sets = await screenshotSets(localization.id);
+    if (!sets.length) console.log("  No screenshots yet.");
+    for (const { set, shots } of sets) {
+      console.log(`  ${set.attributes.screenshotDisplayType}: ${shots.length} screenshot${shots.length === 1 ? "" : "s"}`);
+      for (const s of shots) console.log(`    ${s.attributes.fileName} ${s.attributes.assetDeliveryState?.state ?? ""}`);
+    }
+    break;
+  }
+  case "screenshots": {
+    // Each display type takes the out/ files with its prefix, in file-name order.
+    const dir = args[0] ?? join(import.meta.dirname, "screenshots", "out");
+    const kinds = [
+      { displayType: "APP_IPHONE_67", prefix: "iphone-" }, // the 6.9" display (1320 × 2868)
+      { displayType: "APP_WATCH_SERIES_10", prefix: "watch-" }, // Series 10–12 (416 × 496)
+    ];
+    const { version, localization } = await editableVersion(await appId());
+    console.log(`Version ${version.attributes.versionString}, ${localization.attributes.locale}`);
+    const existing = await screenshotSets(localization.id);
+    for (const { displayType, prefix } of kinds) {
+      const files = readdirSync(dir).filter((f) => f.startsWith(prefix) && f.endsWith(".png")).sort();
+      if (!files.length) continue;
+      let found = existing.find((e) => e.set.attributes.screenshotDisplayType === displayType);
+      if (found?.shots.length && !values.replace) {
+        fail(`${displayType} already has ${found.shots.length} screenshots; run with --replace to delete them first.`);
+      }
+      for (const old of found?.shots ?? []) await api("DELETE", `/v1/appScreenshots/${old.id}`);
+      const setId = found?.set.id ?? (await api("POST", "/v1/appScreenshotSets", {
+        data: {
+          type: "appScreenshotSets",
+          attributes: { screenshotDisplayType: displayType },
+          relationships: { appStoreVersionLocalization: { data: { type: "appStoreVersionLocalizations", id: localization.id } } },
+        },
+      })).data.id;
+      const ids: string[] = [];
+      for (const file of files) {
+        const bytes = readFileSync(join(dir, file));
+        // Reserve, upload the parts App Store Connect asks for, then commit with the checksum.
+        const reserved = await api("POST", "/v1/appScreenshots", {
+          data: {
+            type: "appScreenshots",
+            attributes: { fileName: file, fileSize: bytes.length },
+            relationships: { appScreenshotSet: { data: { type: "appScreenshotSets", id: setId } } },
+          },
+        });
+        for (const op of reserved.data.attributes.uploadOperations) {
+          const headers = Object.fromEntries((op.requestHeaders ?? []).map((h: any) => [h.name, h.value]));
+          const res = await fetch(op.url, { method: op.method, headers, body: bytes.subarray(op.offset, op.offset + op.length) });
+          if (!res.ok) fail(`Uploading ${file}: HTTP ${res.status}`);
+        }
+        await api("PATCH", `/v1/appScreenshots/${reserved.data.id}`, {
+          data: {
+            type: "appScreenshots",
+            id: reserved.data.id,
+            attributes: { uploaded: true, sourceFileChecksum: createHash("md5").update(bytes).digest("hex") },
+          },
+        });
+        ids.push(reserved.data.id);
+        console.log(`  ${displayType}: uploaded ${file}`);
+      }
+      await api("PATCH", `/v1/appScreenshotSets/${setId}/relationships/appScreenshots`, {
+        data: ids.map((id) => ({ type: "appScreenshots", id })),
+      });
+      // Apple checks each image (size, format) after the upload.
+      for (const id of ids) {
+        for (let tries = 0; ; tries++) {
+          const shot = await api("GET", `/v1/appScreenshots/${id}`);
+          const state = shot.data.attributes.assetDeliveryState;
+          if (state?.state === "COMPLETE") break;
+          if (state?.state === "FAILED") fail(`${shot.data.attributes.fileName}: ${(state.errors ?? []).map((e: any) => e.description ?? e.code).join("; ")}`);
+          if (tries > 40) fail(`${shot.data.attributes.fileName} still ${state?.state} after 2 minutes; check App Store Connect.`);
+          await new Promise((r) => setTimeout(r, 3_000));
+        }
+      }
+      console.log(`${displayType}: ${ids.length} screenshots, processed.`);
+    }
+    break;
+  }
   default:
-    fail("usage: node deploy/appstore/asc.ts status | release <build> [--notes …] | add-tester <email> [first] [last] | feedback [--days N] | crashes [--days N] [--log <id>] | diagnostics [build]");
+    fail("usage: node deploy/appstore/asc.ts status | release <build> [--notes …] | add-tester <email> [first] [last] | feedback [--days N] | crashes [--days N] [--log <id>] | diagnostics [build] | listing | screenshots [dir] [--replace]");
 }
 
 // config.sh's KEY="value" lines.
