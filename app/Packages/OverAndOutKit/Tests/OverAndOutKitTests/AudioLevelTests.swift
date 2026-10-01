@@ -82,11 +82,14 @@ struct AudioLevelTests {
     }
 
     /// The microphone's hardware rate converted to 16 kHz, as the input tap does it: 100 ms
-    /// buffers through one converter.
-    @Test(arguments: [48_000.0, 44_100.0])
-    func captureConverterKeepsLevelAndPitch(rate: Double) throws {
-        let hardware = try #require(AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: rate, channels: 1, interleaved: false))
-        let converter = try #require(AVAudioConverter(from: hardware, to: VoiceFrame.pcmFormat))
+    /// buffers through one converter. Three channels is the watch's microphone (2026-10-01:
+    /// converting them straight to one gave silence).
+    @Test(arguments: [(48_000.0, 1), (44_100.0, 1), (48_000.0, 3)])
+    func captureConverterKeepsLevelAndPitch(rate: Double, channels: Int) throws {
+        // More than two channels need a layout: discrete, as the watch's microphones are.
+        let layout = try #require(AVAudioChannelLayout(layoutTag: kAudioChannelLayoutTag_DiscreteInOrder | UInt32(channels)))
+        let hardware = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: rate, interleaved: false, channelLayout: layout)
+        let converter = try #require(AudioPipeline.captureConverter(for: hardware))
         let input = Signal.tone(440, dbfs: -20, seconds: 2, rate: rate)
         let chunk = Int(rate / 10)
         var output: [Float] = []
@@ -94,10 +97,12 @@ struct AudioLevelTests {
             let samples = input[start..<min(start + chunk, input.count)]
             let buffer = try #require(AVAudioPCMBuffer(pcmFormat: hardware, frameCapacity: AVAudioFrameCount(samples.count)))
             buffer.frameLength = AVAudioFrameCount(samples.count)
-            samples.withUnsafeBufferPointer { buffer.floatChannelData![0].update(from: $0.baseAddress!, count: samples.count) }
+            for channel in 0..<channels {
+                samples.withUnsafeBufferPointer { buffer.floatChannelData![channel].update(from: $0.baseAddress!, count: samples.count) }
+            }
             output += AudioPipeline.convertCaptured(buffer, with: converter) ?? []
         }
-        let name = "\(Int(rate / 1000))k"
+        let name = channels == 1 ? "\(Int(rate / 1000))k" : "\(Int(rate / 1000))k_\(channels)ch"
         let steady = output.dropFirst(Signal.settleSamples)
         let change = AudioLevel(steady).rmsDbfs - (-20)
         let share = Signal.energyShare(steady.prefix(16_000), at: 440)

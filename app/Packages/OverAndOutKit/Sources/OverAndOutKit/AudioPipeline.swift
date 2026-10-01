@@ -106,7 +106,7 @@ public final class AudioPipeline {
         let hasInput = hardware.channelCount > 0 && hardware.sampleRate > 0
         onCaptureFormat?(hasInput ? Self.describe(hardware) : "no input (\(Self.describe(hardware)))")
         input.removeTap(onBus: 0)
-        if hasInput, let converter = AVAudioConverter(from: hardware, to: VoiceFrame.pcmFormat) {
+        if hasInput, let converter = Self.captureConverter(for: hardware) {
             // The tap delivers ~100 ms buffers; they're re-chunked into 20 ms frames on the queue.
             input.installTap(onBus: 0, bufferSize: 1600, format: hardware, block: Self.captureTap(converter: converter, state: state))
         }
@@ -165,11 +165,46 @@ public final class AudioPipeline {
         return "\(Int(format.sampleRate)) Hz, \(format.channelCount) ch, \(common), \(format.isInterleaved ? "interleaved" : "deinterleaved")"
     }
 
-    /// One tap buffer, in the hardware's format, as 16 kHz mono samples. The converter keeps
-    /// its state from one buffer to the next. Internal so the tests can measure it.
+    /// The converter from the microphone's format to 16 kHz mono. A microphone with several
+    /// channels (the watch's gives three, float32) is mixed to mono first (`convertCaptured`),
+    /// so the converter only resamples: converting three channels to one, it gave silence
+    /// (2026-10-01: −36 dBFS in, −120 out).
+    nonisolated static func captureConverter(for hardware: AVAudioFormat) -> AVAudioConverter? {
+        if hardware.channelCount > 1, hardware.commonFormat == .pcmFormatFloat32, !hardware.isInterleaved,
+           let mono = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: hardware.sampleRate, channels: 1, interleaved: false) {
+            return AVAudioConverter(from: mono, to: VoiceFrame.pcmFormat)
+        }
+        return AVAudioConverter(from: hardware, to: VoiceFrame.pcmFormat)
+    }
+
+    /// The channels of a deinterleaved float32 buffer averaged into one, in `mono`.
+    nonisolated static func mixedToMono(_ buffer: AVAudioPCMBuffer, as mono: AVAudioFormat) -> AVAudioPCMBuffer? {
+        guard let channels = buffer.floatChannelData,
+              let mixed = AVAudioPCMBuffer(pcmFormat: mono, frameCapacity: buffer.frameLength) else { return nil }
+        mixed.frameLength = buffer.frameLength
+        let count = Int(buffer.format.channelCount)
+        let out = mixed.floatChannelData![0]
+        for i in 0..<Int(buffer.frameLength) {
+            var sum: Float = 0
+            for channel in 0..<count { sum += channels[channel][i] }
+            out[i] = sum / Float(count)
+        }
+        return mixed
+    }
+
+    /// One tap buffer, in the hardware's format, as 16 kHz mono samples, through the converter
+    /// from `captureConverter(for:)`. The converter keeps its state from one buffer to the
+    /// next. Internal so the tests can measure it.
     nonisolated static func convertCaptured(_ buffer: AVAudioPCMBuffer, with converter: AVAudioConverter) -> [Float]? {
-        let ratio = VoiceFrame.sampleRate / buffer.format.sampleRate
-        let capacity = AVAudioFrameCount(Double(buffer.frameLength) * ratio) + 32
+        let source: AVAudioPCMBuffer
+        if buffer.format.channelCount > 1, converter.inputFormat.channelCount == 1 {
+            guard let mixed = mixedToMono(buffer, as: converter.inputFormat) else { return nil }
+            source = mixed
+        } else {
+            source = buffer
+        }
+        let ratio = VoiceFrame.sampleRate / source.format.sampleRate
+        let capacity = AVAudioFrameCount(Double(source.frameLength) * ratio) + 32
         guard let output = AVAudioPCMBuffer(pcmFormat: VoiceFrame.pcmFormat, frameCapacity: capacity) else { return nil }
         var consumed = false
         var error: NSError?
@@ -180,7 +215,7 @@ public final class AudioPipeline {
             }
             consumed = true
             status.pointee = .haveData
-            return buffer
+            return source
         }
         guard output.frameLength > 0 else { return nil }
         return Array(UnsafeBufferPointer(start: output.floatChannelData![0], count: Int(output.frameLength)))
