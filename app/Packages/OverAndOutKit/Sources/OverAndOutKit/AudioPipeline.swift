@@ -27,8 +27,12 @@ public final class AudioPipeline {
     /// another session took the audio hardware).
     public var onRestart: ((String) -> Void)?
     /// A burst's capture ended: how loud the microphone's audio was (before encoding) and how
-    /// many frames it made. For Beta telemetry's per-burst levels.
-    public var onBurstCaptured: ((AudioLevel, Int) -> Void)?
+    /// many frames it made, and the loudest raw sample the microphone gave before conversion
+    /// (dBFS, any channel). For Beta telemetry's per-burst levels.
+    public var onBurstCaptured: ((AudioLevel, Int, Double) -> Void)?
+    /// A start with the microphone: the format it delivers ("48000 Hz, 1 ch, float32,
+    /// deinterleaved"), or why there's none. For diagnosing silent capture.
+    public var onCaptureFormat: ((String) -> Void)?
     /// A received burst ended: how loud the decoded audio handed to the speaker was, and how
     /// many frames. For Beta telemetry's per-burst levels.
     public var onBurstPlayed: ((AudioLevel, Int) -> Void)?
@@ -100,6 +104,7 @@ public final class AudioPipeline {
         engineHasInput = true
         let hardware = input.outputFormat(forBus: 0)
         let hasInput = hardware.channelCount > 0 && hardware.sampleRate > 0
+        onCaptureFormat?(hasInput ? Self.describe(hardware) : "no input (\(Self.describe(hardware)))")
         input.removeTap(onBus: 0)
         if hasInput, let converter = AVAudioConverter(from: hardware, to: VoiceFrame.pcmFormat) {
             // The tap delivers ~100 ms buffers; they're re-chunked into 20 ms frames on the queue.
@@ -122,9 +127,42 @@ public final class AudioPipeline {
     /// real-time thread. It owns the converter; only the samples go to the audio queue.
     private nonisolated static func captureTap(converter: AVAudioConverter, state: AudioQueueState) -> AVAudioNodeTapBlock {
         { buffer, _ in
+            let rawPeak = rawPeak(of: buffer)
             guard let samples = convertCaptured(buffer, with: converter) else { return }
-            state.async { $0.captured(samples) }
+            state.async { $0.captured(samples, rawPeak: rawPeak) }
         }
+    }
+
+    /// The loudest sample in any channel of a tap buffer, before conversion, as a fraction of
+    /// full scale: tells silence from the microphone apart from silence made by converting.
+    nonisolated static func rawPeak(of buffer: AVAudioPCMBuffer) -> Float {
+        let format = buffer.format
+        let channels = format.isInterleaved ? 1 : Int(format.channelCount)
+        let count = Int(buffer.frameLength) * (format.isInterleaved ? Int(format.channelCount) : 1)
+        var peak: Float = 0
+        for channel in 0..<channels {
+            if let data = buffer.floatChannelData?[channel] {
+                for i in 0..<count { peak = max(peak, abs(data[i])) }
+            } else if let data = buffer.int16ChannelData?[channel] {
+                for i in 0..<count { peak = max(peak, abs(Float(data[i]) / 32768)) }
+            } else if let data = buffer.int32ChannelData?[channel] {
+                for i in 0..<count { peak = max(peak, abs(Float(data[i]) / 2_147_483_648)) }
+            }
+        }
+        return peak
+    }
+
+    /// "48000 Hz, 1 ch, float32, deinterleaved".
+    nonisolated static func describe(_ format: AVAudioFormat) -> String {
+        let common: String
+        switch format.commonFormat {
+        case .pcmFormatFloat32: common = "float32"
+        case .pcmFormatFloat64: common = "float64"
+        case .pcmFormatInt16: common = "int16"
+        case .pcmFormatInt32: common = "int32"
+        default: common = "other"
+        }
+        return "\(Int(format.sampleRate)) Hz, \(format.channelCount) ch, \(common), \(format.isInterleaved ? "interleaved" : "deinterleaved")"
     }
 
     /// One tap buffer, in the hardware's format, as 16 kHz mono samples. The converter keeps
@@ -243,7 +281,7 @@ public final class AudioPipeline {
         case .stalled(let buffers, let drained):
             onRestart?("playback stalled: \(buffers) buffers never reported played; counted as played")
             if drained { onPlaybackDrained?() }
-        case .captureLevel(let level, let frames): onBurstCaptured?(level, frames)
+        case .captureLevel(let level, let frames, let rawPeak): onBurstCaptured?(level, frames, AudioLevel.dbfs(Double(rawPeak)))
         case .playbackLevel(let level, let frames): onBurstPlayed?(level, frames)
         }
     }
@@ -266,7 +304,7 @@ private final class AudioQueueState: @unchecked Sendable {
         case firstCapturedFrame(Double)
         case drained
         case stalled(buffers: Int, drained: Bool)
-        case captureLevel(AudioLevel, frames: Int)
+        case captureLevel(AudioLevel, frames: Int, rawPeak: Float)
         case playbackLevel(AudioLevel, frames: Int)
     }
 
@@ -285,6 +323,8 @@ private final class AudioQueueState: @unchecked Sendable {
     private var sequence: UInt32 = 0
     /// The current burst's levels, sent and received.
     private var capturedLevel = AudioLevel()
+    /// The loudest raw sample the microphone gave this burst, before conversion.
+    private var capturedRawPeak: Float = 0
     private var playedLevel = AudioLevel()
     private var playedFrames = 0
     private var held: [AVAudioPCMBuffer] = []
@@ -356,6 +396,7 @@ private final class AudioQueueState: @unchecked Sendable {
         capturing = false
         pendingSamples.removeAll()
         capturedLevel = AudioLevel()
+        capturedRawPeak = 0
         playedLevel = AudioLevel()
         playedFrames = 0
         held.removeAll()
@@ -409,6 +450,7 @@ private final class AudioQueueState: @unchecked Sendable {
         sequence = 0
         pendingSamples.removeAll()
         capturedLevel = AudioLevel()
+        capturedRawPeak = 0
         capturing = true
     }
 
@@ -419,15 +461,17 @@ private final class AudioQueueState: @unchecked Sendable {
             pendingSamples.append(contentsOf: repeatElement(0, count: max(0, padding)))
             emitFrames()
         }
-        if capturing, sequence > 0 { send(.captureLevel(capturedLevel, frames: Int(sequence))) }
+        if capturing, sequence > 0 { send(.captureLevel(capturedLevel, frames: Int(sequence), rawPeak: capturedRawPeak)) }
         capturing = false
         pendingSamples.removeAll()
         capturedLevel = AudioLevel()
+        capturedRawPeak = 0
     }
 
-    func captured(_ samples: [Float]) {
+    func captured(_ samples: [Float], rawPeak: Float = 0) {
         onQueue()
         guard capturing else { return }
+        capturedRawPeak = max(capturedRawPeak, rawPeak)
         // Measured before the padding and the encoder: what the microphone gave.
         capturedLevel.add(samples)
         pendingSamples.append(contentsOf: samples)

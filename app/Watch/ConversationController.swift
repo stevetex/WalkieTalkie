@@ -233,8 +233,12 @@ final class ConversationController: NSObject, ObservableObject {
         audio.onFirstCapturedFrame = { [weak self] t in
             self?.conversation?.timeline.mark("micFirstFrame", at: t, once: false)
         }
-        audio.onBurstCaptured = { [weak self] level, frames in
-            self?.markLevel("burstLevelSent", level, frames: frames, context: ",in=\(AudioLevel.inputPort())")
+        audio.onBurstCaptured = { [weak self] level, frames, rawPeak in
+            self?.markLevel("burstLevelSent", level, frames: frames,
+                            context: ",in=\(AudioLevel.inputPort()),raw=\(String(format: "%.1f", rawPeak))")
+        }
+        audio.onCaptureFormat = { [weak self] format in
+            self?.conversation?.timeline.mark("micFormat", detail: format, once: false)
         }
         audio.onBurstPlayed = { [weak self] level, frames in
             self?.markLevel("burstLevelPlayed", level, frames: frames, context: "")
@@ -825,6 +829,7 @@ final class ConversationController: NSObject, ObservableObject {
     private func audioSessionActivated() {
         guard conversation != nil, conversation?.audioActive == false else { return }
         conversation?.timeline.mark("audioActivated")
+        conversation?.timeline.mark("micSetup", detail: AudioLevel.microphoneSetup())
         do {
             try audio.start()
         } catch {

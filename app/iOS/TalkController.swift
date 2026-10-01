@@ -124,8 +124,12 @@ final class TalkController: ObservableObject {
         audio.onFirstCapturedFrame = { [weak self] t in
             self?.conversation?.timeline.mark("micFirstFrame", at: t, once: false)
         }
-        audio.onBurstCaptured = { [weak self] level, frames in
-            self?.markLevel("burstLevelSent", level, frames: frames, context: ",in=\(AudioLevel.inputPort())")
+        audio.onBurstCaptured = { [weak self] level, frames, rawPeak in
+            self?.markLevel("burstLevelSent", level, frames: frames,
+                            context: ",in=\(AudioLevel.inputPort()),raw=\(String(format: "%.1f", rawPeak))")
+        }
+        audio.onCaptureFormat = { [weak self] format in
+            self?.conversation?.timeline.mark("micFormat", detail: format, once: false)
         }
         audio.onBurstPlayed = { [weak self] level, frames in
             // The system volume, so "played quietly" can be told from "volume turned down".
@@ -609,6 +613,7 @@ final class TalkController: ObservableObject {
         guard conversation != nil, !audioActive else { return }
         // PushToTalk: the category set at launch stands; changing it while active adds delay.
         conversation?.timeline.mark("audioActivated", detail: Self.routeDescription())
+        conversation?.timeline.mark("micSetup", detail: AudioLevel.microphoneSetup())
         // PushToTalk activates audio either to receive or to transmit: the microphone only for
         // the latter (see AudioPipeline.start). In the app's own session, both, for the whole window.
         let capture = !usesPushToTalk || talkHeld
