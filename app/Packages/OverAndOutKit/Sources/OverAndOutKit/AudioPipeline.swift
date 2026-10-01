@@ -623,7 +623,9 @@ private final class AudioQueueState: @unchecked Sendable {
         }
         held.removeAll()
         armDrainWatchdog()
-        if !player.isPlaying { player.play() }
+        // A player whose engine is gone (the pipeline released while this waited on the
+        // queue) raises an exception on play(), which would crash the app.
+        if !player.isPlaying, player.engine != nil { player.play() }
         if !reportedFirstPlayback {
             reportedFirstPlayback = true
             send(.firstPlayback(now))
