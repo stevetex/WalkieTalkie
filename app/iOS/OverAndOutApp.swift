@@ -53,7 +53,7 @@ struct OverAndOutApp: App {
                         Task {
                             await model.becameActive()
                             await model.registerDevice()
-                            await model.refresh()
+                            await model.refresh(quietly: true)
                         }
                     case .background:
                         model.talk.appEnteredBackground()

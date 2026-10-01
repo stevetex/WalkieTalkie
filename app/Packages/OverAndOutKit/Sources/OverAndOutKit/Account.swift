@@ -581,7 +581,7 @@ public actor AccountClient {
         for (name, value) in headers { request.setValue(value, forHTTPHeaderField: name) }
         if let token { request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
         request.httpBody = body
-        let (data, response) = try await urlSession.data(for: request)
+        let (data, response) = try await load(request)
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard (200..<300).contains(status) else {
             let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
@@ -589,6 +589,19 @@ public actor AccountClient {
                                   message: json?["message"] as? String ?? "")
         }
         return data
+    }
+
+    /// Tries a GET or PUT once more if its connection was lost: after the app was suspended
+    /// (the phone locked), the first request can go out on a connection the server or the
+    /// network already closed. Those two can be repeated safely; others aren't retried, as
+    /// the first may have reached the server.
+    private func load(_ request: URLRequest) async throws -> (Data, URLResponse) {
+        do {
+            return try await urlSession.data(for: request)
+        } catch let error as URLError where error.code == .networkConnectionLost
+                    && ["GET", "PUT"].contains(request.httpMethod ?? "GET") {
+            return try await urlSession.data(for: request)
+        }
     }
 }
 

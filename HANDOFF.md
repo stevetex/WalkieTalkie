@@ -46,6 +46,10 @@ The spec has the design; this is where things are.
 - **Tools:** `node server/tools/beta.ts summary | tester <name> | conversation <id> | pull <name> | logs <name> | feedback | usage | stats` (Cloud Logging and Firestore with Steve's gcloud credentials, or `--local <DATA_DIR>`); `deploy/gcp/telemetry-monitoring.ts print | validate | apply` (the dashboard passed Monitoring's `validateOnly`).
 - **Tested:** 103 server tests + 25 on the Firestore emulator; kit 32; in the simulators on a local relay: answered and declined rings, their records and summaries, events, Report a Problem, and pulls from the iPhone and the watch.
 
+## Done on 2026-09-30 (late): no "Couldn't reach Over&Out" alert after unlocking (not committed)
+
+Steve saw the alert after the first launch, then locking and unlocking the iPhone. It came from the refresh on coming to the foreground: any URLError but "offline" became a modal alert. Likely cause: the first request after a suspension reuses an HTTP/2 connection that was closed meanwhile (`networkConnectionLost`, -1005). Fix: the kit's `AccountClient` retries a GET or PUT once on -1005 (POST/PATCH/DELETE aren't retried: the first may have landed); the foreground refresh is quiet (`refresh(quietly: true)`) and logs a `refreshFailed` event with the error code instead; pull-to-refresh and actions still alert. Two new kit tests (AccountTests 12 pass); the iPhone app builds without warnings. Not yet checked on a device: lock and unlock on a TestFlight build, and `beta.ts tester Steve` for any `refreshFailed`.
+
 ## Done on 2026-09-30 (night): runs 90–96 on build 116
 
 Each run's telemetry went to the run-analyst in the background; the feasibility doc's Prototype results have them. The Test Bot rang Steve's locked iPhone (production push) with a message starting "Pineapple."
