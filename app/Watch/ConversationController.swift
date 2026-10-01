@@ -112,7 +112,8 @@ final class ConversationController: NSObject, ObservableObject {
 
     /// Stamps when relay data arrives, off the main queue, for the timeline.
     private let relay = RelayConnection(stampsArrivals: true)
-    private let audio = AudioPipeline()
+    // The watch's microphone arrives quiet and unleveled (build 140: speech peaking at −35 dBFS).
+    private let audio = AudioPipeline(autoGain: true)
 
     private var started = false
     private var conversation: Conversation?
@@ -233,9 +234,8 @@ final class ConversationController: NSObject, ObservableObject {
         audio.onFirstCapturedFrame = { [weak self] t in
             self?.conversation?.timeline.mark("micFirstFrame", at: t, once: false)
         }
-        audio.onBurstCaptured = { [weak self] level, frames, rawPeak in
-            self?.markLevel("burstLevelSent", level, frames: frames,
-                            context: ",in=\(AudioLevel.inputPort()),raw=\(String(format: "%.1f", rawPeak))")
+        audio.onBurstCaptured = { [weak self] level, frames, detail in
+            self?.markLevel("burstLevelSent", level, frames: frames, context: ",in=\(AudioLevel.inputPort())" + detail)
         }
         audio.onCaptureFormat = { [weak self] format in
             self?.conversation?.timeline.mark("micFormat", detail: format, once: false)
