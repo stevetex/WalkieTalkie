@@ -72,6 +72,24 @@ Use case: compositing. Convert this transparent mascot master to one square app 
 
 Edit this icon only to add considerably more clear space around the character. Uniformly shrink the ENTIRE character illustration to 78 percent of its current size and center it on the SAME size opaque square indigo background. Keep all design details, proportions and colors EXACTLY the same, including entire antenna/tail/hair. Do not crop anything. The complete silhouette must fit within a centered invisible circle with radius 40 percent of canvas width, with generous indigo space beyond. The background extends edge to edge; no circle outline, no rounded corners, no text, no new objects. This is required to prevent clipping in a circular Watch icon mask.
 
+### Superseded October 1, 2026: composited from the masters
+
+The 78 percent refinement left Fox and Morticia visibly smaller than the other 16 in the apps' circular avatars, which are copies of the icon exports. Their `icons/icon-1024.png` is now composited from the unchanged transparent master by `icon-from-master.swift` (scaled down only, high-quality resampling, on flat `#272D50`), sized to the other icons' median content height of about 770 px and top margin of about 112 px, as far as the circle allows (largest foreground radius at most about 490 px of 512, like the others). The rest is derived as before:
+
+```sh
+cd art/characters
+swift icon-from-master.swift 11-fox/master.png 11-fox/icons/icon-1024.png 770 112 -15
+swift icon-from-master.swift 15-morticia/master.png 15-morticia/icons/icon-1024.png 740 130 0
+# then, for each (OAOFox/Fox, OAOMorticia/Morticia):
+cp <n>/icons/icon-1024.png <n>/icons/iPhone.xcassets/<Asset>Icon.appiconset/icon-1024.png
+cp <n>/icons/icon-1024.png <n>/icons/Watch.xcassets/<Asset>Icon.appiconset/icon-1024.png
+sips -z <s> <s> <n>/icons/icon-1024.png --out <n>/icons/exports/icon-<s>.png   # s = 48 96 180 256 512
+cp <n>/icons/exports/icon-96.png ../../app/Watch/Assets.xcassets/Mascots/Mascot<Name>.imageset/Mascot<Name>.png
+sips -z 288 288 <n>/icons/exports/icon-512.png --out ../../app/iOS/Assets.xcassets/Mascots/Mascot<Name>.imageset/Mascot<Name>.png
+```
+
+Fox is moved 15 px left of centre so its tail clears the circle; Morticia is a little shorter than the median because her hair is the widest silhouette in the set.
+
 ## Pink accessories and two bow variants
 
 The later user update changes 04's ribbon and 05's ear interiors to muted rose pink, then adds 16 Honey and 17 Cocoa bow-and-lashes variants. These updates supersede the orange accessory descriptions in the initial prompts above. Built-in image generation was used for all edits.
