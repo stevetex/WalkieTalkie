@@ -18,13 +18,15 @@ The Test Bot parts assume the always-on Test Bot is deployed (`TEST_BOT_USER_ID`
 
 **Marketing URL:** https://overandout.app
 
+**License Agreement** (App Information, for the App Store): Apple's Standard EULA. The Terms of Use point to it for the licence.
+
 **Privacy Policy URL:** https://overandout.app/privacy
 
 ## Beta App Review information
 
 **Contact:** [first name] [last name], [phone], [email]
 
-**Sign-in required:** Yes, with Sign in with Apple. There is no username or password; reviewers sign in with their own Apple ID. (App Store Connect asks for a demo account: leave it empty and say so in the notes, as below.)
+**Sign-in required:** leave it **unticked**. Ticking it makes App Store Connect require a username and password, and Over&Out has none: sign-in is Sign in with Apple only, and reviewers use their own Apple ID. The review notes say so. Apple doesn't document this case; if a reviewer still asks for a demo account, answer in App Store Connect that sign-in is Sign in with Apple only and point to the Test Bot (decided 2026-09-30).
 
 **Review notes** (up to 4,000 characters):
 
@@ -36,7 +38,7 @@ The Test Bot parts assume the always-on Test Bot is deployed (`TEST_BOT_USER_ID`
 >
 > APPLE WATCH: the watch app signs in from the iPhone by itself. A friend's message rings the watch with a notification; tapping it plays the message. A notification service extension downloads the message while the notification is shown, so it plays at once.
 >
-> SAFETY AND ACCOUNTS: only people you've accepted as friends (through an invite link) can reach you. On a friend's page you can report them (with a reason, including an inappropriate profile photo) and block them; blocking ends any conversation with them at once. Settings → Delete Account deletes the account and its data and revokes the Sign in with Apple token.
+> SAFETY AND ACCOUNTS: signing in means agreeing to our Terms of Use (https://overandout.app/terms), which have zero tolerance for harassment, threats, sexual or hateful content; the sign-in screen says so and links to them. Only people you've accepted as friends (through an invite link) can reach you. On a friend's page you can report them (with a reason, including an inappropriate profile photo) and block them; blocking ends any conversation with them at once. Reports alert us at once and we act on them, usually within a day, by removing content or the account. Settings → Delete Account deletes the account and its data and revokes the Sign in with Apple token.
 >
 > DATA: audio goes through our relay as you talk; if your friend hasn't answered yet, the relay holds the message in memory for up to about 35 seconds. Audio is never written to disk or stored. Diagnostics (timings, events and device details, never names or audio) are described in the privacy policy.
 

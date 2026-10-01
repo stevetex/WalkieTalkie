@@ -170,12 +170,26 @@ struct SignInView: View {
                     .foregroundStyle(Brand.secondary)
                     .multilineTextAlignment(.center)
                     .padding(.top, 12)
+                // App Review (guideline 1.2): people agree to the community rules before talking.
+                Text(agreement)
+                    .font(.footnote)
+                    .foregroundStyle(Brand.secondary)
+                    .tint(Brand.accent)
+                    .multilineTextAlignment(.center)
+                    .padding(.top, 8)
             }
             .padding(24)
         }
         .overlay {
             if signingIn { ProgressView().controlSize(.large) }
         }
+    }
+
+    /// "By signing in you agree to …", with both links.
+    private var agreement: AttributedString {
+        let site = "https://\(model.linkDomain)"
+        let markdown = "By signing in, you agree to the [Terms of Use](\(site)/terms) and [Privacy Policy](\(site)/privacy)."
+        return (try? AttributedString(markdown: markdown)) ?? AttributedString(markdown)
     }
 
     /// A line with its symbol in a fixed-width column, so the lines' text aligns.
