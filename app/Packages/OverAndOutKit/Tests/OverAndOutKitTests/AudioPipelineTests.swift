@@ -117,7 +117,24 @@ struct AudioPipelineTests {
             buffer.floatChannelData![0][i] = 0
             buffer.floatChannelData![1][i] = i == 100 ? -0.5 : 0
         }
-        #expect(AudioPipeline.rawPeak(of: buffer) == 0.5)
+        #expect(AudioPipeline.rawPeaks(of: buffer) == [0, 0.5])
         #expect(AudioPipeline.describe(format) == "48000 Hz, 2 ch, float32, deinterleaved")
+    }
+
+    /// On the watch one channel carries most of the voice: that one is sent, at its own level.
+    @Test func theLoudestChannelIsSent() throws {
+        let layout = try #require(AVAudioChannelLayout(layoutTag: kAudioChannelLayoutTag_DiscreteInOrder | 3))
+        let format = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 48_000, interleaved: false, channelLayout: layout)
+        let mono = try #require(AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 48_000, channels: 1, interleaved: false))
+        let buffer = try #require(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 4_800))
+        buffer.frameLength = 4_800
+        for i in 0..<4_800 {
+            buffer.floatChannelData![0][i] = 0.001
+            buffer.floatChannelData![1][i] = 0.3 * sin(Float(i) * 0.05)
+            buffer.floatChannelData![2][i] = 0.01 * sin(Float(i) * 0.05)
+        }
+        let picked = try #require(AudioPipeline.loudestChannel(buffer, as: mono))
+        #expect(picked.frameLength == 4_800)
+        #expect(picked.floatChannelData![0][100] == buffer.floatChannelData![1][100])
     }
 }
