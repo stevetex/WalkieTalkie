@@ -81,4 +81,29 @@ struct AudioPipelineTests {
         #expect(drained.timeIntervalSince(stoppedAt) >= 0.45)
         #expect(drained.timeIntervalSince(started) < 2)
     }
+
+    /// Run 94: a conversation's message arrived but its audio never started, and it played at the
+    /// start of the next conversation. Discarded, it doesn't.
+    @Test func discardedPlaybackDoesNotPlayOnTheNextStart() async throws {
+        let encoder = VoiceEncoder()
+        let silence = [Float](repeating: 0, count: VoiceFrame.samplesPerFrame)
+        let frames = try (0..<10).map { seq in
+            VoiceFrame.encode(codec: encoder.codec, seq: UInt32(seq), payload: try #require(encoder.encode(silence)))
+        }
+        let audio = AudioPipeline()
+        var played = false
+        audio.onFirstPlayback = { _ in played = true }
+        audio.beginPlayback()
+        for frame in frames { audio.enqueue(frame) }
+        audio.endPlayback()
+        audio.discardPlayback()
+        do {
+            try audio.start(capture: false)
+        } catch {
+            return
+        }
+        defer { audio.stop() }
+        try await Task.sleep(nanoseconds: 300_000_000)
+        #expect(!played)
+    }
 }

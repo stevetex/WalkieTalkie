@@ -669,6 +669,12 @@ final class TalkController: ObservableObject {
         if talkHeld, usesPushToTalk { ptt.stopTransmitting() }
         if usesPushToTalk {
             ptt.setRemoteSpeaker(nil)
+            if !audioActive {
+                // iOS never activated the audio (run 94: a phone call), so nothing stops the
+                // pipeline: what arrived must not play in the next conversation.
+                if ended.timeline.has("firstFrameReceived") { ended.timeline.mark("audioNeverActivated") }
+                audio.discardPlayback()
+            }
         } else {
             audio.stop()
             audioActive = false

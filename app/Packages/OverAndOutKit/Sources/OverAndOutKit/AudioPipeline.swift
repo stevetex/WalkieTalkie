@@ -225,6 +225,13 @@ public final class AudioPipeline {
         state.async { $0.endPlayback() }
     }
 
+    /// Drops what's waiting to play, for a conversation that ended before its audio could start
+    /// (run 94: iOS never activated PushToTalk's audio during a phone call, and the held message
+    /// played at the start of the next conversation).
+    public func discardPlayback() {
+        state.async { $0.discardHeld() }
+    }
+
     // MARK: From the audio queue
 
     fileprivate func deliver(_ event: AudioQueueState.Event) {
@@ -372,6 +379,15 @@ private final class AudioQueueState: @unchecked Sendable {
             drainWatchdog?.cancel()
             return (replay.buffers.count, replay.rewound)
         }
+    }
+
+    /// Nothing held plays: the conversation it belonged to is over.
+    func discardHeld() {
+        onQueue()
+        held.removeAll()
+        prebuffering = false
+        playedLevel = AudioLevel()
+        playedFrames = 0
     }
 
     /// The engine couldn't be restarted: nothing will play what's held.
