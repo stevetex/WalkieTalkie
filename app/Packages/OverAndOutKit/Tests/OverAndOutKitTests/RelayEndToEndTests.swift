@@ -2,28 +2,33 @@ import Foundation
 import Testing
 @testable import OverAndOutKit
 
-/// Swift → relay → Swift: the path the apps use, less the microphone and speaker. Speech
-/// encoded with the kit's encoder goes through a real relay to a watch that isn't connected;
-/// the watch answers (joining in the stream request, as the app does), hears the replay, then a
-/// second burst live. Every frame must arrive as sent, and the decoded speech must keep its
-/// level. Runs only against a relay named by OAO_E2E_RELAY (CI starts one: kit.yml):
+/// Swift → relay → Swift: the path the apps use, less the microphone and speaker, over the v2
+/// contract. Two dev accounts sign in through the API (an iPhone, and a watch that isn't
+/// connected), become friends by an invite, and the watch registers for alert rings. Speech
+/// encoded with the kit's encoder goes through a real relay to the watch; the watch finds the
+/// ring by the pending-ring lookup, answers it and joins it by its ID (in the stream request, as
+/// the app does), hears the replay, then a second burst live. Every frame must arrive as sent,
+/// and the decoded speech must keep its level. Runs only against a relay named by
+/// OAO_E2E_RELAY (CI starts one: kit.yml):
 ///
-///   SPIKE_TOKEN=ci SHARED_TOKEN_CLIENTS=1 PORT=8095 node server/src/main.ts
+///   SPIKE_TOKEN=ci SERVE_API=1 DEV_APPLE_SIGNIN=1 PORT=8095 DATA_DIR=<dir> node server/src/main.ts
 ///   OAO_E2E_RELAY=http://127.0.0.1:8095 swift test
 @MainActor
-@Suite(.serialized, .enabled(if: e2eRelay != nil, "set OAO_E2E_RELAY to a local relay"))
+@Suite(.serialized, .enabled(if: e2eRelay != nil, "set OAO_E2E_RELAY to a local relay serving the API"))
 struct RelayEndToEndTests {
-    static var token: String {
-        ProcessInfo.processInfo.environment["OAO_E2E_TOKEN"] ?? "ci"
-    }
-
     @Test func speechCrossesTheRelayIntactAndAtItsLevel() async throws {
         let base = try #require(e2eRelay)
-        let id = UUID().uuidString.prefix(8)
-        let alice = "kit-a-\(id)", bob = "kit-b-\(id)"
-        try await register(base, userId: alice, pushToken: "local:\(alice)")
-        // "poll:" = not connected, so the first Talk rings and the relay holds the audio.
-        try await register(base, userId: bob, pushToken: "poll:\(bob)")
+        let id = UUID().uuidString.prefix(8).lowercased()
+        let phone = ClientIdentity(kind: .ios, version: "e2e", build: "1", encodes: ["opus16k"])
+        let watch = ClientIdentity(kind: .watchos, version: "e2e", build: "1", encodes: ["opus16k"])
+        let aliceAccount = AccountClient(baseURL: base, store: MemorySessionStore(), identity: phone)
+        let bobAccount = AccountClient(baseURL: base, store: MemorySessionStore(), identity: watch)
+        let alice = try await aliceAccount.signInWithApple(identityToken: "dev:kit-a-\(id)", nonce: "n", name: "Alice", deviceId: "kit-a-\(id)").session
+        let bob = try await bobAccount.signInWithApple(identityToken: "dev:kit-b-\(id)", nonce: "n", name: "Bob", deviceId: "kit-b-\(id)").session
+        let invite = try await aliceAccount.createInvite()
+        _ = try await bobAccount.acceptInvite(code: invite.code)
+        // An alert delivery the local relay only logs: the first Talk rings and the relay holds the audio.
+        try await bobAccount.registerDevice(DeviceRegistration(delivery: .alert(token: "e2e-\(id)", environment: "sandbox"), notifications: .authorized))
 
         let speech = try Signal.speech()
         let encoder = VoiceEncoder()
@@ -31,13 +36,13 @@ struct RelayEndToEndTests {
         let replayed = encode(speech, with: encoder)
         let live = encode(speech, with: encoder)
 
-        let sender = RelayConnection()
+        let sender = RelayConnection(identity: phone)
         var senderHeard: [RelayMessage] = []
         sender.onMessage = { senderHeard.append($0) }
-        sender.connect(baseURL: base, token: Self.token, userId: alice)
+        sender.connect(baseURL: base, token: alice.token, userId: alice.userId)
         defer { sender.close() }
         let first = UUID().uuidString
-        talk(sender, to: bob, burstId: first, frames: replayed)
+        talk(sender, to: bob.userId, burstId: first, frames: replayed)
         try await pollUntil(seconds: 10) { senderHeard.contains { $0.type == "floor-granted" && $0.burstId == first } }
         let granted = try #require(senderHeard.first { $0.type == "floor-granted" && $0.burstId == first })
         #expect(granted.pushed == true, "the first Talk didn't ring")
@@ -45,7 +50,12 @@ struct RelayEndToEndTests {
         // The POSTs carrying the burst finish well within this; the watch answers later anyway.
         try await Task.sleep(nanoseconds: 500_000_000)
 
-        let receiver = RelayConnection()
+        // The watch finds the ring and answers it by its ID.
+        let rings = RelayAPI(baseURL: base, token: bob.token, identity: watch)
+        let ring = try #require(try await rings.pendingRings().first { $0.conversationId == conversationId })
+        #expect(ring.ringId.hasPrefix("r_"))
+        try await rings.answer(ring)
+        let receiver = RelayConnection(identity: watch)
         var heard: [String: [Data]] = [:]
         var current: String?
         var messages: [RelayMessage] = []
@@ -61,7 +71,7 @@ struct RelayEndToEndTests {
             heard[burst, default: []].append(frame)
         }
         let answerAt = Clock.nowMs()
-        receiver.connect(baseURL: base, token: Self.token, userId: bob, join: conversationId)
+        receiver.connect(baseURL: base, token: bob.token, userId: bob.userId, join: conversationId, ring: ring.ringId)
         defer { receiver.close() }
         try await pollUntil(seconds: 10) { messages.contains { $0.type == "burst-end" && $0.burstId == first } }
         let replayDoneAt = Clock.nowMs()
@@ -69,7 +79,7 @@ struct RelayEndToEndTests {
         // Now a burst while the watch is listening: forwarded live, not replayed.
         let second = UUID().uuidString
         let pressedAt = Clock.nowMs()
-        talk(sender, to: bob, burstId: second, frames: live)
+        talk(sender, to: bob.userId, burstId: second, frames: live)
         try await pollUntil(seconds: 10) { messages.contains { $0.type == "burst-end" && $0.burstId == second } }
 
         let start = { (burst: String) in messages.first { $0.type == "burst-start" && $0.burstId == burst } }
@@ -107,19 +117,9 @@ struct RelayEndToEndTests {
     }
 
     private func talk(_ connection: RelayConnection, to: String, burstId: String, frames: [Data]) {
-        connection.send(["type": "talk-start", "to": to, "burstId": burstId])
+        connection.send(["type": "talk-start", "to": to, "burstId": burstId, "codec": "opus16k"])
         for frame in frames { connection.send(frame: frame) }
         connection.send(["type": "talk-end", "burstId": burstId])
-    }
-
-    private func register(_ base: URL, userId: String, pushToken: String) async throws {
-        var request = URLRequest(url: base.appendingPathComponent("v1/devices"))
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("Bearer \(Self.token)", forHTTPHeaderField: "Authorization")
-        request.httpBody = try JSONSerialization.data(withJSONObject: ["userId": userId, "name": userId, "pushToken": pushToken])
-        let (_, response) = try await URLSession.shared.data(for: request)
-        #expect((response as? HTTPURLResponse)?.statusCode == 200, "registering \(userId)")
     }
 }
 

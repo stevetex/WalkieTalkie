@@ -9,7 +9,9 @@ import { createPrivateKey, sign, type KeyObject } from "node:crypto";
 import { readFileSync } from "node:fs";
 import type { RingPayload } from "./protocol.ts";
 
-export type ApnsEnvironment = "sandbox" | "production";
+import type { ApnsEnvironment } from "./contract.ts";
+
+export type { ApnsEnvironment };
 
 export interface ApnsConfig {
   // The .p8 key: a file, or its PEM text (relay nodes read it from Secret Manager).
@@ -68,7 +70,7 @@ export function apnsConfigFromEnv(env: NodeJS.ProcessEnv): ApnsConfig | null {
 }
 
 // The ring notification. Time-sensitive so it breaks through Focus modes that allow it;
-// the ring fields ride along as custom keys so the tap can join the right conversation.
+// the ring envelope rides along as custom keys so the tap can answer that exact ring.
 // It expires when the relay abandons the ring, since after that there's nothing to hear.
 export function ringAlert(ring: RingPayload, expiresAt: number): AlertPush {
   return {
@@ -99,11 +101,11 @@ export function prefetchAlert(ring: RingPayload, expiresAt: number): AlertPush {
         "interruption-level": "time-sensitive",
         "thread-id": ring.conversationId,
       },
-      ...ring,
-      prefetch: 1,
-      // When the relay abandons the ring (server clock, ms): the watch doesn't play a
+      // expiresAt: when the relay abandons the ring (server clock, ms); the watch doesn't play a
       // downloaded message after that.
-      ringExpiresAt: expiresAt,
+      ...ring,
+      expiresAt,
+      prefetch: 1,
     },
     collapseId: ring.conversationId,
     expiresAt,

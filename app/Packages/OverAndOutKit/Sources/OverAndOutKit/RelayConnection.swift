@@ -12,7 +12,19 @@ public struct RelayResume: Sendable, Equatable {
     }
 }
 
-/// Messages from the relay. See server/src/protocol.ts.
+/// The relay refused the stream at admission (contracts/README.md, "The relay"): this build is
+/// too old (client-upgrade-required), the session ended, or a lookup failed.
+public struct RelayRefusal: Sendable, Equatable {
+    public let status: Int
+    public let code: String
+    public let message: String
+
+    public var endsSession: Bool { status == 401 }
+    public var requiresUpgrade: Bool { code == "client-upgrade-required" }
+}
+
+/// Messages from the relay. See server/src/protocol.ts. Types and fields this build doesn't
+/// know are ignored (a later relay may send more).
 public struct RelayMessage: Decodable, Sendable {
     public let type: String
     public var clientTime: Double?
@@ -34,8 +46,16 @@ public struct RelayMessage: Decodable, Sendable {
     /// burst-start: the replay continues a burst this device was hearing when its stream dropped.
     public var resumed: Bool?
     public var message: String?
-    /// talk-refused: why ("not-friends", or "unavailable": none of their devices can ring).
+    /// talk-refused: why ("not-friends", "unavailable": none of their devices can ring, or
+    /// "unsupported-codec").
     public var reason: String?
+    /// ring and joined: the ring's ID; ring: when it's abandoned (server clock, ms).
+    public var ringId: String?
+    public var expiresAt: Double?
+    /// error: the stable code (ring-expired, ring-answered-elsewhere, unknown-conversation, …).
+    public var code: String?
+    /// burst-start: the burst's codec.
+    public var codec: String?
 }
 
 /// Record framing shared with server/src/records.ts:
@@ -44,6 +64,7 @@ public enum RelayRecord {
     public static let json: UInt8 = 1
     public static let audio: UInt8 = 2
     private static let headerBytes = 5
+    public static let maxPayloadBytes = 64 * 1024
 
     public static func encode(_ type: UInt8, _ payload: Data) -> Data {
         var data = Data(capacity: headerBytes + payload.count)
@@ -67,7 +88,9 @@ public enum RelayRecord {
                 let start = pending.startIndex
                 let type = pending[start]
                 let length = pending[start + 1 ..< start + 5].reduce(UInt32(0)) { $0 << 8 | UInt32($1) }
-                guard type == json || type == audio, length <= 1 << 20 else { throw ParseError.badRecord }
+                // The contract's limit (contracts/README.md): control messages are small and a frame
+                // at most 1280 bytes.
+                guard type == json || type == audio, length <= maxPayloadBytes else { throw ParseError.badRecord }
                 let end = start + headerBytes + Int(length)
                 guard pending.count >= headerBytes + Int(length) else { break }
                 records.append((type, pending.subdata(in: start + headerBytes ..< end)))
@@ -78,12 +101,13 @@ public enum RelayRecord {
     }
 }
 
-/// Talks to the relay over plain HTTPS, which watchOS allows at any time. (WebSockets
+/// Talks to the relay over plain HTTPS, which watchOS allows at any time. Every request carries
+/// relay admission's headers (this build's kind, build, relay protocol and codecs). (WebSockets
 /// are only allowed during a CallKit call, TN3135, and an active call locks the watch
 /// into the system call screen, so conversations happen without one.)
 ///
-///   Downlink: GET /v1/relay/stream, a long-lived response carrying records as they happen.
-///   Uplink:   POST /v1/relay/send, one at a time so records arrive in order; whatever
+///   Downlink: GET /v2/relay/stream, a long-lived response carrying records as they happen.
+///   Uplink:   POST /v2/relay/send, one at a time so records arrive in order; whatever
 ///             queues up while a POST is in flight goes in the next one. A POST that fails
 ///             closes the connection (onClose): its records are lost, and a lost talk-start or
 ///             talk-end would leave the two sides disagreeing about the conversation. It isn't
@@ -101,6 +125,8 @@ public final class RelayConnection: NSObject, URLSessionDataDelegate {
     public var onMessage: ((RelayMessage) -> Void)?
     public var onFrame: ((Data) -> Void)?
     public var onClose: ((_ reason: String) -> Void)?
+    /// The relay refused the stream at admission; onClose follows.
+    public var onRefused: ((RelayRefusal) -> Void)?
     /// Each uplink POST: when it started and finished (ms), bytes, HTTP status (0 = error).
     public var onPostFinished: ((_ startedAt: Double, _ finishedAt: Double, _ bytes: Int, _ status: Int) -> Void)?
     /// The network's own timings for a finished request: `kind` is "stream", "send" or
@@ -124,10 +150,15 @@ public final class RelayConnection: NSObject, URLSessionDataDelegate {
     private var outbox = Data()
     private var posting = false
     private let delegateQueue: OperationQueue
+    /// The stream answered with an error: its status, and its body as it arrives.
+    private var refused: (status: Int, body: Data)?
+    /// This build, as relay admission hears it.
+    private let identity: ClientIdentity
     /// Tests serve the relay from a URLProtocol.
     var protocolClasses: [AnyClass]?
 
-    public init(stampsArrivals: Bool = false) {
+    public init(stampsArrivals: Bool = false, identity: ClientIdentity = .current) {
+        self.identity = identity
         if stampsArrivals {
             let queue = OperationQueue()
             queue.maxConcurrentOperationCount = 1
@@ -156,10 +187,11 @@ public final class RelayConnection: NSObject, URLSessionDataDelegate {
     }
 
     /// `join` also answers and joins that conversation in the stream request itself, so
-    /// the relay starts replaying the buffered message without another round trip. `resume`,
-    /// with it, rejoins after the stream dropped mid-message: the relay replays that burst
-    /// from the first frame missed.
-    public func connect(baseURL: URL, token: String, userId: String, join: String? = nil, resume: RelayResume? = nil) {
+    /// the relay starts replaying the buffered message without another round trip. `ring`
+    /// names the ring being answered (none for a rejoin or a move). `resume`, with `join`,
+    /// rejoins after the stream dropped mid-message: the relay replays that burst from the
+    /// first frame missed.
+    public func connect(baseURL: URL, token: String, userId: String, join: String? = nil, ring: String? = nil, resume: RelayResume? = nil) {
         close()
         self.token = token
         let configuration = URLSessionConfiguration.default
@@ -170,14 +202,15 @@ public final class RelayConnection: NSObject, URLSessionDataDelegate {
         self.session = session
 
         helloSentAt = Clock.nowMs()
-        var stream = URLComponents(url: baseURL.appendingPathComponent("v1/relay/stream"), resolvingAgainstBaseURL: false)
+        var stream = URLComponents(url: baseURL.appendingPathComponent("v2/relay/stream"), resolvingAgainstBaseURL: false)
         stream?.queryItems = [
             URLQueryItem(name: "userId", value: userId),
             URLQueryItem(name: "clientTime", value: String(Int(helloSentAt))),
         ] + (join.map { [URLQueryItem(name: "join", value: $0)] } ?? [])
+            + (join != nil ? ring.map { [URLQueryItem(name: "ring", value: $0)] } ?? [] : [])
             + (join != nil ? resume.map { [URLQueryItem(name: "resumeBurst", value: $0.burstId),
                                           URLQueryItem(name: "resumeFrom", value: String($0.fromSeq))] } ?? [] : [])
-        var send = URLComponents(url: baseURL.appendingPathComponent("v1/relay/send"), resolvingAgainstBaseURL: false)
+        var send = URLComponents(url: baseURL.appendingPathComponent("v2/relay/send"), resolvingAgainstBaseURL: false)
         send?.queryItems = [URLQueryItem(name: "userId", value: userId)]
         guard let streamURL = stream?.url, let sendURL = send?.url else { return }
         self.sendURL = sendURL
@@ -221,6 +254,7 @@ public final class RelayConnection: NSObject, URLSessionDataDelegate {
         parser = RelayRecord.Parser()
         outbox = Data()
         posting = false
+        refused = nil
     }
 
     // MARK: Uplink
@@ -262,6 +296,7 @@ public final class RelayConnection: NSObject, URLSessionDataDelegate {
     private func request(_ url: URL) -> URLRequest {
         var request = URLRequest(url: url)
         if !token.isEmpty { request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
+        for (name, value) in identity.relayHeaders { request.setValue(value, forHTTPHeaderField: name) }
         return request
     }
 
@@ -272,18 +307,19 @@ public final class RelayConnection: NSObject, URLSessionDataDelegate {
         onMain { [self] in
             guard dataTask === streamTask else { return completionHandler(.allow) }
             let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-            if status == 200 {
-                completionHandler(.allow)
-            } else {
-                completionHandler(.cancel)
-                finish("stream HTTP \(status)")
-            }
+            // A refusal's JSON body says why; it's read to the end, then the stream finishes.
+            if status != 200 { refused = (status, Data()) }
+            completionHandler(.allow)
         }
     }
 
     public nonisolated func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
         onMain { [self] in
             guard dataTask === streamTask else { return }
+            if refused != nil {
+                refused?.body.append(data)
+                return
+            }
             do {
                 for record in try parser.push(data) {
                     if record.type == RelayRecord.audio {
@@ -306,6 +342,12 @@ public final class RelayConnection: NSObject, URLSessionDataDelegate {
     public nonisolated func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
         onMain { [self] in
             guard task === streamTask else { return }
+            if let refused {
+                let error = AccountAPIError(status: refused.status, body: refused.body)
+                let refusal = RelayRefusal(status: refused.status, code: error.code, message: error.message)
+                onRefused?(refusal)
+                return finish("stream HTTP \(refused.status) \(refusal.code)")
+            }
             finish(error?.localizedDescription ?? "stream ended")
         }
     }

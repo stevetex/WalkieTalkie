@@ -1,149 +1,145 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { startServer, type RunningServer, type ServerOptions } from "../src/main.ts";
-import { JsonDeviceStore, type Device, type DeviceStore } from "../src/store.ts";
-import { DryRunPusher } from "../src/apns.ts";
-import { SpikeClient } from "../tools/client.ts";
+import type { Accounts } from "../src/accounts.ts";
 import { RecordParser, encodeJSONRecord } from "../src/records.ts";
+import { befriend, call, clientHeaders, friends, pcm, user, withServer, type TestServer, type TestUser } from "./harness.ts";
 
-async function withServer(
-  fn: (s: RunningServer, pusher: DryRunPusher) => Promise<void>,
-  options: Partial<Pick<ServerOptions, "ringTimeoutMs" | "answerJoinTimeoutMs" | "devices" | "prefetchPushAfterMs" | "maxBurstMs" | "maxBufferedBytes">> = {},
-): Promise<void> {
-  const pusher = new DryRunPusher();
-  const running = await startServer({ port: 0, dataDir: null, token: "secret", sharedTokenClients: true, pusher, ...options });
-  try {
-    await fn(running, pusher);
-  } finally {
-    await running.close();
-  }
+// A real-looking APNs token: rings go through the pusher, and the push carries the ring.
+const WATCH_PUSH = { apns: "alert", token: "abcdef0123456789" } as const;
+
+// The ring in the nth push (APNs custom keys).
+function pushed(h: TestServer, n: number): Record<string, unknown> & { ringId: string; conversationId: string; aps: Record<string, unknown> } {
+  return h.pusher.sent[n].payload as never;
 }
 
-function client(s: RunningServer, userId: string): SpikeClient {
-  return new SpikeClient({ server: `http://localhost:${s.port}`, userId, token: "secret" });
+// Ring calls go through admission, like the app's.
+function ringCall(h: TestServer, who: TestUser, method: string, path: string, body?: unknown) {
+  return call(h.url, method, path, who.token, body, clientHeaders(who.kind));
 }
 
-// 0.5 s of a ramp so frames are distinguishable.
-function pcm(frames: number): Buffer {
-  const buf = Buffer.alloc(frames * 640);
-  for (let i = 0; i < buf.length / 2; i++) buf.writeInt16LE((i * 37) % 32000, i * 2);
-  return buf;
-}
-
-test("rejects unauthenticated API calls", async () => {
-  await withServer(async (s) => {
-    const res = await fetch(`http://localhost:${s.port}/v1/users`);
-    assert.equal(res.status, 401);
+test("the relay refuses calls without a session token, and the diagnostics without the admin token", async () => {
+  await withServer(async (h) => {
+    const alice = await user(h, "Alice");
+    for (const path of ["/v2/rings/pending", "/v2/relay/stream", "/v2/time"]) {
+      assert.equal((await call(h.url, "GET", path, null, undefined, clientHeaders("watchos"))).status, 401, path);
+      assert.equal((await call(h.url, "GET", path, `${alice.token}x`, undefined, clientHeaders("watchos"))).status, 401, path);
+    }
+    // An account's session token isn't the operator's.
+    assert.equal((await call(h.url, "GET", "/admin/status", null)).status, 401);
+    assert.equal((await call(h.url, "GET", "/admin/status", alice.token)).status, 401);
+    assert.equal((await call(h.url, "GET", "/admin/status", "admin")).status, 200);
   });
 });
 
 test("ring-to-start: rings an absent recipient, buffers, and replays on join", async () => {
-  await withServer(async (s, pusher) => {
-    const alice = client(s, "alice");
-    const bob = client(s, "bob");
-    await alice.register("Alice");
-    await bob.register("Bob", "abcdef0123456789"); // real-looking token: goes through the pusher
-    await alice.connect();
+  await withServer(async (h) => {
+    const [alice, bob] = await friends(h, "Alice", ["Bob", { ringing: WATCH_PUSH }]);
+    const a = alice.client();
+    await a.connect();
 
-    const { conversationId, pushed } = await alice.talk("bob", pcm(25), { realtime: false });
-    assert.equal(pushed, true);
-    assert.equal(pusher.sent.length, 1);
-    const push = pusher.sent[0];
-    const payload = push.payload as Record<string, unknown> & { aps: Record<string, unknown> };
+    const { conversationId, pushed: rang } = await a.talk(bob.id, pcm(25), { realtime: false });
+    assert.equal(rang, true);
+    assert.equal(h.pusher.sent.length, 1);
+    const push = h.pusher.sent[0];
+    const payload = pushed(h, 0);
     assert.equal(payload.conversationId, conversationId);
+    assert.equal(payload.from, alice.id);
     assert.equal(payload.fromName, "Alice");
+    assert.match(payload.ringId, /^r_/);
     assert.equal(payload.aps["interruption-level"], "time-sensitive");
     // The notification expires when the relay abandons the ring (35 s by default).
     assert.equal(push.expiresAt - (payload.pushSentAt as number), 35_000);
 
-    // Bob's watch wakes, the user answers, the app connects and joins.
-    await bob.connect();
-    bob.send({ type: "join", conversationId });
-    const joined = await bob.waitFor("joined");
+    // Bob's watch wakes, the user answers, the app connects and joins that ring.
+    const b = bob.client();
+    await b.connect();
+    b.send({ type: "join", conversationId, ringId: payload.ringId });
+    const joined = await b.waitFor("joined");
     assert.equal(joined.replayBursts, 1);
-    const start = await bob.waitFor("burst-start");
+    assert.equal(joined.peer, alice.id);
+    const start = await b.waitFor("burst-start");
     assert.equal(start.replay, true);
-    await bob.waitFor("burst-end");
-    assert.equal(bob.frames.length, 25);
+    assert.equal(start.codec, "pcm16le16k");
+    await b.waitFor("burst-end");
+    assert.equal(b.frames.length, 25);
     assert.deepEqual(
-      bob.frames.map((f) => f.readUInt32BE(1)),
+      b.frames.map((f) => f.readUInt32BE(1)),
       Array.from({ length: 25 }, (_, i) => i),
     );
 
     // Within the conversation window, Alice's next burst is live and doesn't ring again.
-    const second = await alice.talk("bob", pcm(5), { realtime: false });
+    const second = await a.talk(bob.id, pcm(5), { realtime: false });
     assert.equal(second.pushed, false);
     assert.equal(second.conversationId, conversationId);
-    const live = await bob.waitFor("burst-start");
+    const live = await b.waitFor("burst-start");
     assert.equal(live.replay, false);
-    await bob.waitFor("burst-end");
-    assert.equal(bob.frames.length, 30);
-    assert.equal(pusher.sent.length, 1);
+    await b.waitFor("burst-end");
+    assert.equal(b.frames.length, 30);
+    assert.equal(h.pusher.sent.length, 1);
 
-    alice.close();
-    bob.close();
+    a.close();
+    b.close();
   });
 });
 
 test("a burst still in progress when the recipient joins continues live", async () => {
-  await withServer(async (s) => {
-    const alice = client(s, "alice");
-    const bob = client(s, "bob");
-    await alice.register("Alice");
-    await bob.register("Bob");
-    await alice.connect();
-    await bob.connect();
+  await withServer(async (h) => {
+    const [alice, bob] = await friends(h, "Alice", "Bob");
+    const a = alice.client();
+    const b = bob.client();
+    await a.connect();
+    await b.connect();
 
     const burstId = "b1";
-    alice.send({ type: "talk-start", to: "bob", burstId });
-    const granted = await alice.waitFor("floor-granted");
-    const ring = await bob.waitFor("ring");
+    a.send({ type: "talk-start", to: bob.id, burstId, codec: "pcm16le16k" });
+    const granted = await a.waitFor("floor-granted");
+    const ring = await b.waitFor("ring");
     assert.equal(ring.conversationId, granted.conversationId);
 
-    for (let seq = 0; seq < 3; seq++) alice.sendFrame(2, seq, Buffer.alloc(640));
+    for (let seq = 0; seq < 3; seq++) a.sendFrame(2, seq, Buffer.alloc(640));
     await new Promise((r) => setTimeout(r, 50));
-    bob.send({ type: "join", conversationId: ring.conversationId });
-    await bob.waitFor("burst-start");
-    for (let seq = 3; seq < 6; seq++) alice.sendFrame(2, seq, Buffer.alloc(640));
-    alice.send({ type: "talk-end", burstId });
-    await bob.waitFor("burst-end");
+    b.send({ type: "join", conversationId: ring.conversationId, ringId: ring.ringId });
+    await b.waitFor("burst-start");
+    for (let seq = 3; seq < 6; seq++) a.sendFrame(2, seq, Buffer.alloc(640));
+    a.send({ type: "talk-end", burstId });
+    await b.waitFor("burst-end");
     assert.deepEqual(
-      bob.frames.map((f) => f.readUInt32BE(1)),
+      b.frames.map((f) => f.readUInt32BE(1)),
       [0, 1, 2, 3, 4, 5],
     );
-    alice.close();
-    bob.close();
+    a.close();
+    b.close();
   });
 });
 
 test("a member whose stream drops mid-burst rejoins and resumes from the first frame missed", async () => {
-  await withServer(async (s) => {
-    const alice = client(s, "alice");
-    const bob = client(s, "bob");
-    await alice.register("Alice");
-    await bob.register("Bob");
-    await alice.connect();
-    await bob.connect();
+  await withServer(async (h) => {
+    const [alice, bob] = await friends(h, "Alice", "Bob");
+    const a = alice.client();
+    const b = bob.client();
+    await a.connect();
+    await b.connect();
 
     const burstId = "b1";
-    alice.send({ type: "talk-start", to: "bob", burstId });
-    await alice.waitFor("floor-granted");
-    const ring = await bob.waitFor("ring");
-    bob.send({ type: "join", conversationId: ring.conversationId });
-    await bob.waitFor("burst-start");
-    for (let seq = 0; seq < 3; seq++) alice.sendFrame(2, seq, Buffer.alloc(640));
+    a.send({ type: "talk-start", to: bob.id, burstId, codec: "pcm16le16k" });
+    await a.waitFor("floor-granted");
+    const ring = await b.waitFor("ring");
+    b.send({ type: "join", conversationId: ring.conversationId, ringId: ring.ringId });
+    await b.waitFor("burst-start");
+    for (let seq = 0; seq < 3; seq++) a.sendFrame(2, seq, Buffer.alloc(640));
     await new Promise((r) => setTimeout(r, 50));
-    assert.deepEqual(bob.frames.map((f) => f.readUInt32BE(1)), [0, 1, 2]);
+    assert.deepEqual(b.frames.map((f) => f.readUInt32BE(1)), [0, 1, 2]);
 
     // Run 106: the stream dies (airplane mode) while the friend keeps talking and finishes.
-    bob.close();
+    b.close();
     await new Promise((r) => setTimeout(r, 50));
-    for (let seq = 3; seq < 8; seq++) alice.sendFrame(2, seq, Buffer.alloc(640));
-    alice.send({ type: "talk-end", burstId });
+    for (let seq = 3; seq < 8; seq++) a.sendFrame(2, seq, Buffer.alloc(640));
+    a.send({ type: "talk-end", burstId });
     await new Promise((r) => setTimeout(r, 50));
 
-    // Back online: a fresh stream that rejoins and asks for the burst from frame 3.
-    const back = client(s, "bob");
+    // Back online: a fresh stream that rejoins (no ring: he was already in it) and asks for the
+    // burst from frame 3.
+    const back = bob.client();
     await back.connect();
     back.send({ type: "join", conversationId: ring.conversationId, resume: { burstId, fromSeq: 3 } });
     const joined = await back.waitFor("joined");
@@ -154,224 +150,182 @@ test("a member whose stream drops mid-burst rejoins and resumes from the first f
     assert.equal(start.resumed, true);
     await back.waitFor("burst-end");
     assert.deepEqual(back.frames.map((f) => f.readUInt32BE(1)), [3, 4, 5, 6, 7]);
-    alice.close();
+    a.close();
     back.close();
   });
 });
 
 test("a rejoin can resume a burst that's still going, then hear the rest live", async () => {
-  await withServer(async (s) => {
-    const alice = client(s, "alice");
-    const bob = new SpikeClient({ server: `http://localhost:${s.port}`, userId: "bob", token: "secret", transport: "http" });
-    await alice.register("Alice");
-    await bob.register("Bob");
-    await alice.connect();
-    await bob.connect();
+  await withServer(async (h) => {
+    const [alice, bob] = await friends(h, "Alice", "Bob");
+    const a = alice.client();
+    const b = bob.client({ transport: "http" });
+    await a.connect();
+    await b.connect();
 
     const burstId = "b1";
-    alice.send({ type: "talk-start", to: "bob", burstId });
-    await alice.waitFor("floor-granted");
-    const ring = await bob.waitFor("ring");
-    bob.send({ type: "join", conversationId: ring.conversationId });
-    await bob.waitFor("burst-start");
-    for (let seq = 0; seq < 2; seq++) alice.sendFrame(2, seq, Buffer.alloc(640));
+    a.send({ type: "talk-start", to: bob.id, burstId, codec: "pcm16le16k" });
+    await a.waitFor("floor-granted");
+    const ring = await b.waitFor("ring");
+    b.send({ type: "join", conversationId: ring.conversationId, ringId: ring.ringId });
+    await b.waitFor("burst-start");
+    for (let seq = 0; seq < 2; seq++) a.sendFrame(2, seq, Buffer.alloc(640));
     await new Promise((r) => setTimeout(r, 50));
-    bob.close();
+    b.close();
     await new Promise((r) => setTimeout(r, 50));
-    for (let seq = 2; seq < 4; seq++) alice.sendFrame(2, seq, Buffer.alloc(640));
+    for (let seq = 2; seq < 4; seq++) a.sendFrame(2, seq, Buffer.alloc(640));
     await new Promise((r) => setTimeout(r, 50));
 
     // The apps rejoin in the request that opens the stream (?join=…&resumeBurst=…&resumeFrom=…).
-    const back = new SpikeClient({ server: `http://localhost:${s.port}`, userId: "bob", token: "secret", transport: "http" });
+    const back = bob.client({ transport: "http" });
     await back.connect(ring.conversationId, { burstId, fromSeq: 2 });
     assert.equal((await back.waitFor("joined")).resumedFrames, 2);
     await back.waitFor("burst-start");
     await new Promise((r) => setTimeout(r, 50));
-    for (let seq = 4; seq < 6; seq++) alice.sendFrame(2, seq, Buffer.alloc(640));
-    alice.send({ type: "talk-end", burstId });
+    for (let seq = 4; seq < 6; seq++) a.sendFrame(2, seq, Buffer.alloc(640));
+    a.send({ type: "talk-end", burstId });
     await back.waitFor("burst-end");
     assert.deepEqual(back.frames.map((f) => f.readUInt32BE(1)), [2, 3, 4, 5]);
-    alice.close();
+    a.close();
     back.close();
   });
 });
 
 test("half duplex: the floor is denied while the other side is talking", async () => {
-  await withServer(async (s) => {
-    const alice = client(s, "alice");
-    const bob = client(s, "bob");
-    await alice.register("Alice");
-    await bob.register("Bob");
-    await alice.connect();
-    await bob.connect();
+  await withServer(async (h) => {
+    const [alice, bob] = await friends(h, "Alice", "Bob");
+    const a = alice.client();
+    const b = bob.client();
+    await a.connect();
+    await b.connect();
 
-    alice.send({ type: "talk-start", to: "bob", burstId: "a1" });
-    const { conversationId } = await alice.waitFor("floor-granted");
-    const ring = await bob.waitFor("ring");
-    bob.send({ type: "join", conversationId: ring.conversationId });
-    await bob.waitFor("joined");
+    a.send({ type: "talk-start", to: bob.id, burstId: "a1", codec: "pcm16le16k" });
+    const { conversationId } = await a.waitFor("floor-granted");
+    const ring = await b.waitFor("ring");
+    b.send({ type: "join", conversationId: ring.conversationId, ringId: ring.ringId });
+    await b.waitFor("joined");
 
-    bob.send({ type: "talk-start", to: "alice", burstId: "b1" });
-    const denied = await bob.waitFor("floor-denied");
-    assert.equal(denied.holder, "alice");
+    b.send({ type: "talk-start", to: alice.id, burstId: "b1", codec: "pcm16le16k" });
+    const denied = await b.waitFor("floor-denied");
+    assert.equal(denied.holder, alice.id);
 
-    alice.send({ type: "talk-end", burstId: "a1" });
-    await bob.waitFor("burst-end");
-    bob.send({ type: "talk-start", to: "alice", burstId: "b2" });
-    const granted = await bob.waitFor("floor-granted");
+    a.send({ type: "talk-end", burstId: "a1" });
+    await b.waitFor("burst-end");
+    b.send({ type: "talk-start", to: alice.id, burstId: "b2", codec: "pcm16le16k" });
+    const granted = await b.waitFor("floor-granted");
     assert.equal(granted.conversationId, conversationId);
     assert.equal(granted.pushed, false);
-    alice.close();
-    bob.close();
+    a.close();
+    b.close();
   });
 });
 
 test("after both leave, the next talk rings again in a new conversation", async () => {
-  await withServer(async (s) => {
-    const alice = client(s, "alice");
-    const bob = client(s, "bob");
-    await alice.register("Alice");
-    await bob.register("Bob");
-    await alice.connect();
-    await bob.connect();
+  await withServer(async (h) => {
+    const [alice, bob] = await friends(h, "Alice", "Bob");
+    const a = alice.client();
+    const b = bob.client();
+    await a.connect();
+    await b.connect();
 
-    const first = await alice.talk("bob", pcm(2), { realtime: false });
-    const ring = await bob.waitFor("ring");
-    bob.send({ type: "join", conversationId: ring.conversationId });
-    await bob.waitFor("burst-end");
-    bob.send({ type: "leave", conversationId: first.conversationId });
-    alice.send({ type: "leave", conversationId: first.conversationId });
+    const first = await a.talk(bob.id, pcm(2), { realtime: false });
+    const ring = await b.waitFor("ring");
+    b.send({ type: "join", conversationId: ring.conversationId, ringId: ring.ringId });
+    await b.waitFor("burst-end");
+    b.send({ type: "leave", conversationId: first.conversationId });
+    a.send({ type: "leave", conversationId: first.conversationId });
     await new Promise((r) => setTimeout(r, 50));
-    assert.deepEqual(s.relay.snapshot(), []);
+    assert.deepEqual(h.server.relay.snapshot(), []);
 
-    const second = await alice.talk("bob", pcm(2), { realtime: false });
+    const second = await a.talk(bob.id, pcm(2), { realtime: false });
     assert.equal(second.pushed, true);
     assert.notEqual(second.conversationId, first.conversationId);
-    await bob.waitFor("ring");
-    alice.close();
-    bob.close();
+    const next = await b.waitFor("ring");
+    assert.notEqual(next.ringId, ring.ringId);
+    a.close();
+    b.close();
   });
 });
 
 test("an unanswered ring drops the unheard audio and the next talk rings again", async () => {
   await withServer(
-    async (s, pusher) => {
-      const alice = client(s, "alice");
-      const bob = client(s, "bob");
-      await alice.register("Alice");
-      await bob.register("Bob", "abcdef0123456789");
-      await alice.connect();
+    async (h) => {
+      const [alice, bob] = await friends(h, "Alice", ["Bob", { ringing: WATCH_PUSH }]);
+      const a = alice.client();
+      await a.connect();
 
-      const first = await alice.talk("bob", pcm(10), { realtime: false });
+      const first = await a.talk(bob.id, pcm(10), { realtime: false });
       assert.equal(first.pushed, true);
       // A second burst while the ring is pending doesn't ring again.
-      const queued = await alice.talk("bob", pcm(5), { realtime: false });
+      const queued = await a.talk(bob.id, pcm(5), { realtime: false });
       assert.equal(queued.pushed, false);
 
-      const timeout = await alice.waitFor("ring-timeout");
-      assert.equal(timeout.peer, "bob");
+      const timeout = await a.waitFor("ring-timeout");
+      assert.equal(timeout.peer, bob.id);
       assert.equal(timeout.droppedBursts, 2);
 
-      // Bob answering late hears nothing stale.
-      await bob.connect();
-      bob.send({ type: "join", conversationId: first.conversationId });
-      const joined = await bob.waitFor("joined");
-      assert.equal(joined.replayBursts, 0);
-      bob.send({ type: "leave", conversationId: first.conversationId });
-      await new Promise((r) => setTimeout(r, 20));
+      // Bob answering late hears nothing stale: that ring has ended.
+      const late = pushed(h, 0).ringId;
+      const b = bob.client();
+      await b.connect();
+      b.send({ type: "join", conversationId: first.conversationId, ringId: late });
+      assert.equal((await b.waitFor("error")).code, "ring-expired");
 
-      const next = await alice.talk("bob", pcm(2), { realtime: false });
+      const next = await a.talk(bob.id, pcm(2), { realtime: false });
       assert.equal(next.pushed, true);
-      assert.equal(pusher.sent.length, 2);
-      alice.close();
-      bob.close();
+      assert.equal(h.pusher.sent.length, 2);
+      const ringId = pushed(h, 1).ringId;
+      assert.notEqual(ringId, late);
+      b.send({ type: "join", conversationId: next.conversationId, ringId });
+      assert.equal((await b.waitFor("joined")).replayBursts, 1);
+      await b.waitFor("burst-end");
+      assert.equal(b.frames.length, 2);
+      a.close();
+      b.close();
     },
     { ringTimeoutMs: 100 },
   );
 });
 
-test("rings for a polling device are collected once, and never sent to APNs", async () => {
-  await withServer(async (s, pusher) => {
-    const alice = client(s, "alice");
-    const watch = client(s, "watch-nopush");
-    await alice.register("Alice");
-    await watch.register("No-push watch", "poll:watch-nopush");
-    await alice.connect();
-    const { conversationId, pushed } = await alice.talk("watch-nopush", pcm(2), { realtime: false });
-    assert.equal(pushed, true);
-    assert.equal(pusher.sent.length, 0);
-
-    const rings = await watch.api("GET", "/v1/rings/poll?userId=watch-nopush");
-    assert.equal(rings.length, 1);
-    assert.equal(rings[0].conversationId, conversationId);
-    assert.deepEqual(await watch.api("GET", "/v1/rings/poll?userId=watch-nopush"), []);
-    alice.close();
-  });
-});
-
-test("a ring that times out before it's collected is withdrawn", async () => {
+test("a ring that times out is no longer pending", async () => {
   await withServer(
-    async (s) => {
-      const alice = client(s, "alice");
-      const watch = client(s, "watch-nopush");
-      await alice.register("Alice");
-      await watch.register("No-push watch", "poll:watch-nopush");
-      await alice.connect();
-      await alice.talk("watch-nopush", pcm(2), { realtime: false });
-      await alice.waitFor("ring-timeout");
-      assert.deepEqual(await watch.api("GET", "/v1/rings/poll?userId=watch-nopush"), []);
-      alice.close();
+    async (h) => {
+      const [alice, bob] = await friends(h, "Alice", ["Bob", { ringing: WATCH_PUSH }]);
+      const a = alice.client();
+      await a.connect();
+      const { conversationId } = await a.talk(bob.id, pcm(2), { realtime: false });
+      const pending = await ringCall(h, bob, "GET", "/v2/rings/pending");
+      assert.deepEqual(pending.body.rings.map((r: { conversationId: string }) => r.conversationId), [conversationId]);
+      await a.waitFor("ring-timeout");
+      assert.deepEqual((await ringCall(h, bob, "GET", "/v2/rings/pending")).body.rings, []);
+      a.close();
     },
     { ringTimeoutMs: 50 },
   );
 });
 
-test("a polled ring's timeout restarts when the watch collects it", async () => {
-  await withServer(
-    async (s) => {
-      const alice = client(s, "alice");
-      const watch = client(s, "watch-nopush");
-      await alice.register("Alice");
-      await watch.register("No-push watch", "poll:watch-nopush");
-      await alice.connect();
-      await watch.connect(); // connected but not joined, so only the join is timed
-      const { conversationId } = await alice.talk("watch-nopush", pcm(3), { realtime: false });
-
-      // Collected at ~200 ms, joined at ~650 ms: past a 600 ms timeout counted from the
-      // push, but inside it counted from collection (~800 ms).
-      await new Promise((r) => setTimeout(r, 200));
-      assert.equal((await watch.api("GET", "/v1/rings/poll?userId=watch-nopush")).length, 1);
-      await new Promise((r) => setTimeout(r, 450));
-      watch.send({ type: "join", conversationId });
-      assert.equal((await watch.waitFor("joined")).replayBursts, 1);
-      alice.close();
-      watch.close();
-    },
-    { ringTimeoutMs: 600 },
-  );
-});
-
 test("reporting an answer keeps the audio while the socket is slow to open", async () => {
   await withServer(
-    async (s) => {
-      const alice = client(s, "alice");
-      const bob = client(s, "bob");
-      await alice.register("Alice");
-      await bob.register("Bob", "abcdef0123456789");
-      await alice.connect();
-      await bob.connect(); // stands in for the watch's socket; only the join is timed
-      const { conversationId } = await alice.talk("bob", pcm(4), { realtime: false });
+    async (h) => {
+      const [alice, bob] = await friends(h, "Alice", ["Bob", { ringing: WATCH_PUSH }]);
+      const a = alice.client();
+      const b = bob.client();
+      await a.connect();
+      await b.connect(); // stands in for the watch's socket; only the join is timed
+      const { conversationId } = await a.talk(bob.id, pcm(4), { realtime: false });
+      const { ringId } = pushed(h, 0);
 
       await new Promise((r) => setTimeout(r, 50));
-      await bob.api("POST", "/v1/rings/answer", { userId: "bob", conversationId });
+      const answered = await ringCall(h, bob, "POST", "/v2/rings/answer", { conversationId, ringId });
+      assert.equal(answered.status, 200, JSON.stringify(answered.body));
       // Joined at ~300 ms: past the 150 ms ring timeout, inside the 600 ms join allowance.
       await new Promise((r) => setTimeout(r, 250));
-      bob.send({ type: "join", conversationId });
-      assert.equal((await bob.waitFor("joined")).replayBursts, 1);
-      await bob.waitFor("burst-end");
-      assert.equal(bob.frames.length, 4);
-      alice.close();
-      bob.close();
+      b.send({ type: "join", conversationId, ringId });
+      assert.equal((await b.waitFor("joined")).replayBursts, 1);
+      await b.waitFor("burst-end");
+      assert.equal(b.frames.length, 4);
+      a.close();
+      b.close();
     },
     { ringTimeoutMs: 150, answerJoinTimeoutMs: 600 },
   );
@@ -379,182 +333,153 @@ test("reporting an answer keeps the audio while the socket is slow to open", asy
 
 test("an answer that never joins still times out", async () => {
   await withServer(
-    async (s) => {
-      const alice = client(s, "alice");
-      const bob = client(s, "bob");
-      await alice.register("Alice");
-      await bob.register("Bob", "abcdef0123456789");
-      await alice.connect();
-      const { conversationId } = await alice.talk("bob", pcm(2), { realtime: false });
-      await bob.api("POST", "/v1/rings/answer", { userId: "bob", conversationId });
-      const timeout = await alice.waitFor("ring-timeout");
+    async (h) => {
+      const [alice, bob] = await friends(h, "Alice", ["Bob", { ringing: WATCH_PUSH }]);
+      const a = alice.client();
+      await a.connect();
+      const { conversationId } = await a.talk(bob.id, pcm(2), { realtime: false });
+      const answered = await ringCall(h, bob, "POST", "/v2/rings/answer", { conversationId, ringId: pushed(h, 0).ringId });
+      assert.equal(answered.status, 200, JSON.stringify(answered.body));
+      const timeout = await a.waitFor("ring-timeout");
       assert.equal(timeout.droppedBursts, 1);
-      alice.close();
+      a.close();
     },
     { ringTimeoutMs: 50, answerJoinTimeoutMs: 100 },
   );
 });
 
 test("metrics uploads merge into one timeline with intervals", async () => {
-  await withServer(async (s) => {
-    const alice = client(s, "alice");
-    const bob = client(s, "bob");
-    await alice.register("Alice");
-    await bob.register("Bob");
-    await alice.connect();
-    await bob.connect();
+  await withServer(async (h) => {
+    const [alice, bob] = await friends(h, "Alice", "Bob");
+    const a = alice.client();
+    const b = bob.client();
+    await a.connect();
+    await b.connect();
 
-    const { conversationId } = await alice.talk("bob", pcm(2), { realtime: false });
-    await bob.waitFor("ring");
-    bob.mark("pushReceived");
-    bob.mark("callReported");
-    bob.mark("answerTapped");
-    bob.send({ type: "join", conversationId });
-    await bob.waitFor("burst-start");
-    bob.mark("firstAudioScheduled");
-    await alice.uploadMetrics(conversationId, "sender");
-    await bob.uploadMetrics(conversationId, "receiver");
+    const { conversationId } = await a.talk(bob.id, pcm(2), { realtime: false });
+    const ring = await b.waitFor("ring");
+    b.mark("pushReceived");
+    b.mark("callReported");
+    b.mark("answerTapped");
+    b.send({ type: "join", conversationId, ringId: ring.ringId });
+    await b.waitFor("burst-start");
+    b.mark("firstAudioScheduled");
+    await a.uploadMetrics(conversationId, "sender");
+    await b.uploadMetrics(conversationId, "receiver");
 
-    const report = await alice.api("GET", `/v1/metrics/${conversationId}`);
+    const report = (await call(h.url, "GET", `/admin/metrics/${conversationId}`, "admin")).body;
     const names = report.timeline.map((e: { source: string; name: string }) => `${e.source}.${e.name}`);
     for (const expected of ["sender.talkPressed", "server.pushSent", "receiver.answerTapped", "server.receiverJoined"]) {
       assert.ok(names.includes(expected), `missing ${expected}`);
     }
     const labels = report.attempts[0].intervals.map((i: { label: string }) => i.label);
     assert.ok(labels.includes("Watch: answer → first audio"));
-    alice.close();
-    bob.close();
+    a.close();
+    b.close();
   });
 });
 
-test("registration still accepts the spike watch's voipToken field", async () => {
-  await withServer(async (s) => {
-    const res = await fetch(`http://localhost:${s.port}/v1/devices`, {
-      method: "POST",
-      headers: { authorization: "Bearer secret", "content-type": "application/json" },
-      body: JSON.stringify({ userId: "watch", name: "Watch", voipToken: "poll:watch" }),
-    });
-    assert.equal(res.status, 200);
-    assert.equal((await s.devices.get("watch"))?.pushToken, "poll:watch");
-  });
-});
-
-// A device store whose lookups take a while, or fail, like a remote database having a bad day.
-class SlowDeviceStore implements DeviceStore {
-  inner = new JsonDeviceStore(null);
-  delayMs: number;
-  failLookups = false;
-  lookups = 0;
-  constructor(delayMs: number) {
-    this.delayMs = delayMs;
-  }
-  async get(userId: string): Promise<Device | undefined> {
-    this.lookups++;
-    await new Promise((r) => setTimeout(r, this.delayMs));
-    if (this.failLookups) throw new Error("store unavailable");
-    return this.inner.get(userId);
-  }
-  list(): Promise<Device[]> {
-    return this.inner.list();
-  }
-  upsert(device: Device): Promise<void> {
-    return this.inner.upsert(device);
-  }
+// Ring lookups that take a while, or fail, like a remote database having a bad day.
+function slowRingLookups(accounts: Accounts, delayMs: number): { lookups: number; fail: boolean } {
+  const state = { lookups: 0, fail: false };
+  const lookup = accounts.ringLookup.bind(accounts);
+  accounts.ringLookup = async (from, to) => {
+    state.lookups++;
+    await new Promise((r) => setTimeout(r, delayMs));
+    if (state.fail) throw new Error("store unavailable");
+    return lookup(from, to);
+  };
+  return state;
 }
 
-test("a slow device lookup buffers early audio and rings only once", async () => {
-  const devices = new SlowDeviceStore(150);
-  await withServer(
-    async (s, pusher) => {
-      const alice = client(s, "alice");
-      const bob = client(s, "bob");
-      await alice.register("Alice");
-      await bob.register("Bob", "abcdef0123456789");
-      await alice.connect();
+test("a slow ring lookup buffers early audio and rings only once", async () => {
+  await withServer(async (h) => {
+    const [alice, bob] = await friends(h, "Alice", ["Bob", { ringing: WATCH_PUSH }]);
+    const store = slowRingLookups(h.accounts, 150);
+    const a = alice.client();
+    await a.connect();
 
-      // Frames sent before the floor is granted, and a second burst, while the lookup runs.
-      alice.send({ type: "talk-start", to: "bob", burstId: "a1" });
-      for (let seq = 0; seq < 3; seq++) alice.sendFrame(2, seq, Buffer.alloc(640));
-      alice.send({ type: "talk-end", burstId: "a1" });
-      alice.send({ type: "talk-start", to: "bob", burstId: "a2" });
-      const first = await alice.waitFor("floor-granted", (m) => m.burstId === "a1");
-      const second = await alice.waitFor("floor-granted", (m) => m.burstId === "a2");
-      assert.equal(first.pushed, true);
-      assert.equal(second.pushed, false);
-      assert.equal(pusher.sent.length, 1);
-      assert.equal(devices.lookups, 2); // recipient and sender, once
-      alice.send({ type: "talk-end", burstId: "a2" });
+    // Frames sent before the floor is granted, and a second burst, while the lookup runs.
+    a.send({ type: "talk-start", to: bob.id, burstId: "a1", codec: "pcm16le16k" });
+    for (let seq = 0; seq < 3; seq++) a.sendFrame(2, seq, Buffer.alloc(640));
+    a.send({ type: "talk-end", burstId: "a1" });
+    a.send({ type: "talk-start", to: bob.id, burstId: "a2", codec: "pcm16le16k" });
+    const first = await a.waitFor("floor-granted", (m) => m.burstId === "a1");
+    const second = await a.waitFor("floor-granted", (m) => m.burstId === "a2");
+    assert.equal(first.pushed, true);
+    assert.equal(second.pushed, false);
+    assert.equal(h.pusher.sent.length, 1);
+    assert.equal(store.lookups, 1);
+    a.send({ type: "talk-end", burstId: "a2" });
 
-      await bob.connect();
-      bob.send({ type: "join", conversationId: first.conversationId });
-      const joined = await bob.waitFor("joined");
-      assert.equal(joined.replayBursts, 2);
-      await bob.waitFor("burst-end", (m) => m.burstId === "a1");
-      assert.equal(bob.frames.length, 3);
-      alice.close();
-      bob.close();
-    },
-    { devices },
-  );
+    const b = bob.client();
+    await b.connect();
+    b.send({ type: "join", conversationId: first.conversationId, ringId: pushed(h, 0).ringId });
+    const joined = await b.waitFor("joined");
+    assert.equal(joined.replayBursts, 2);
+    await b.waitFor("burst-end", (m) => m.burstId === "a1");
+    assert.equal(b.frames.length, 3);
+    a.close();
+    b.close();
+  });
 });
 
-test("a failed device lookup grants the floor without ringing", async () => {
-  const devices = new SlowDeviceStore(0);
-  await withServer(
-    async (s, pusher) => {
-      const alice = client(s, "alice");
-      await alice.register("Alice");
-      await client(s, "bob").register("Bob", "abcdef0123456789");
-      await alice.connect();
-      devices.failLookups = true;
-      const { conversationId, pushed } = await alice.talk("bob", pcm(2), { realtime: false });
-      assert.equal(pushed, false);
-      assert.equal(pusher.sent.length, 0);
-      const timeline = await s.metrics.timeline(conversationId);
-      assert.ok(timeline.some((e) => e.name === "pushFailed" && e.detail?.includes("store unavailable")));
-      alice.close();
-    },
-    { devices },
-  );
+test("a failed ring lookup grants the floor without ringing", async () => {
+  await withServer(async (h) => {
+    const [alice, bob] = await friends(h, "Alice", ["Bob", { ringing: WATCH_PUSH }]);
+    const store = slowRingLookups(h.accounts, 0);
+    const a = alice.client();
+    await a.connect();
+    store.fail = true;
+    const { conversationId, pushed: rang } = await a.talk(bob.id, pcm(2), { realtime: false });
+    assert.equal(rang, false);
+    assert.equal(h.pusher.sent.length, 0);
+    const timeline = await h.server.metrics.timeline(conversationId);
+    assert.ok(timeline.some((e) => e.name === "pushFailed" && e.detail?.includes("store unavailable")));
+    a.close();
+  });
 });
 
 test("prefetch: a second push once the first burst ends, and the buffered audio to download", async () => {
   await withServer(
-    async (s, pusher) => {
-      const alice = client(s, "alice");
-      const bob = client(s, "bob");
-      await alice.register("Alice");
-      await bob.register("Bob", "abcdef0123456789");
-      await alice.connect();
+    async (h) => {
+      const [alice, bob] = await friends(h, "Alice", ["Bob", { ringing: WATCH_PUSH }]);
+      const a = alice.client();
+      await a.connect();
 
-      const { conversationId } = await alice.talk("bob", pcm(10), { realtime: false });
-      for (let i = 0; i < 50 && pusher.sent.length < 2; i++) await new Promise((r) => setTimeout(r, 20));
-      assert.equal(pusher.sent.length, 2);
-      const prefetch = pusher.sent[1].payload as Record<string, unknown> & { aps: Record<string, unknown> };
+      const { conversationId } = await a.talk(bob.id, pcm(10), { realtime: false });
+      for (let i = 0; i < 50 && h.pusher.sent.length < 2; i++) await new Promise((r) => setTimeout(r, 20));
+      assert.equal(h.pusher.sent.length, 2);
+      const { ringId } = pushed(h, 0);
+      const prefetch = pushed(h, 1);
       assert.equal(prefetch.prefetch, 1);
       assert.equal(prefetch.conversationId, conversationId);
+      // The same ring, so the download and the tap can name it.
+      assert.equal(prefetch.ringId, ringId);
       assert.equal(prefetch.aps["mutable-content"], 1);
       assert.equal(prefetch.aps.sound, undefined);
-      assert.equal(pusher.sent[1].collapseId, pusher.sent[0].collapseId);
+      assert.equal(h.pusher.sent[1].collapseId, h.pusher.sent[0].collapseId);
 
-      const res = await fetch(`http://localhost:${s.port}/v1/rings/audio?userId=bob&conversationId=${conversationId}`, {
-        headers: { authorization: "Bearer secret" },
+      const res = await fetch(new URL(`/v2/rings/audio?conversationId=${conversationId}&ringId=${ringId}`, h.url), {
+        headers: { authorization: `Bearer ${bob.token}`, ...clientHeaders(bob.kind) },
       });
       assert.equal(res.status, 200);
       assert.equal(res.headers.get("x-frames"), "10");
+      assert.equal(res.headers.get("x-ring-id"), ringId);
       const records = new RecordParser().push(Buffer.from(await res.arrayBuffer()));
       assert.equal(records.length, 12); // burst-start, 10 frames, burst-end
       assert.equal(JSON.parse(records[0].payload.toString()).type, "burst-start");
       assert.equal(records[1].payload.readUInt32BE(1), 0);
 
       // Downloading doesn't count as heard: the join still replays everything.
-      await bob.connect();
-      bob.send({ type: "join", conversationId });
-      assert.equal((await bob.waitFor("joined")).replayBursts, 1);
-      await bob.waitFor("burst-end");
-      assert.equal(bob.frames.length, 10);
-      alice.close();
-      bob.close();
+      const b = bob.client();
+      await b.connect();
+      b.send({ type: "join", conversationId, ringId });
+      assert.equal((await b.waitFor("joined")).replayBursts, 1);
+      await b.waitFor("burst-end");
+      assert.equal(b.frames.length, 10);
+      a.close();
+      b.close();
     },
     { prefetchPushAfterMs: 3_000 },
   );
@@ -563,22 +488,21 @@ test("prefetch: a second push once the first burst ends, and the buffered audio 
 test("prefetch: no second push if the recipient joined first, and none unless enabled", async () => {
   for (const prefetchPushAfterMs of [50, 0]) {
     await withServer(
-      async (s, pusher) => {
-        const alice = client(s, "alice");
-        const bob = client(s, "bob");
-        await alice.register("Alice");
-        await bob.register("Bob", "abcdef0123456789");
-        await alice.connect();
-        await bob.connect();
-        alice.send({ type: "talk-start", to: "bob", burstId: "a1" });
-        const { conversationId } = await alice.waitFor("floor-granted");
-        bob.send({ type: "join", conversationId });
-        await bob.waitFor("joined");
-        alice.send({ type: "talk-end", burstId: "a1" });
+      async (h) => {
+        const [alice, bob] = await friends(h, "Alice", ["Bob", { ringing: WATCH_PUSH }]);
+        const a = alice.client();
+        const b = bob.client();
+        await a.connect();
+        await b.connect();
+        a.send({ type: "talk-start", to: bob.id, burstId: "a1", codec: "pcm16le16k" });
+        const { conversationId } = await a.waitFor("floor-granted");
+        b.send({ type: "join", conversationId, ringId: pushed(h, 0).ringId });
+        await b.waitFor("joined");
+        a.send({ type: "talk-end", burstId: "a1" });
         await new Promise((r) => setTimeout(r, 120));
-        assert.equal(pusher.sent.length, 1);
-        alice.close();
-        bob.close();
+        assert.equal(h.pusher.sent.length, 1);
+        a.close();
+        b.close();
       },
       { prefetchPushAfterMs },
     );
@@ -586,116 +510,151 @@ test("prefetch: no second push if the recipient joined first, and none unless en
 });
 
 test("prefetch: other users can't download a conversation's audio", async () => {
-  await withServer(async (s) => {
-    const res = await fetch(`http://localhost:${s.port}/v1/rings/audio?userId=eve&conversationId=nope`, {
-      headers: { authorization: "Bearer secret" },
-    });
-    assert.equal(res.status, 404);
+  await withServer(async (h) => {
+    const [alice, bob] = await friends(h, "Alice", ["Bob", { ringing: WATCH_PUSH }]);
+    // Eve is Alice's friend too, but not in Alice and Bob's conversation.
+    const eve = await user(h, "Eve");
+    await befriend(h, alice, eve);
+    const a = alice.client();
+    await a.connect();
+    const { conversationId } = await a.talk(bob.id, pcm(2), { realtime: false });
+    const { ringId } = pushed(h, 0);
+    const audio = (who: TestUser, id: string) =>
+      fetch(new URL(`/v2/rings/audio?conversationId=${id}&ringId=${ringId}`, h.url), {
+        headers: { authorization: `Bearer ${who.token}`, ...clientHeaders(who.kind) },
+      });
+    assert.equal((await audio(eve, conversationId)).status, 404);
+    assert.equal((await audio(eve, "nope")).status, 410);
+    // The sender's ring isn't hers to download either.
+    assert.equal((await audio(alice, conversationId)).status, 410);
+    assert.equal((await audio(bob, conversationId)).status, 200);
+    a.close();
   });
 });
 
 test("malformed messages get an error, and the relay keeps going", async () => {
-  await withServer(async (s) => {
-    const bob = client(s, "bob");
-    await bob.connect();
-    // null is valid JSON; so are messages missing their fields.
-    for (const bad of [null, 42, [], {}, { type: "talk-start" }, { type: "join", conversationId: 7 }, { type: "nope" }]) {
-      bob.send(bad as never);
+  await withServer(async (h) => {
+    const bob = await user(h, "Bob");
+    const b = bob.client();
+    await b.connect();
+    // null is valid JSON; so are messages missing their fields, and a talk-start without its codec.
+    const bad = [null, 42, [], {}, { type: "talk-start" }, { type: "talk-start", to: "x", burstId: "b" }, { type: "join", conversationId: 7 }, { type: "join", conversationId: "c", ringId: "nope" }, { type: "nope" }];
+    for (const message of bad) b.send(message as never);
+    for (let i = 0; i < bad.length; i++) {
+      const error = await b.waitFor("error", (m) => m.message === "invalid message");
+      assert.equal(error.code, "unknown-message");
     }
-    for (let i = 0; i < 7; i++) await bob.waitFor("error", (m) => m.message === "invalid message");
 
     // The HTTP transport: the POST is refused.
-    const watch = new SpikeClient({ server: `http://localhost:${s.port}`, userId: "watch", token: "secret", transport: "http" });
+    const carol = await user(h, "Carol");
+    const watch = carol.client({ transport: "http" });
     await watch.connect();
-    const res = await fetch(`http://localhost:${s.port}/v1/relay/send?userId=watch`, {
+    const res = await fetch(new URL("/v2/relay/send", h.url), {
       method: "POST",
-      headers: { authorization: "Bearer secret" },
+      headers: { authorization: `Bearer ${carol.token}` },
       body: encodeJSONRecord(null),
     });
     assert.equal(res.status, 400);
 
-    bob.send({ type: "hello", clientTime: 1 });
-    assert.equal((await bob.waitFor("hello-ack")).clientTime, 1);
+    b.send({ type: "hello", clientTime: 1 });
+    assert.equal((await b.waitFor("hello-ack")).clientTime, 1);
     watch.close();
-    bob.close();
+    b.close();
   });
 });
 
 test("frames the apps can't decode aren't relayed", async () => {
-  await withServer(async (s) => {
-    const alice = client(s, "alice");
-    const bob = client(s, "bob");
-    await bob.register("Bob");
-    await alice.connect();
-    await bob.connect();
-    alice.send({ type: "talk-start", to: "bob", burstId: "b1" });
-    const ring = await bob.waitFor("ring");
-    bob.send({ type: "join", conversationId: ring.conversationId });
-    await bob.waitFor("burst-start");
-    alice.sendFrame(2, 0, Buffer.alloc(1282)); // PCM that isn't 320 samples
-    alice.sendFrame(2, 1, Buffer.alloc(0));
-    alice.sendFrame(1, 2, Buffer.alloc(2000)); // bigger than any Opus packet
-    alice.sendFrame(9, 3, Buffer.alloc(640)); // no such codec
-    alice.sendFrame(2, 4, Buffer.alloc(640));
-    alice.sendFrame(1, 5, Buffer.alloc(60));
-    alice.send({ type: "talk-end", burstId: "b1" });
-    await bob.waitFor("burst-end");
-    assert.deepEqual(bob.frames.map((f) => f.readUInt32BE(1)), [4, 5]);
-    alice.close();
-    bob.close();
+  await withServer(async (h) => {
+    const [alice, bob] = await friends(h, "Alice", "Bob");
+    const a = alice.client();
+    const b = bob.client();
+    await a.connect();
+    await b.connect();
+    a.send({ type: "talk-start", to: bob.id, burstId: "b1", codec: "pcm16le16k" });
+    const ring = await b.waitFor("ring");
+    b.send({ type: "join", conversationId: ring.conversationId, ringId: ring.ringId });
+    await b.waitFor("burst-start");
+    a.sendFrame(2, 0, Buffer.alloc(1282)); // PCM that isn't 320 samples
+    a.sendFrame(2, 1, Buffer.alloc(0));
+    a.sendFrame(1, 2, Buffer.alloc(2000)); // bigger than any Opus packet
+    a.sendFrame(9, 3, Buffer.alloc(640)); // no such codec
+    a.sendFrame(2, 4, Buffer.alloc(640));
+    a.sendFrame(1, 5, Buffer.alloc(60)); // Opus, but the burst is PCM
+    a.send({ type: "talk-end", burstId: "b1" });
+    await b.waitFor("burst-end");
+    assert.deepEqual(b.frames.map((f) => f.readUInt32BE(1)), [4]);
+
+    // An Opus burst takes Opus packets, up to the largest there is.
+    b.frames.length = 0;
+    a.send({ type: "talk-start", to: bob.id, burstId: "b2", codec: "opus16k" });
+    assert.equal((await b.waitFor("burst-start")).codec, "opus16k");
+    a.sendFrame(1, 0, Buffer.alloc(2000));
+    a.sendFrame(2, 1, Buffer.alloc(640));
+    a.sendFrame(1, 2, Buffer.alloc(60));
+    a.sendFrame(1, 3, Buffer.alloc(1275));
+    a.send({ type: "talk-end", burstId: "b2" });
+    await b.waitFor("burst-end");
+    assert.deepEqual(b.frames.map((f) => f.readUInt32BE(1)), [2, 3]);
+    a.close();
+    b.close();
   });
 });
 
 test("audio heard live isn't kept, and a burst that never ends is ended", async () => {
-  await withServer(async (s) => {
-    const alice = client(s, "alice");
-    const bob = client(s, "bob");
-    await bob.register("Bob");
-    await alice.connect();
-    await bob.connect();
-    alice.send({ type: "talk-start", to: "bob", burstId: "b1" });
-    const ring = await bob.waitFor("ring");
-    bob.send({ type: "join", conversationId: ring.conversationId });
-    await bob.waitFor("burst-start");
-    for (let seq = 0; seq < 5; seq++) alice.sendFrame(2, seq, Buffer.alloc(640));
-    while (bob.frames.length < 5) await new Promise((r) => setTimeout(r, 5));
-    assert.equal(s.relay.snapshot()[0].floor, "alice");
-    assert.equal(s.relay.snapshot()[0].bufferedBytes, 0);
+  await withServer(async (h) => {
+    const [alice, bob] = await friends(h, "Alice", "Bob");
+    const a = alice.client();
+    const b = bob.client();
+    await a.connect();
+    await b.connect();
+    a.send({ type: "talk-start", to: bob.id, burstId: "b1", codec: "pcm16le16k" });
+    const ring = await b.waitFor("ring");
+    b.send({ type: "join", conversationId: ring.conversationId, ringId: ring.ringId });
+    await b.waitFor("burst-start");
+    for (let seq = 0; seq < 5; seq++) a.sendFrame(2, seq, Buffer.alloc(640));
+    while (b.frames.length < 5) await new Promise((r) => setTimeout(r, 5));
+    assert.equal(h.server.relay.snapshot()[0].floor, alice.id);
+    assert.equal(h.server.relay.snapshot()[0].bufferedBytes, 0);
 
     // No talk-end: the relay ends the burst at maxBurstMs, frees the floor and says why.
-    assert.equal((await alice.waitFor("error")).message, "burst too long");
-    await bob.waitFor("burst-end");
-    assert.equal(s.relay.snapshot()[0].floor, null);
-    alice.close();
-    bob.close();
+    const error = await a.waitFor("error");
+    assert.deepEqual([error.code, error.message], ["burst-too-long", "burst too long"]);
+    await b.waitFor("burst-end");
+    assert.equal(h.server.relay.snapshot()[0].floor, null);
+    a.close();
+    b.close();
   }, { maxBurstMs: 300 });
 });
 
 test("a conversation holds only so much audio for someone who hasn't heard it", async () => {
-  await withServer(async (s) => {
-    const alice = client(s, "alice");
-    await alice.connect();
-    // Nobody to ring, so it buffers: room for 5 frames.
-    alice.send({ type: "talk-start", to: "bob", burstId: "b1" });
-    await alice.waitFor("floor-granted");
-    for (let seq = 0; seq < 8; seq++) alice.sendFrame(2, seq, Buffer.alloc(640));
-    assert.equal((await alice.waitFor("error")).message, "too much audio waiting");
-    assert.equal(s.relay.snapshot()[0].bufferedBytes, 5 * 645);
-    assert.equal(s.relay.snapshot()[0].floor, null);
-    alice.close();
+  await withServer(async (h) => {
+    const [alice, bob] = await friends(h, "Alice", ["Bob", { ringing: WATCH_PUSH }]);
+    const a = alice.client();
+    await a.connect();
+    // Bob is rung but doesn't answer, so it buffers: room for 5 frames.
+    a.send({ type: "talk-start", to: bob.id, burstId: "b1", codec: "pcm16le16k" });
+    assert.equal((await a.waitFor("floor-granted")).pushed, true);
+    for (let seq = 0; seq < 8; seq++) a.sendFrame(2, seq, Buffer.alloc(640));
+    const error = await a.waitFor("error");
+    assert.deepEqual([error.code, error.message], ["too-much-audio", "too much audio waiting"]);
+    assert.equal(h.server.relay.snapshot()[0].bufferedBytes, 5 * 645);
+    assert.equal(h.server.relay.snapshot()[0].floor, null);
+    a.close();
   }, { maxBufferedBytes: 5 * 645 + 100 });
 });
 
 test("a burst sent faster than real time is cut off at the longest burst's worth of frames", async () => {
-  await withServer(async (s) => {
-    const alice = client(s, "alice");
-    await alice.connect();
-    alice.send({ type: "talk-start", to: "bob", burstId: "b1" });
-    await alice.waitFor("floor-granted");
+  await withServer(async (h) => {
+    const [alice, bob] = await friends(h, "Alice", ["Bob", { ringing: WATCH_PUSH }]);
+    const a = alice.client();
+    await a.connect();
+    a.send({ type: "talk-start", to: bob.id, burstId: "b1", codec: "pcm16le16k" });
+    await a.waitFor("floor-granted");
     // 10 frames = 200 ms; the 11th ends the burst long before its timer would.
-    for (let seq = 0; seq < 15; seq++) alice.sendFrame(2, seq, Buffer.alloc(640));
-    assert.equal((await alice.waitFor("error", () => true, 150)).message, "burst too long");
-    assert.equal(s.relay.snapshot()[0].bufferedBytes, 10 * 645);
-    alice.close();
+    for (let seq = 0; seq < 15; seq++) a.sendFrame(2, seq, Buffer.alloc(640));
+    const error = await a.waitFor("error", () => true, 150);
+    assert.deepEqual([error.code, error.message], ["burst-too-long", "burst too long"]);
+    assert.equal(h.server.relay.snapshot()[0].bufferedBytes, 10 * 645);
+    a.close();
   }, { maxBurstMs: 200 });
 });

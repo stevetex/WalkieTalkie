@@ -36,6 +36,9 @@ trap 'rm -rf "$stage"' EXIT
   if [ -n "${FULL_TIMELINE_USERS:-}" ]; then echo "FULL_TIMELINE_USERS=$FULL_TIMELINE_USERS"; fi
   # The always-on Test Bot answers rings inside the relay (server/src/test-bot.ts).
   if [ -n "${TEST_BOT_USER_ID:-}" ]; then echo "TEST_BOT_USER_ID=$TEST_BOT_USER_ID"; fi
+  # The contract's compatibility setting (contracts/README.md): the lowest build of each client
+  # kind the relay admits.
+  if [ -n "${MINIMUM_BUILDS:-}" ]; then echo "MINIMUM_BUILDS=$MINIMUM_BUILDS"; fi
   # Public CA refuses ACME accounts without a contact address.
   acme_email=${ACME_EMAIL:-${ALERT_EMAIL:-}}
   if [ -n "$acme_email" ]; then echo "ACME_EMAIL=$acme_email"; fi
@@ -95,7 +98,9 @@ for node in $(gc compute instance-groups managed list-instances "$group" --zone=
   host=$(gc compute instances describe "$node" --zone="$ZONE" \
     --format='value(metadata.items.filter(key:relay-hostnames).extract(value).flatten())' | awk '{print $1}')
   [ -n "$host" ] || continue
-  if curl -fsS --max-time 10 "https://$host/healthz" | grep -q "\"revision\":\"$rev\""; then
+  if curl -fsS --max-time 10 "https://$host/healthz" | grep -q "\"revision\":\"$rev\"" &&
+    # The relay paths answer: without a token, the contract's JSON error.
+    curl -sS --max-time 10 "https://$host/v2/time" | grep -q '"error":"unauthorized"'; then
     echo "$node: https://$host serves $rev"
   else
     echo "$node: https://$host isn't serving $rev yet" >&2

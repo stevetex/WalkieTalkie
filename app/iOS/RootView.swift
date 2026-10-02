@@ -48,7 +48,7 @@ struct RootView: View {
         // decision 2026-09-29), so it's the default, bold answer.
         .alert("Where should friends ring you?", isPresented: ringOnBinding) {
             Button("Apple Watch", role: .cancel) { Task { await model.setRingOn(.watch) } }
-            Button("This iPhone") { Task { await model.setRingOn(.iphone) } }
+            Button("This iPhone") { Task { await model.setRingOn(.phone) } }
         } message: {
             Text("Over&Out is on your Apple Watch and this iPhone. Only one of them rings, your Apple Watch unless you choose this iPhone. You can change this in Settings.")
         }

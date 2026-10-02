@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer } from "node:http2";
 import type { AddressInfo } from "node:net";
-import { ApnsPusher, pushToTalkRing, ringAlert } from "../src/apns.ts";
+import { ApnsPusher, prefetchAlert, pushToTalkRing, ringAlert } from "../src/apns.ts";
 
 test("provider token is an ES256 JWT that verifies with the key", () => {
   const { privateKey, publicKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
@@ -30,11 +30,14 @@ test("provider token is an ES256 JWT that verifies with the key", () => {
 });
 
 const ring = {
+  schemaVersion: 2 as const,
+  ringId: "r_3qgS0mXPRkK8z1yA",
   conversationId: "0b5c7f0e-3c1a-4d8e-9f10-2a3b4c5d6e7f",
   from: "alice",
   fromName: "Alice",
   burstId: "burst-1",
   pushSentAt: 1_790_000_000_000,
+  expiresAt: 1_790_000_035_000,
 };
 
 test("a ring is a time-sensitive alert that carries the ring and expires with it", () => {
@@ -50,6 +53,24 @@ test("a ring is a time-sensitive alert that carries the ring and expires with it
   });
   assert.equal(push.collapseId, ring.conversationId);
   assert.equal(push.expiresAt, ring.pushSentAt + 35_000);
+});
+
+test("a prefetch push replaces the ring silently, and expires with the ring's envelope", () => {
+  const push = prefetchAlert(ring, ring.expiresAt);
+  assert.deepEqual(push.payload, {
+    aps: {
+      alert: { title: "Alice", body: "Tap to listen" },
+      "mutable-content": 1,
+      "interruption-level": "time-sensitive",
+      "thread-id": ring.conversationId,
+    },
+    ...ring,
+    prefetch: 1,
+  });
+  // The envelope's expiresAt is the only expiry the watch reads.
+  assert.equal("ringExpiresAt" in push.payload, false);
+  assert.equal(push.collapseId, ring.conversationId);
+  assert.equal(push.expiresAt, ring.expiresAt);
 });
 
 test("alert pushes go to the bundle ID topic with alert headers", async () => {

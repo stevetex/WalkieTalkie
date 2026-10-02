@@ -1,4 +1,6 @@
-// Node client for the relay, used by the bot and the tests. Mirrors what the watch app does.
+// Node client for the relay (contracts/README.md, "The relay"), used by the bot, the tests and
+// the performance suite. Mirrors what the apps do: an account's session token, the admission
+// headers, the codec named at talk-start and the ring named when answering.
 
 import { randomUUID } from "node:crypto";
 import { Codec, FRAME_HEADER_BYTES, type ClientMessage, type MetricEvent, type ServerMessage } from "../src/protocol.ts";
@@ -6,12 +8,25 @@ import { RecordParser, RecordType, encodeJSONRecord, encodeRecord } from "../src
 
 export interface ClientOptions {
   server: string; // http(s)://host:port
+  // The account (the session token's), for logs and waiting messages.
   userId: string;
-  token?: string;
+  token: string;
   // "ws" (default) uses the WebSocket; "http" uses the streaming GET + POST transport
   // that watches use outside a CallKit call.
   transport?: "ws" | "http";
+  // What the session was made for (default watchos).
+  clientKind?: "ios" | "watchos" | "android" | "wearos";
+  build?: string;
+  // Codecs this client plays and sends (X-OAO-Decode and X-OAO-Encode).
+  decode?: string[];
+  encode?: string[];
 }
+
+// A message as it goes on the wire: talk-start names its codec ("opus16k"), where the relay's
+// parsed ClientMessage carries the codec's byte.
+export type WireMessage =
+  | Exclude<ClientMessage, { type: "talk-start" }>
+  | { type: "talk-start"; to: string; burstId: string; codec: string };
 
 type Waiter = { match: (m: ServerMessage) => boolean; resolve: (m: ServerMessage) => void };
 
@@ -40,12 +55,25 @@ export class SpikeClient {
     this.events.push({ name, t: Date.now(), detail });
   }
 
+  // The admission headers (contracts/README.md, "The relay").
+  clientHeaders(): Record<string, string> {
+    return {
+      "x-oao-client-kind": this.opts.clientKind ?? "watchos",
+      "x-oao-build": this.opts.build ?? "1",
+      "x-oao-client-version": "test",
+      "x-oao-relay-protocol": "2",
+      "x-oao-decode": (this.opts.decode ?? ["opus16k", "pcm16le16k"]).join(","),
+      "x-oao-encode": (this.opts.encode ?? ["opus16k", "pcm16le16k"]).join(","),
+    };
+  }
+
   async api(method: string, path: string, body?: unknown): Promise<any> {
     const res = await fetch(new URL(path, this.opts.server), {
       method,
       headers: {
         "content-type": "application/json",
-        ...(this.opts.token ? { authorization: `Bearer ${this.opts.token}` } : {}),
+        ...this.authHeaders(),
+        ...this.clientHeaders(),
       },
       body: body === undefined ? undefined : JSON.stringify(body),
     });
@@ -54,19 +82,15 @@ export class SpikeClient {
     return json;
   }
 
-  register(name: string, pushToken = `local:${this.userId}`): Promise<unknown> {
-    return this.api("POST", "/v1/devices", { userId: this.userId, name, pushToken, apnsEnvironment: "sandbox" });
-  }
-
   // `join` (HTTP transport only) joins a conversation in the request that opens the stream;
-  // `resume` (with it) rejoins after a dropped stream, from that burst's first missed frame.
-  async connect(join?: string, resume?: { burstId: string; fromSeq: number }): Promise<void> {
-    if (this.opts.transport === "http") return this.connectHttp(join, resume);
-    const url = new URL("/v1/relay", this.opts.server);
+  // `ring` is the ring being answered, and `resume` (with it) rejoins after a dropped stream,
+  // from that burst's first missed frame.
+  async connect(join?: string, resume?: { burstId: string; fromSeq: number }, ring?: string): Promise<void> {
+    if (this.opts.transport === "http") return this.connectHttp(join, resume, ring);
+    const url = new URL("/v2/relay", this.opts.server);
     url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
-    url.searchParams.set("userId", this.userId);
-    if (this.opts.token) url.searchParams.set("token", this.opts.token);
-    const ws = new WebSocket(url);
+    // Node's WebSocket takes headers (the apps' native ones do too): the token and admission.
+    const ws = new WebSocket(url, { headers: { ...this.authHeaders(), ...this.clientHeaders() } } as unknown as string[]);
     ws.binaryType = "arraybuffer";
     this.ws = ws;
     await new Promise<void>((resolve, reject) => {
@@ -84,10 +108,10 @@ export class SpikeClient {
     this.clockOffsetMs = ack.serverTime - (sentAt + receivedAt) / 2;
   }
 
-  private async connectHttp(join?: string, resume?: { burstId: string; fromSeq: number }): Promise<void> {
-    const url = new URL("/v1/relay/stream", this.opts.server);
-    url.searchParams.set("userId", this.userId);
+  private async connectHttp(join?: string, resume?: { burstId: string; fromSeq: number }, ring?: string): Promise<void> {
+    const url = new URL("/v2/relay/stream", this.opts.server);
     if (join) url.searchParams.set("join", join);
+    if (join && ring) url.searchParams.set("ring", ring);
     if (join && resume) {
       url.searchParams.set("resumeBurst", resume.burstId);
       url.searchParams.set("resumeFrom", String(resume.fromSeq));
@@ -95,8 +119,8 @@ export class SpikeClient {
     const sentAt = Date.now();
     url.searchParams.set("clientTime", String(sentAt));
     this.stream = new AbortController();
-    const res = await fetch(url, { headers: this.authHeaders(), signal: this.stream.signal });
-    if (!res.ok || !res.body) throw new Error(`stream: HTTP ${res.status}`);
+    const res = await fetch(url, { headers: { ...this.authHeaders(), ...this.clientHeaders() }, signal: this.stream.signal });
+    if (!res.ok || !res.body) throw Object.assign(new Error(`stream: HTTP ${res.status} ${await res.text()}`), { status: res.status });
     const reader = res.body.getReader();
     const parser = new RecordParser();
     void (async () => {
@@ -134,7 +158,7 @@ export class SpikeClient {
   }
 
   private authHeaders(): Record<string, string> {
-    return this.opts.token ? { authorization: `Bearer ${this.opts.token}` } : {};
+    return { authorization: `Bearer ${this.opts.token}` };
   }
 
   // HTTP transport uplink: records queue up and go out in back-to-back POSTs, one at a
@@ -149,8 +173,7 @@ export class SpikeClient {
     this.posting = true;
     const body = Buffer.concat(this.outbox.splice(0));
     try {
-      const url = new URL("/v1/relay/send", this.opts.server);
-      url.searchParams.set("userId", this.userId);
+      const url = new URL("/v2/relay/send", this.opts.server);
       const res = await fetch(url, { method: "POST", headers: this.authHeaders(), body });
       if (!res.ok) console.error(`[client] send: HTTP ${res.status}`);
     } finally {
@@ -159,7 +182,7 @@ export class SpikeClient {
     }
   }
 
-  send(message: ClientMessage): void {
+  send(message: WireMessage): void {
     if (this.opts.transport === "http") this.enqueue(encodeJSONRecord(message));
     else this.ws?.send(JSON.stringify(message));
   }
@@ -225,7 +248,7 @@ export class SpikeClient {
   ): Promise<{ conversationId: string; pushed: boolean }> {
     const burstId = randomUUID();
     this.mark("talkPressed");
-    this.send({ type: "talk-start", to, burstId });
+    this.send({ type: "talk-start", to, burstId, codec: audio.codec === Codec.opus16k ? "opus16k" : "pcm16le16k" });
     const granted = await this.waitForMatch(
       (m) => (m.type === "floor-granted" || m.type === "floor-denied" || m.type === "talk-refused") && m.burstId === burstId,
       "floor decision",
@@ -249,7 +272,7 @@ export class SpikeClient {
   }
 
   async uploadMetrics(conversationId: string, role: "sender" | "receiver"): Promise<void> {
-    await this.api("POST", "/v1/metrics", {
+    await this.api("POST", "/v2/metrics", {
       conversationId,
       userId: this.userId,
       role,

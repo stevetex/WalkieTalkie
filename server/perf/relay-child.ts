@@ -1,33 +1,31 @@
-// The relay under test, in its own process so its CPU time, heap and event-loop delay are
-// its own and not the bots'. Started by perf/relay.ts with fork(); argv[2] is JSON:
-// { relayDir, options } where relayDir is the server directory whose src/ is tested (this
-// checkout's, or the base commit's worktree) and options are extra ServerOptions.
+// The relay under test, in its own process so its CPU time, heap and event-loop delay are its
+// own and not the bots'. harness.ts forks the tested checkout's src/main.ts as it runs locally
+// (SERVE_API=1 with dev sign-ins and test deliveries, a temporary DATA_DIR, no APNs key so pushes
+// are dry runs) and preloads this file with --import, so any relay that speaks the v2 contract
+// and reads those variables can be measured, the base commit's included.
 //
 // IPC: sends { port } once listening; answers "stats" with { stats }, "reset" by clearing the
-// event-loop histogram.
+// event-loop histogram, and "close" by stopping the relay as a deploy does (SIGTERM).
 
-import { join } from "node:path";
-import { pathToFileURL } from "node:url";
+import { Server } from "node:net";
 import { monitorEventLoopDelay } from "node:perf_hooks";
 import { getHeapStatistics } from "node:v8";
-
-const { relayDir, options } = JSON.parse(process.argv[2] ?? "{}") as { relayDir: string; options?: Record<string, unknown> };
-const load = (file: string) => import(pathToFileURL(join(relayDir, "src", file)).href);
-const { startServer } = await load("main.ts");
-const { DryRunPusher } = await load("apns.ts");
 
 // The dry-run pusher logs every push; the relay logs every connection. Neither is wanted here.
 console.log = () => {};
 
-const running = await startServer({
-  port: 0,
-  host: "127.0.0.1",
-  dataDir: null,
-  token: "perf",
-  sharedTokenClients: true,
-  pusher: new DryRunPusher(),
-  ...options,
-});
+// The port, from the relay's own server, whatever its log lines say.
+const listen = Server.prototype.listen;
+let reported = false;
+Server.prototype.listen = function (this: Server, ...args: unknown[]) {
+  this.once("listening", () => {
+    const address = this.address();
+    if (reported || typeof address !== "object" || !address) return;
+    reported = true;
+    process.send!({ port: address.port });
+  });
+  return listen.apply(this, args as Parameters<typeof listen>);
+} as typeof listen;
 
 const loop = monitorEventLoopDelay({ resolution: 5 });
 loop.enable();
@@ -57,8 +55,6 @@ process.on("message", (message: unknown) => {
     };
     process.send!({ stats });
   } else if (message === "close") {
-    void running.close().then(() => process.exit(0));
+    process.kill(process.pid, "SIGTERM");
   }
 });
-
-process.send!({ port: running.port });

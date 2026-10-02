@@ -24,12 +24,21 @@ struct FriendsListView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(Brand.indigo.ignoresSafeArea())
             } else {
-                List(friends) { friend in
-                    NavigationLink(value: friend) {
-                        FriendRow(friend: friend, live: liveStatus(for: friend), outcome: controller.outcomes[friend.id],
-                                  client: account.client)
+                List {
+                    // The service no longer supports this build (it updates with the iPhone app).
+                    if account.upgradeRequired {
+                        Text("Update Over&Out on your iPhone to keep talking.")
+                            .font(.footnote)
+                            .foregroundStyle(Brand.ivory)
+                            .listRowBackground(Brand.surface)
                     }
-                    .listRowBackground(Brand.surface)
+                    ForEach(friends) { friend in
+                        NavigationLink(value: friend) {
+                            FriendRow(friend: friend, live: liveStatus(for: friend), outcome: controller.outcomes[friend.id],
+                                      client: account.client)
+                        }
+                        .listRowBackground(Brand.surface)
+                    }
                 }
             }
         }

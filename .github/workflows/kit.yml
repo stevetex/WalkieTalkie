@@ -12,6 +12,7 @@ on:
     branches: [main]
     paths:
       - "app/Packages/**"
+      - "contracts/**"
       - "server/src/**"
       - "server/perf/compare.ts"
       - "server/perf/budgets.json"
@@ -19,6 +20,7 @@ on:
   pull_request:
     paths:
       - "app/Packages/**"
+      - "contracts/**"
       - "server/src/**"
       - "server/perf/compare.ts"
       - "server/perf/budgets.json"
@@ -60,7 +62,8 @@ jobs:
         working-directory: server
         run: |
           mkdir -p "$RUNNER_TEMP/relay-data" ../kit-out
-          PORT=8095 HOST=127.0.0.1 SPIKE_TOKEN=ci SHARED_TOKEN_CLIENTS=1 DATA_DIR="$RUNNER_TEMP/relay-data" \
+          # The v2 contract: accounts only, so the API too, with dev sign-ins.
+          PORT=8095 HOST=127.0.0.1 SPIKE_TOKEN=ci SERVE_API=1 DEV_APPLE_SIGNIN=1 DATA_DIR="$RUNNER_TEMP/relay-data" \
             nohup node src/main.ts > ../kit-out/relay.log 2>&1 &
           for _ in $(seq 1 40); do
             if curl -sf http://127.0.0.1:8095/healthz > /dev/null; then echo "relay up"; exit 0; fi
@@ -73,7 +76,6 @@ jobs:
         working-directory: app/Packages/OverAndOutKit
         env:
           OAO_E2E_RELAY: http://127.0.0.1:8095
-          OAO_E2E_TOKEN: ci
         run: swift test
 
       - name: History from the last main run

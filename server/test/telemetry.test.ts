@@ -252,6 +252,7 @@ test("through the relay and API: a record and summary per conversation, events, 
   const accounts = new Accounts(docs);
   const sink = new MemorySink();
   const lines: string[] = [];
+  const pusher = new DryRunPusher();
   const api = createApi({
     accounts,
     signer,
@@ -265,11 +266,11 @@ test("through the relay and API: a record and summary per conversation, events, 
   const running = await startServer({
     port: 0,
     dataDir: null,
-    token: "shared",
+    adminToken: "admin",
     sessions: verifier,
     accounts,
     api,
-    pusher: new DryRunPusher(),
+    pusher,
     metrics: new TelemetryMetricsStore(sink, { endedMs: 10 }),
     telemetry: sink,
   });
@@ -283,24 +284,27 @@ test("through the relay and API: a record and summary per conversation, events, 
     return { status: res.status, body: await res.json() };
   };
   const signIn = async (sub: string, name: string, deviceId: string) =>
-    (await call("POST", "/v1/auth/apple", null, { identityToken: sub, nonce: "n", name, deviceId, platform: "iphone" })).body;
+    (await call("POST", "/v2/auth/apple", null, { identityToken: sub, nonce: "n", name, deviceId, clientKind: "ios" })).body;
   try {
     const alice = await signIn("apple.alice", "Alice", "alice-phone");
-    const watch = (await call("POST", "/v1/auth/device", alice.token, { deviceId: "alice-watch", platform: "watch" })).body.token;
-    assert.equal((await call("PUT", "/v1/me/device", watch, { platform: "watch", pushToken: "poll:alice" })).status, 200);
+    const watch = (await call("POST", "/v2/auth/device", alice.token, { deviceId: "alice-watch", clientKind: "watchos", requestId: "r1" })).body.token;
+    const watchToken = "ab".repeat(32);
+    const delivery = { provider: "apns", mode: "alert", token: watchToken, environment: "sandbox" };
+    assert.equal((await call("PUT", "/v2/me/device", watch, { clientKind: "watchos", delivery })).status, 200);
     const [registration] = sink.of("oao.registration");
-    assert.deepEqual([registration.userId, registration.deviceId, registration.platform], [alice.user.id, "alice-watch", "watch"]);
-    assert.doesNotMatch(JSON.stringify(registration), /poll:alice/);
+    assert.deepEqual([registration.userId, registration.deviceId, registration.platform, registration.clientKind], [alice.user.id, "alice-watch", "watch", "watchos"]);
+    assert.doesNotMatch(JSON.stringify(registration), new RegExp(watchToken));
     const bob = await signIn("apple.bob", "Bob", "bob-phone");
-    const invite = await call("POST", "/v1/invites", alice.token);
-    await call("POST", `/v1/invites/${invite.body.code}/accept`, bob.token);
+    const invite = await call("POST", "/v2/invites", alice.token);
+    await call("POST", `/v2/invites/${invite.body.code}/accept`, bob.token);
 
     // Bob rings Alice's watch, which answers.
-    const bobClient = new SpikeClient({ server: url, userId: "ignored", token: bob.token });
+    const bobClient = new SpikeClient({ server: url, userId: "ignored", token: bob.token, clientKind: "ios" });
     await bobClient.connect();
     const { conversationId } = await bobClient.talk(alice.user.id, Buffer.alloc(640 * 3, 1), { realtime: false });
+    const { ringId } = pusher.sent[0].payload as { ringId: string };
     const aliceWatch = new SpikeClient({ server: url, userId: "ignored", token: watch, transport: "http" });
-    await aliceWatch.connect(conversationId);
+    await aliceWatch.connect(conversationId, undefined, ringId);
     await aliceWatch.waitFor("burst-end");
     bobClient.close();
     aliceWatch.close();
@@ -310,7 +314,7 @@ test("through the relay and API: a record and summary per conversation, events, 
 
     // The watch's upload becomes a summary under its account and device, from its token.
     const t0 = Date.now();
-    const upload = await call("POST", "/v1/metrics", watch, {
+    const upload = await call("POST", "/v2/metrics", watch, {
       conversationId, userId: "someone-else", role: "receiver", clockOffsetMs: 0,
       device: { platform: "watch", build: "77<script>" },
       events: [{ name: "answerTapped", t: t0, detail: "notification" }, { name: "firstAudioScheduled", t: t0 + 600 }],
@@ -321,35 +325,35 @@ test("through the relay and API: a record and summary per conversation, events, 
     assert.equal((summary.intervals as Record<string, number>).tapToFirstAudioMs, 600);
 
     // Device events.
-    const events = await call("POST", "/v1/events", alice.token, { device: { platform: "iphone", build: "77" }, events: [{ name: "pttLeft", t: t0, fields: { reason: 1 } }, { name: "crash", fields: { signal: "SIGSEGV" } }] });
+    const events = await call("POST", "/v2/events", alice.token, { device: { platform: "iphone", build: "77" }, events: [{ name: "pttLeft", t: t0, fields: { reason: 1 } }, { name: "crash", fields: { signal: "SIGSEGV" } }] });
     assert.deepEqual(events.body, { accepted: 2 });
     assert.deepEqual(sink.of("oao.event").map((e) => [e.name, e.userId, e.severity]), [["pttLeft", alice.user.id, "INFO"], ["crash", alice.user.id, "WARNING"]]);
 
     // A problem report asks both devices for their logs; the note stays out of the logs.
-    assert.equal((await call("GET", "/v1/me", alice.token)).body.diagnosticsRequestedAt, undefined);
-    const feedback = await call("POST", "/v1/feedback", alice.token, { note: "Bob's ring didn't play", build: "77", platform: "iphone" });
+    assert.equal((await call("GET", "/v2/me", alice.token)).body.diagnosticsRequestedAt, undefined);
+    const feedback = await call("POST", "/v2/feedback", alice.token, { note: "Bob's ring didn't play", build: "77", platform: "iphone" });
     assert.equal(feedback.status, 200);
     assert.match(lines.find((l) => l.startsWith("[feedback]"))!, new RegExp(`^\\[feedback\\] ${feedback.body.id}: ${alice.user.id}, with diagnostics$`));
     assert.doesNotMatch(JSON.stringify(sink.entries), /didn't play/);
-    const requestedAt = (await call("GET", "/v1/me", watch)).body.diagnosticsRequestedAt;
+    const requestedAt = (await call("GET", "/v2/me", watch)).body.diagnosticsRequestedAt;
     assert.equal(typeof requestedAt, "number");
 
     // The watch answers with its log.
     const log = gzipSync(JSON.stringify({ name: "launch" }) + "\n");
-    const sent = await call("POST", "/v1/diagnostics", watch, log, { "content-type": "application/gzip", "x-oao-platform": "watch", "x-oao-build": "77" });
+    const sent = await call("POST", "/v2/diagnostics", watch, log, { "content-type": "application/gzip", "x-oao-platform": "watch", "x-oao-build": "77" });
     assert.equal(sent.status, 200);
     const [stored] = await docs.getAll([`diagnostics/${sent.body.id}`]);
     assert.deepEqual([stored!.userId, stored!.deviceId, stored!.platform, stored!.size, stored!.encoding], [alice.user.id, "alice-watch", "watch", log.length, "gzip"]);
     assert.ok(Buffer.from(stored!.log as Uint8Array).equals(log));
     // The apps send raw DEFLATE (NSData's .zlib).
-    const raw = await call("POST", "/v1/diagnostics", alice.token, deflateRawSync("{}\n"), { "content-type": "application/octet-stream" });
+    const raw = await call("POST", "/v2/diagnostics", alice.token, deflateRawSync("{}\n"), { "content-type": "application/octet-stream" });
     assert.equal((await docs.getAll([`diagnostics/${raw.body.id}`]))[0]!.encoding, "deflate-raw");
-    const tooBig = await call("POST", "/v1/diagnostics", watch, Buffer.alloc(950 * 1024), { "content-type": "application/gzip" });
+    const tooBig = await call("POST", "/v2/diagnostics", watch, Buffer.alloc(950 * 1024), { "content-type": "application/gzip" });
     assert.deepEqual([tooBig.status, tooBig.body.error], [413, "diagnostics-too-large"]);
 
     // Errors are entries with the route's template, never its IDs.
-    await call("PATCH", "/v1/friends/u_nobody", alice.token, { favorite: true });
-    const error = sink.of("oao.api").find((e) => e.status === 404 && e.route === "/v1/friends/{id}")!;
+    await call("PATCH", "/v2/friends/u_nobody", alice.token, { favorite: true });
+    const error = sink.of("oao.api").find((e) => e.status === 404 && e.route === "/v2/friends/{id}")!;
     assert.deepEqual([error.method, error.error, error.userId], ["PATCH", "not-friends", alice.user.id]);
 
     // Usage actions: IDs and fields, never names.
@@ -358,11 +362,56 @@ test("through the relay and API: a record and summary per conversation, events, 
     const accepted = actions.find((a) => a.action === "invite_accepted")!;
     assert.deepEqual([accepted.userId, accepted.inviter, typeof accepted.inviteAgeMs], [bob.user.id, alice.user.id, "number"]);
     assert.doesNotMatch(JSON.stringify(actions), /Alice|Bob/);
+    // There's one API version, so no entry names it.
+    assert.ok(sink.entries.every((e) => !("apiVersion" in e)));
 
     // Deleting the account deletes its diagnostics and problem reports.
-    assert.equal((await call("DELETE", "/v1/me", alice.token, {})).status, 200);
+    assert.equal((await call("DELETE", "/v2/me", alice.token, { proof: { provider: "apple" } })).status, 200);
     assert.deepEqual(await docs.getAll([`diagnostics/${sent.body.id}`, `diagnostics/${raw.body.id}`, `feedback/${feedback.body.id}`]), [undefined, undefined, undefined]);
   } finally {
     await running.close();
   }
+});
+
+test("Phase 0 rings: one device, its ring ID, kind and provider; simulated deliveries never count as delivered", () => {
+  const record = conversationRecord("c2", [
+    server("talkStart", 0, "u_bob -> u_alice"),
+    server("pushSent", 10, "watch; r_abc123; watchos apns/alert"),
+    server("pushFailed", 40, "alert: status 410 Unregistered in 30 ms"),
+    server("pushSent", 45, "iphone; r_abc123; ios apns/pushtotalk"),
+    server("pushAccepted", 90, "pushtotalk: status 200 in 45 ms"),
+    server("receiverJoined", 900),
+  ]);
+  assert.equal(record.ringPlatform, "watch");
+  assert.equal(record.ringClientKind, "watchos");
+  assert.equal(record.ringProvider, "apns");
+  assert.deepEqual(record.rings.map((r) => [r.platform, r.ringId, r.clientKind, r.provider, r.mode]), [
+    ["watch", "r_abc123", "watchos", "apns", "alert"],
+    ["iphone", "r_abc123", "ios", "apns", "pushtotalk"],
+  ]);
+  assert.equal(record.delivered, true);
+  assert.equal(record.simulatedDelivery, undefined);
+
+  const android = conversationRecord("c3", [
+    server("talkStart", 0, "u_bob -> u_riley"),
+    server("pushSent", 10, "android; r_def456; android fcm/notification"),
+    server("pushAccepted", 11, "fcm-notification: status 200 in 0 ms (simulated)"),
+    server("ringTimedOut", 35_010),
+  ]);
+  assert.equal(android.ringPlatform, "android");
+  assert.equal(android.ringProvider, "fcm");
+  assert.equal(android.simulatedDelivery, true);
+  assert.equal(android.delivered, false);
+  assert.equal(android.outcome, "missed");
+  assert.deepEqual(parsePushDetail("fcm-notification: status 200 in 0 ms (simulated)"), { kind: "fcm-notification", status: 200, ms: 0, simulated: true });
+});
+
+test("Phase 0: a stub provider's failures are oao.push entries, never oao.apns", async () => {
+  const sink = new MemorySink();
+  const store = new TelemetryMetricsStore(sink, { endedMs: 1 });
+  store.server("c4", "pushFailed", 1, "fcm-notification: status 404 in 0 ms (simulated)");
+  store.server("c4", "pushFailed", 2, "alert: status 410 Unregistered in 30 ms");
+  assert.deepEqual(sink.of("oao.push").map((e) => [e.provider, e.status, e.simulated]), [["fcm", 404, true]]);
+  assert.deepEqual(sink.of("oao.apns").map((e) => [e.pushType, e.status]), [["alert", 410]]);
+  await store.flush();
 });

@@ -26,16 +26,17 @@ final class AppModel: ObservableObject {
     @Published private(set) var friends: [Friend] = []
     @Published private(set) var friendsLoaded = false
     @Published private(set) var blocks: [BlockedUser] = []
-    /// Your own profile photo's version, from /v1/me; nil without one.
+    /// Your own profile photo's version, from /v2/me; nil without one.
     @Published private(set) var photoVersion: Double?
     /// Your built-in mascot picture, when you chose one instead of a photo.
     @Published private(set) var avatar: String?
-    /// Which device rings, as chosen; nil = the default (see `ringsOn`).
-    @Published private(set) var ringOn: Platform?
+    /// Which kind of device rings first, as chosen; nil = automatic (see `ringsOn`).
+    @Published private(set) var preferredFormFactor: FormFactor?
     /// A ring the watch doesn't answer rolls over to this iPhone (design decision 2026-10-01).
     @Published private(set) var rollOver = false
-    /// The kinds of device registered for rings on this account, from /v1/me.
-    @Published private(set) var platforms: [Platform] = []
+    /// The kinds of device registered for rings on this account, from /v2/me (only the kinds
+    /// this build knows).
+    @Published private(set) var formFactors: [FormFactor] = []
     /// A watch and this iPhone can both ring: ask once which one (design decision 2026-09-28).
     @Published var askingRingOn = false
     /// When an invite was last made, so the friends list checks for the new friend meanwhile.
@@ -43,6 +44,9 @@ final class AppModel: ObservableObject {
     @Published private(set) var updatingPhoto = false
     @Published var pendingInvite: PendingInvite?
     @Published var errorMessage: String?
+    /// The service no longer supports this build (GET /v2/config, or a client-upgrade-required
+    /// answer): Friends asks for an update. The session stays.
+    @Published private(set) var upgradeRequired = false
     /// Set by a deletion, so the root shows "Your account is deleted" before signing in again.
     @Published var accountDeleted = false
     /// Notifications not yet asked for, so Friends offers them (the walkie-talkie off notice).
@@ -52,6 +56,8 @@ final class AppModel: ObservableObject {
     @AppStorage("onboarded") var onboarded = false
 
     let client: AccountClient
+    /// GET /v2/config's last good answer: the relay to use, and the lowest supported build.
+    let config: ServiceConfigStore
     let watch = PhoneWatchLink()
     let pushToTalk = PushToTalkChannel()
     let talk: TalkController
@@ -61,8 +67,11 @@ final class AppModel: ObservableObject {
     let isLocalServer: Bool
 
     private var signedOutObserver: NSObjectProtocol?
+    private var upgradeObserver: NSObjectProtocol?
     /// The push registration last sent for this session, so it's sent only when it changes.
-    private var registered: (token: String, pushType: String?)?
+    private var registered: DeviceRegistration?
+    /// Whether notifications are allowed, as the registration reports it.
+    private var notificationPermission: DeviceRegistration.Notifications = .unknown
     /// One registration at a time, so an older one can't land after a newer one.
     private var registering = false
     /// How friends reach this iPhone, as last registered, for Settings.
@@ -81,9 +90,11 @@ final class AppModel: ObservableObject {
         isLocalServer = host.hasPrefix("localhost") || host.hasPrefix("127.0.0.1")
         let base = AccountClient.baseURL(host: host) ?? URL(string: "https://overandout.app")!
         client = AccountClient(baseURL: base, store: KeychainSessionStore())
+        config = ServiceConfigStore(bundledRelay: AccountClient.baseURL(host: info["OAOServerHost"] as? String ?? ""))
         session = client.session
+        upgradeRequired = config.upgradeRequired
         TalkController.configureAudioSession()
-        talk = TalkController(client: client, relayHost: info["OAOServerHost"] as? String ?? "", ptt: pushToTalk)
+        talk = TalkController(client: client, config: config, ptt: pushToTalk)
         // Early, so the system can restore the channel and deliver its pushes.
         pushToTalk.onRegistrationChange = { [weak self] in
             guard let self else { return }
@@ -95,19 +106,29 @@ final class AppModel: ObservableObject {
             guard let self else { return }
             // On screen, Friends and Settings show it; otherwise say so at once (run 54).
             if UIApplication.shared.applicationState != .active {
-                WalkieTalkieOffNotice.post(ringsWatch: platforms.contains(.watch))
+                WalkieTalkieOffNotice.post(ringsWatch: formFactors.contains(.watch))
             }
         }
         pushToTalk.start()
-        watch.makeSession = { [client] deviceId in
+        watch.makeSession = { [client] deviceId, requestId in
             guard client.session != nil else { return nil }
-            return try await client.makeSession(forDevice: deviceId, platform: .watch)
+            return try await client.makeSession(forDevice: deviceId, requestId: requestId)
         }
         watch.activate(signedIn: session != nil)
         signedOutObserver = NotificationCenter.default.addObserver(
             forName: AccountClient.signedOutNotification, object: nil, queue: .main
         ) { [weak self] _ in
             Task { @MainActor in self?.didSignOut() }
+        }
+        upgradeObserver = NotificationCenter.default.addObserver(
+            forName: ServiceContract.upgradeRequiredNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.upgradeRequired = true }
+        }
+        let config = config
+        Task { [weak self] in
+            await config.refresh(apiBase: base)
+            self?.upgradeRequired = config.upgradeRequired
         }
     }
 
@@ -117,8 +138,7 @@ final class AppModel: ObservableObject {
 
     func signIn(identityToken: String, nonce: String, name: String?) async {
         do {
-            let result = try await client.signInWithApple(identityToken: identityToken, nonce: nonce, name: name,
-                                                          deviceId: deviceId, platform: .iphone)
+            let result = try await client.signInWithApple(identityToken: identityToken, nonce: nonce, name: name, deviceId: deviceId)
             session = result.session
             if result.created { onboarded = false }
             watch.signedInChanged(true)
@@ -152,9 +172,9 @@ final class AppModel: ObservableObject {
         session = nil
         photoVersion = nil
         avatar = nil
-        ringOn = nil
+        preferredFormFactor = nil
         rollOver = false
-        platforms = []
+        formFactors = []
         askingRingOn = false
         lastInviteAt = nil
         friends = []
@@ -179,13 +199,13 @@ final class AppModel: ObservableObject {
             if user.name != session?.name { session?.name = user.name }
             photoVersion = user.photoVersion
             avatar = user.avatar
-            ringOn = user.ringOn
+            preferredFormFactor = user.preferredFormFactor.flatMap { $0.isKnown ? $0 : nil }
             rollOver = user.rollOver ?? false
-            platforms = user.platforms ?? []
+            formFactors = user.knownFormFactors
             friends = loadedFriends
             blocks = loadedBlocks
             friendsLoaded = true
-            if platforms.contains(.watch), platforms.contains(.iphone), !askedRingOn { askingRingOn = true }
+            if formFactors.contains(.watch), formFactors.contains(.phone), !askedRingOn { askingRingOn = true }
             // The server asked for this iPhone's diagnostics log (tools/beta.ts pull).
             let client = client
             await Telemetry.shared.uploadIfRequested(requestedAt: user.diagnosticsRequestedAt) { data in
@@ -216,6 +236,13 @@ final class AppModel: ObservableObject {
         let status = await UNUserNotificationCenter.current().notificationSettings().authorizationStatus
         notificationsUndetermined = status == .notDetermined
         notificationsDenied = status == .denied
+        let permission: DeviceRegistration.Notifications = status == .denied ? .denied : status == .notDetermined ? .unknown : .authorized
+        if permission != notificationPermission {
+            notificationPermission = permission
+            await registerDevice()
+        }
+        await config.refresh(apiBase: client.baseURL)
+        upgradeRequired = upgradeRequired || config.upgradeRequired
         if session != nil { await Telemetry.shared.flush() }
     }
 
@@ -240,12 +267,12 @@ final class AppModel: ObservableObject {
         await becameActive()
     }
 
-    /// The device that rings for this account, as the server decides it: the choice, or the
-    /// watch if one is registered, else this iPhone.
-    var ringsOn: Platform { ringOn ?? (platforms.contains(.watch) ? .watch : .iphone) }
+    /// The kind of device that rings for this account, as the server decides it: the choice, or
+    /// the watch if one is registered, else this iPhone.
+    var ringsOn: FormFactor { preferredFormFactor ?? (formFactors.contains(.watch) ? .watch : .phone) }
 
     /// Ring Me On is a choice once the account has both kinds of device (or made a choice).
-    var canChooseRingOn: Bool { ringOn != nil || platforms.count > 1 }
+    var canChooseRingOn: Bool { preferredFormFactor != nil || formFactors.count > 1 }
 
     /// Whether this iPhone has asked (or the person chose in Settings) since a watch appeared.
     private var askedRingOn: Bool {
@@ -253,15 +280,15 @@ final class AppModel: ObservableObject {
         set { if let session { UserDefaults.standard.set(newValue, forKey: "askedRingOn-\(session.userId)") } }
     }
 
-    func setRingOn(_ platform: Platform) async {
+    func setRingOn(_ formFactor: FormFactor) async {
         askedRingOn = true
         askingRingOn = false
-        let previous = ringOn
-        ringOn = platform
+        let previous = preferredFormFactor
+        preferredFormFactor = formFactor
         do {
-            ringOn = try await client.setRingOn(platform).ringOn
+            preferredFormFactor = try await client.setPreferredFormFactor(formFactor).preferredFormFactor
         } catch {
-            ringOn = previous
+            preferredFormFactor = previous
             errorMessage = describe(error)
         }
     }
@@ -277,7 +304,8 @@ final class AppModel: ObservableObject {
         }
     }
 
-    /// The channel's token while in it; otherwise "app:", reachable only while on screen.
+    /// The channel's token while in it; otherwise rung only over the open stream while on screen.
+    /// With it, whether notifications are allowed (the walkie-talkie-off notice needs them).
     /// Registers until what the server has matches the current state (the channel and its
     /// token change while a request is in flight).
     func registerDevice() async {
@@ -286,17 +314,17 @@ final class AppModel: ObservableObject {
         defer { registering = false }
         while session != nil {
             let joined = pushToTalk.isJoined ? pushToTalk.pushToken : nil
-            let token = joined ?? "app:"
-            let pushType = joined == nil ? nil : "pushtotalk"
-            if let registered, registered.token == token, registered.pushType == pushType { break }
+            let delivery: DeviceRegistration.Delivery = joined.map { .pushToTalk(token: $0, environment: Self.apnsEnvironment) } ?? .foreground
+            let registration = DeviceRegistration(delivery: delivery, notifications: notificationPermission)
+            if registered == registration { break }
             do {
-                try await client.registerDevice(platform: .iphone, pushToken: token, pushType: pushType, apnsEnvironment: Self.apnsEnvironment)
-                registered = (token, pushType)
+                try await client.registerDevice(registration)
+                registered = registration
                 reachability = joined != nil ? "Walkie-talkie (PushToTalk)" : "Only while Over&Out is open"
             } catch {
                 reachability = "Not registered: \(describe(error))"
                 print("[oao] Device registration failed: \(error)")
-                Telemetry.shared.event("registrationFailed", ["pushType": pushType ?? "app", "error": Self.errorCode(error)])
+                Telemetry.shared.event("registrationFailed", ["pushType": delivery.label, "error": Self.errorCode(error)])
                 break
             }
         }

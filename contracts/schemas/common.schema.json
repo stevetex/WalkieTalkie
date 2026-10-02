@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "common.schema.json",
+  "title": "Shared definitions",
+  "$defs": {
+    "userId": { "type": "string", "pattern": "^u_[\\w.-]{1,126}$" },
+    "id": { "type": "string", "pattern": "^[\\w.-]{1,128}$" },
+    "ringId": { "type": "string", "pattern": "^r_[\\w-]{1,64}$" },
+    "millis": { "type": "number", "minimum": 0 },
+    "clientKind": { "enum": ["ios", "watchos", "android", "wearos"] },
+    "openClientKind": { "type": "string", "minLength": 1, "maxLength": 32 },
+    "formFactor": { "enum": ["phone", "watch"] },
+    "openFormFactor": { "type": "string", "minLength": 1, "maxLength": 32 },
+    "codec": { "enum": ["opus16k", "pcm16le16k"] },
+    "openCodec": { "type": "string", "minLength": 1, "maxLength": 32 },
+    "avatar": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,31}$" },
+    "error": {
+      "type": "object",
+      "required": ["error"],
+      "properties": {
+        "error": { "type": "string", "minLength": 1 },
+        "message": { "type": "string" }
+      }
+    },
+    "ringEnvelope": {
+      "type": "object",
+      "required": ["schemaVersion", "ringId", "conversationId", "from", "fromName", "pushSentAt", "expiresAt"],
+      "properties": {
+        "schemaVersion": { "type": "integer", "minimum": 2 },
+        "ringId": { "$ref": "#/$defs/ringId" },
+        "conversationId": { "$ref": "#/$defs/id" },
+        "from": { "$ref": "#/$defs/userId" },
+        "fromName": { "type": "string" },
+        "burstId": { "$ref": "#/$defs/id" },
+        "pushSentAt": { "$ref": "#/$defs/millis" },
+        "expiresAt": { "$ref": "#/$defs/millis" }
+      }
+    }
+  }
+}

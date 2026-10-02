@@ -17,13 +17,19 @@ final class RelayStub: URLProtocol, @unchecked Sendable {
         var sends: [Data] = []
         var held: [@Sendable () -> Void] = []
         var streamURLs: [URL] = []
+        var streamHeaders: [[String: String]] = []
+        /// A refusal at admission instead of the stream: its status and JSON body.
+        var streamRefusal: (status: Int, body: String)?
     }
 
     private static let state = OSAllocatedUnfairLock(initialState: State())
 
-    static func reset(streamRecords: Data = Data(), sendStatus: Int = 200, holdSends: Bool = false) {
-        state.withLock { $0 = State(streamRecords: streamRecords, sendStatus: sendStatus, holdSends: holdSends) }
+    static func reset(streamRecords: Data = Data(), sendStatus: Int = 200, holdSends: Bool = false, streamRefusal: (status: Int, body: String)? = nil) {
+        state.withLock { $0 = State(streamRecords: streamRecords, sendStatus: sendStatus, holdSends: holdSends, streamRefusal: streamRefusal) }
     }
+
+    /// The headers each stream request carried, oldest first.
+    static var streamHeaders: [[String: String]] { state.withLock { $0.streamHeaders } }
 
     /// The records in each send's body.
     static var sends: [[(type: UInt8, payload: Data)]] {
@@ -52,8 +58,20 @@ final class RelayStub: URLProtocol, @unchecked Sendable {
 
     override func startLoading() {
         let url = request.url!
-        if url.path.hasSuffix("/v1/relay/stream") {
-            Self.state.withLock { $0.streamURLs.append(url) }
+        if url.path.hasSuffix("/v2/relay/stream") {
+            let refusal = Self.state.withLock { state in
+                state.streamURLs.append(url)
+                state.streamHeaders.append(request.allHTTPHeaderFields ?? [:])
+                return state.streamRefusal
+            }
+            if let refusal {
+                let headers = ["Content-Type": "application/json"]
+                client?.urlProtocol(self, didReceive: HTTPURLResponse(url: url, statusCode: refusal.status, httpVersion: nil, headerFields: headers)!,
+                                    cacheStoragePolicy: .notAllowed)
+                client?.urlProtocol(self, didLoad: Data(refusal.body.utf8))
+                client?.urlProtocolDidFinishLoading(self)
+                return
+            }
             let hello = RelayRecord.encode(RelayRecord.json, Data(#"{"type":"hello-ack","serverTime":1000}"#.utf8))
             let records = Self.state.withLock { $0.streamRecords }
             // As the relay sends it: with a type, so URLSession doesn't hold data back to sniff one.
@@ -146,6 +164,41 @@ struct RelayConnectionTests {
         #expect(rejoin["resumeFrom"] == "42")
         #expect(query(RelayStub.streamURLs[1])["resumeBurst"] == nil)
         relay.close()
+    }
+
+    /// v2 admission: the stream names the ring it answers and says what this build is.
+    @Test func aJoinNamesItsRingAndTheStreamSaysWhatThisBuildIs() async throws {
+        RelayStub.reset()
+        let relay = RelayConnection(identity: ClientIdentity(kind: .watchos, version: "1.0", build: "170", encodes: ["opus16k"]))
+        relay.protocolClasses = [RelayStub.self]
+        relay.connect(baseURL: base, token: "t", userId: "u", join: "c1", ring: "r_abc")
+        try await waitUntil { relay.isReady }
+        let query = Dictionary(uniqueKeysWithValues: (URLComponents(url: RelayStub.streamURLs[0], resolvingAgainstBaseURL: false)?.queryItems ?? []).map { ($0.name, $0.value ?? "") })
+        #expect(query["join"] == "c1")
+        #expect(query["ring"] == "r_abc")
+        let headers = RelayStub.streamHeaders[0]
+        #expect(headers["X-OAO-Client-Kind"] == "watchos")
+        #expect(headers["X-OAO-Build"] == "170")
+        #expect(headers["X-OAO-Relay-Protocol"] == "2")
+        #expect(headers["X-OAO-Decode"] == "opus16k,pcm16le16k")
+        #expect(headers["X-OAO-Encode"] == "opus16k")
+        relay.close()
+    }
+
+    /// A refusal at admission says why: an update is needed, or the session ended.
+    @Test func aRefusedStreamSaysWhy() async throws {
+        RelayStub.reset(streamRefusal: (409, #"{"error":"client-upgrade-required","message":"Update Over&Out to keep talking.","minimumBuild":200}"#))
+        let relay = connection(stampsArrivals: false)
+        var refusal: RelayRefusal?
+        var closed: String?
+        relay.onRefused = { refusal = $0 }
+        relay.onClose = { closed = $0 }
+        relay.connect(baseURL: base, token: "t", userId: "u")
+        try await waitUntil { closed != nil }
+        #expect(refusal == RelayRefusal(status: 409, code: "client-upgrade-required", message: "Update Over&Out to keep talking."))
+        #expect(refusal?.requiresUpgrade == true)
+        #expect(closed == "stream HTTP 409 client-upgrade-required")
+        #expect(!relay.isReady)
     }
 
     /// Records arrive on the main actor in the order the relay sent them, stamped when they arrived.

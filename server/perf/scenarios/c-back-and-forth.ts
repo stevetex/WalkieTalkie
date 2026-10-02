@@ -72,8 +72,8 @@ async function settled(heard: Recorder, last: Talk | null): Promise<void> {
 // Both press at the same moment: exactly one go-ahead and one floor-denied.
 async function bothPress(a: SpikeClient, b: SpikeClient, names: { a: string; b: string }, aHeard: Recorder, bHeard: Recorder): Promise<string[]> {
   const ids = { a: randomUUID(), b: randomUUID() };
-  a.send({ type: "talk-start", to: names.b, burstId: ids.a });
-  b.send({ type: "talk-start", to: names.a, burstId: ids.b });
+  a.send({ type: "talk-start", to: names.b, burstId: ids.a, codec: "opus16k" });
+  b.send({ type: "talk-start", to: names.a, burstId: ids.b, codec: "opus16k" });
   const decide = (client: SpikeClient, burstId: string) =>
     client.waitForMatch((m) => (m.type === "floor-granted" || m.type === "floor-denied") && m.burstId === burstId, "floor decision");
   const [da, db] = await Promise.all([decide(a, ids.a), decide(b, ids.b)]);

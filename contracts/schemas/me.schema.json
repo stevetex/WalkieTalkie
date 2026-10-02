@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "me.schema.json",
+  "title": "GET and PATCH /v2/me; the user in a sign-in answer",
+  "type": "object",
+  "required": ["id", "name"],
+  "properties": {
+    "id": { "$ref": "common.schema.json#/$defs/userId" },
+    "name": { "type": "string" },
+    "photoVersion": { "$ref": "common.schema.json#/$defs/millis" },
+    "avatar": { "type": "string" },
+    "signInProvider": { "type": "string" },
+    "preferredFormFactor": { "$ref": "common.schema.json#/$defs/openFormFactor" },
+    "rollOver": { "type": "boolean" },
+    "formFactors": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/openFormFactor" } },
+    "diagnosticsRequestedAt": { "$ref": "common.schema.json#/$defs/millis" }
+  }
+}

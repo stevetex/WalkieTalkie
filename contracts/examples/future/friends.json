@@ -1,0 +1,7 @@
+{
+  "friends": [
+    { "id": "u_googleGoogleGoo", "name": "Riley", "since": 1790640000000, "avatar": "a-mascot-from-2027", "status": "busy", "badges": ["early"] },
+    { "id": "u_helenHelenHelen", "name": "Helen", "since": 1790640000000, "favorite": true, "lastMessageAt": 1790726400000, "presence": { "online": true } }
+  ],
+  "nextPage": null
+}

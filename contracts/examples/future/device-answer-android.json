@@ -1,0 +1,12 @@
+{
+  "device": {
+    "id": "pixel-1",
+    "clientKind": "android",
+    "formFactor": "phone",
+    "delivery": { "provider": "fcm", "mode": "notification", "priority": "high" },
+    "receiveMode": "tap",
+    "availability": { "enabled": true, "notifications": "authorized" },
+    "capabilities": { "relayProtocols": [2], "audioFormats": [1], "decode": ["opus16k", "pcm16le16k"], "encode": ["opus16k"], "features": ["foregroundService"] },
+    "lastActiveAt": 1790726400000
+  }
+}

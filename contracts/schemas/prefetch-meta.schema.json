@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "prefetch-meta.schema.json",
+  "title": "The watch extension's prefetch metadata (app group file)",
+  "type": "object",
+  "required": ["schemaVersion", "userId", "ringId", "expiresAt"],
+  "properties": {
+    "schemaVersion": { "type": "integer", "minimum": 2 },
+    "userId": { "$ref": "common.schema.json#/$defs/userId" },
+    "conversationId": { "$ref": "common.schema.json#/$defs/id" },
+    "ringId": { "$ref": "common.schema.json#/$defs/ringId" },
+    "expiresAt": { "$ref": "common.schema.json#/$defs/millis" },
+    "pushSentAt": { "$ref": "common.schema.json#/$defs/millis" },
+    "receivedAt": { "$ref": "common.schema.json#/$defs/millis" },
+    "status": { "type": "integer" },
+    "frames": { "type": "integer" },
+    "bytes": { "type": "integer" },
+    "error": { "type": "string" }
+  }
+}

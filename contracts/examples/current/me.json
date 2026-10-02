@@ -1,0 +1,9 @@
+{
+  "id": "u_lddgnN9Qtcspo663",
+  "name": "Steve",
+  "avatar": "honey",
+  "signInProvider": "apple",
+  "preferredFormFactor": "watch",
+  "rollOver": true,
+  "formFactors": ["phone", "watch"]
+}

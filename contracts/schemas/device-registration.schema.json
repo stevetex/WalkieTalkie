@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "device-registration.schema.json",
+  "title": "PUT /v2/me/device (request)",
+  "type": "object",
+  "required": ["clientKind", "delivery"],
+  "properties": {
+    "clientKind": { "$ref": "common.schema.json#/$defs/clientKind" },
+    "delivery": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["provider", "mode", "token"],
+          "properties": {
+            "provider": { "const": "apns" },
+            "mode": { "enum": ["alert", "pushtotalk"] },
+            "token": { "type": "string", "minLength": 1, "maxLength": 512 },
+            "environment": { "enum": ["sandbox", "production"] }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["provider", "mode", "token"],
+          "properties": {
+            "provider": { "const": "fcm" },
+            "mode": { "const": "notification" },
+            "token": { "type": "string", "minLength": 1, "maxLength": 4096 }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["provider", "mode"],
+          "properties": { "provider": { "const": "relay" }, "mode": { "const": "foreground" } },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "availability": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "notifications": { "enum": ["authorized", "denied", "unknown"] }
+      },
+      "additionalProperties": false
+    },
+    "capabilities": {
+      "type": "object",
+      "properties": {
+        "relayProtocols": { "type": "array", "items": { "type": "integer" }, "maxItems": 16 },
+        "audioFormats": { "type": "array", "items": { "type": "integer" }, "maxItems": 16 },
+        "decode": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/openCodec" }, "maxItems": 16 },
+        "encode": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/openCodec" }, "maxItems": 16 },
+        "features": { "type": "array", "items": { "type": "string", "maxLength": 64 }, "maxItems": 64 }
+      },
+      "additionalProperties": false
+    },
+    "clientVersion": { "type": "string", "maxLength": 32 },
+    "build": { "type": "string", "maxLength": 32 }
+  }
+}

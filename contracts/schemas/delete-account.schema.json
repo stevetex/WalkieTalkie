@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "delete-account.schema.json",
+  "title": "DELETE /v2/me (request)",
+  "type": "object",
+  "required": ["proof"],
+  "properties": {
+    "proof": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["provider", "authorizationCode"],
+          "properties": { "provider": { "const": "apple" }, "authorizationCode": { "type": "string", "minLength": 1 } }
+        },
+        {
+          "type": "object",
+          "required": ["provider", "identityToken", "nonce"],
+          "properties": { "provider": { "const": "google" }, "identityToken": { "type": "string", "minLength": 1 }, "nonce": { "type": "string" } }
+        }
+      ]
+    }
+  }
+}

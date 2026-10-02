@@ -1,0 +1,8 @@
+{
+  "clientKind": "ios",
+  "delivery": { "provider": "apns", "mode": "pushtotalk", "token": "a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90", "environment": "production" },
+  "availability": { "enabled": true, "notifications": "authorized" },
+  "capabilities": { "relayProtocols": [2], "audioFormats": [1], "decode": ["opus16k", "pcm16le16k"], "encode": ["opus16k"], "features": [] },
+  "clientVersion": "1.0",
+  "build": "170"
+}

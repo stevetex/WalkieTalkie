@@ -1,0 +1,10 @@
+{
+  "id": "u_googleGoogleGoo",
+  "name": "Riley",
+  "avatar": "a-mascot-from-2027",
+  "signInProvider": "google",
+  "preferredFormFactor": "watch",
+  "formFactors": ["phone", "watch", "glasses"],
+  "pronouns": "they/them",
+  "rollOver": false
+}

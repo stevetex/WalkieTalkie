@@ -1,0 +1,7 @@
+{
+  "token": "eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCIsImtpZCI6ImsyIn0.eyJzdWIiOiJ1XzEifQ.c2ln",
+  "expiresAt": 1793318400000,
+  "refreshAfter": 1790812800000,
+  "user": { "id": "u_googleGoogleGoo", "name": "Riley", "signInProvider": "google", "formFactors": ["phone"] },
+  "created": true
+}

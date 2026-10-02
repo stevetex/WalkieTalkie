@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "config.schema.json",
+  "title": "GET /v2/config",
+  "type": "object",
+  "required": ["schemaVersion", "api", "relay"],
+  "properties": {
+    "schemaVersion": { "type": "integer", "minimum": 1 },
+    "api": {
+      "type": "object",
+      "required": ["versions"],
+      "properties": { "versions": { "type": "array", "items": { "type": "integer" } } }
+    },
+    "relay": {
+      "type": "object",
+      "required": ["baseUrl", "protocols", "audioFormats", "codecs"],
+      "properties": {
+        "baseUrl": { "type": "string", "pattern": "^https?://" },
+        "protocols": { "type": "array", "items": { "type": "integer" } },
+        "audioFormats": { "type": "array", "items": { "type": "integer" } },
+        "codecs": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/openCodec" } }
+      }
+    },
+    "features": { "type": "object", "additionalProperties": { "type": "boolean" } },
+    "compatibility": {
+      "type": "object",
+      "properties": {
+        "minimumBuilds": { "type": "object", "additionalProperties": { "type": "integer", "minimum": 0 } },
+        "message": { "type": ["string", "null"] }
+      }
+    },
+    "timing": { "type": "object", "additionalProperties": { "type": "integer", "minimum": 0 } }
+  }
+}

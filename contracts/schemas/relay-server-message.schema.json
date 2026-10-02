@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "relay-server-message.schema.json",
+  "title": "Relay protocol 2: server to client. Clients ignore types they don't know.",
+  "type": "object",
+  "required": ["type"],
+  "properties": {
+    "type": { "type": "string", "minLength": 1 },
+    "conversationId": { "$ref": "common.schema.json#/$defs/id" },
+    "burstId": { "$ref": "common.schema.json#/$defs/id" },
+    "ringId": { "$ref": "common.schema.json#/$defs/ringId" },
+    "from": { "type": "string" },
+    "peer": { "type": "string" },
+    "holder": { "type": "string" },
+    "reason": { "type": "string" },
+    "code": { "type": "string" },
+    "message": { "type": "string" },
+    "replay": { "type": "boolean" },
+    "resumed": { "type": "boolean" },
+    "pushed": { "type": "boolean" },
+    "replayBursts": { "type": "integer", "minimum": 0 },
+    "resumedFrames": { "type": "integer", "minimum": 0 },
+    "droppedBursts": { "type": "integer", "minimum": 0 },
+    "clientTime": { "type": "number" },
+    "serverTime": { "type": "number" },
+    "codec": { "type": "string" }
+  },
+  "allOf": [
+    { "if": { "properties": { "type": { "const": "ring" } } }, "then": { "$ref": "common.schema.json#/$defs/ringEnvelope" } },
+    { "if": { "properties": { "type": { "const": "joined" } } }, "then": { "required": ["conversationId", "peer", "replayBursts"] } },
+    { "if": { "properties": { "type": { "const": "burst-start" } } }, "then": { "required": ["conversationId", "burstId", "from", "replay"] } },
+    { "if": { "properties": { "type": { "const": "floor-granted" } } }, "then": { "required": ["burstId", "conversationId", "pushed"] } },
+    { "if": { "properties": { "type": { "const": "talk-refused" } } }, "then": { "required": ["burstId", "reason"] } }
+  ]
+}

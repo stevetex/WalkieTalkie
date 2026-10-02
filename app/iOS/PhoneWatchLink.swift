@@ -5,7 +5,8 @@ import WatchConnectivity
 /// Gives the watch its own session (design decision 2026-09-27). The watch asks with its
 /// device ID, by message when the iPhone is reachable and in its application context
 /// otherwise; the iPhone makes a watch session with the API and sends it back. Signing out
-/// here signs the watch out too.
+/// here signs the watch out too: the server ends the watch's session with this iPhone's, and
+/// the watch is told. Payloads say their schema version (contracts/README.md).
 @MainActor
 final class PhoneWatchLink: NSObject, ObservableObject {
     @Published private(set) var isPaired = false
@@ -24,14 +25,22 @@ final class PhoneWatchLink: NSObject, ObservableObject {
     struct Request: Sendable {
         /// The watch's device ID, if it asked for a session.
         let sessionFor: String?
+        /// The watch's request (v2), so a retry gets the same session.
+        let requestId: String?
 
         init(_ payload: [String: Any]) {
             sessionFor = payload[WatchLink.request] as? String == WatchLink.sessionRequest ? payload[WatchLink.deviceId] as? String : nil
+            requestId = payload[WatchLink.requestId] as? String
         }
     }
 
-    /// Makes a session for the watch's device ID; nil when signed out.
-    var makeSession: ((String) async throws -> AccountSession?)?
+    /// Makes a session for the watch's device ID with this request ID; nil when signed out.
+    var makeSession: ((_ deviceId: String, _ requestId: String) async throws -> AccountSession?)?
+
+    /// Every payload says which version of the link it is.
+    private static func payload(_ fields: [String: Any]) -> [String: Any] {
+        fields.merging([WatchLink.schemaVersion: WatchLink.currentSchemaVersion]) { $1 }
+    }
 
     private var signedIn = false
     /// Device IDs a session has been sent to since the watch last asked.
@@ -55,13 +64,13 @@ final class PhoneWatchLink: NSObject, ObservableObject {
         recent = [:]
         guard WCSession.isSupported(), WCSession.default.activationState == .activated else { return }
         let session = WCSession.default
-        try? session.updateApplicationContext([WatchLink.signedIn: signedIn])
+        try? session.updateApplicationContext(Self.payload([WatchLink.signedIn: signedIn]))
         guard session.isPaired, session.isWatchAppInstalled else { return }
         if signedIn {
             // The watch may have asked while we were signed out.
             answerWaitingWatch()
         } else {
-            session.transferUserInfo([WatchLink.signedOut: true])
+            session.transferUserInfo(Self.payload([WatchLink.signedOut: true]))
         }
     }
 
@@ -82,23 +91,26 @@ final class PhoneWatchLink: NSObject, ObservableObject {
     }
 
     /// Replies directly if the watch is waiting on a reply, or queues user info otherwise.
-    private func send(to deviceId: String, reply: Reply?) {
+    /// `requestId`: the watch's own (v2), or one made here for a watch that sent none.
+    private func send(to deviceId: String, requestId: String? = nil, reply: Reply?) {
         guard signedIn, let makeSession else {
-            reply?([WatchLink.signedOut: true])
+            reply?(Self.payload([WatchLink.signedOut: true]))
             return
         }
         if reply == nil, answered.contains(deviceId) { return }
         answered.insert(deviceId)
+        let requestId = requestId ?? UUID().uuidString.lowercased()
         Task {
             do {
-                guard let session = try await session(for: deviceId, using: makeSession), let data = WatchLink.encode(session) else {
-                    reply?([WatchLink.signedOut: true])
+                guard let session = try await session(for: deviceId, requestId: requestId, using: makeSession),
+                      let data = WatchLink.encode(session) else {
+                    reply?(Self.payload([WatchLink.signedOut: true]))
                     return
                 }
                 if let reply {
-                    reply([WatchLink.session: data])
+                    reply(Self.payload([WatchLink.session: data]))
                 } else {
-                    WCSession.default.transferUserInfo([WatchLink.session: data])
+                    WCSession.default.transferUserInfo(Self.payload([WatchLink.session: data]))
                 }
                 lastSentAt = Date()
             } catch {
@@ -108,10 +120,11 @@ final class PhoneWatchLink: NSObject, ObservableObject {
         }
     }
 
-    private func session(for deviceId: String, using makeSession: @escaping (String) async throws -> AccountSession?) async throws -> AccountSession? {
+    private func session(for deviceId: String, requestId: String,
+                         using makeSession: @escaping (String, String) async throws -> AccountSession?) async throws -> AccountSession? {
         if let recent = recent[deviceId], recent.madeAt.timeIntervalSinceNow > -60 { return recent.session }
         if let task = making[deviceId] { return try await task.value }
-        let task = Task { try await makeSession(deviceId) }
+        let task = Task { try await makeSession(deviceId, requestId) }
         making[deviceId] = task
         defer { making[deviceId] = nil }
         let session = try await task.value
@@ -127,7 +140,7 @@ final class PhoneWatchLink: NSObject, ObservableObject {
     private func handleRequest(_ request: Request, reply: Reply?) {
         if let deviceId = request.sessionFor {
             answered.remove(deviceId)
-            send(to: deviceId, reply: reply)
+            send(to: deviceId, requestId: request.requestId, reply: reply)
         } else {
             reply?([:])
         }
@@ -141,7 +154,7 @@ extension PhoneWatchLink: WCSessionDelegate {
         Task { @MainActor in
             updateState(isPaired: isPaired, isWatchAppInstalled: isWatchAppInstalled)
             guard activationState == .activated else { return }
-            try? WCSession.default.updateApplicationContext([WatchLink.signedIn: signedIn])
+            try? WCSession.default.updateApplicationContext(Self.payload([WatchLink.signedIn: signedIn]))
             if signedIn { answerWaitingWatch() }
         }
     }

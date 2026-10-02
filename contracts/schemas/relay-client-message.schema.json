@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "relay-client-message.schema.json",
+  "title": "Relay protocol 2: client to server",
+  "oneOf": [
+    { "type": "object", "required": ["type", "clientTime"], "properties": { "type": { "const": "hello" }, "clientTime": { "type": "number" } } },
+    {
+      "type": "object",
+      "required": ["type", "to", "burstId", "codec"],
+      "properties": {
+        "type": { "const": "talk-start" },
+        "to": { "$ref": "common.schema.json#/$defs/userId" },
+        "burstId": { "$ref": "common.schema.json#/$defs/id" },
+        "codec": { "$ref": "common.schema.json#/$defs/codec" }
+      }
+    },
+    { "type": "object", "required": ["type", "burstId"], "properties": { "type": { "const": "talk-end" }, "burstId": { "$ref": "common.schema.json#/$defs/id" } } },
+    {
+      "type": "object",
+      "required": ["type", "conversationId"],
+      "properties": {
+        "type": { "const": "join" },
+        "conversationId": { "$ref": "common.schema.json#/$defs/id" },
+        "ringId": { "$ref": "common.schema.json#/$defs/ringId" },
+        "resume": {
+          "type": "object",
+          "required": ["burstId", "fromSeq"],
+          "properties": { "burstId": { "$ref": "common.schema.json#/$defs/id" }, "fromSeq": { "type": "integer", "minimum": 0 } }
+        }
+      }
+    },
+    { "type": "object", "required": ["type", "conversationId"], "properties": { "type": { "const": "leave" }, "conversationId": { "$ref": "common.schema.json#/$defs/id" } } }
+  ]
+}

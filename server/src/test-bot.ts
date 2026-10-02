@@ -5,13 +5,15 @@
 // it ends, and leaves when they do (or after the apps' 45 s conversation window).
 //
 // It never rings anyone (peer.noRings): it talks only while the caller is in the conversation.
-// It goes through the relay as an account (peer.account), so the friendship checks apply as
-// they do between people: a caller who blocks or removes it can't ring it, and a block during
-// a conversation ends it.
+// It goes through the relay as its account, so the friendship checks apply as they do between
+// people: a caller who blocks or removes it can't ring it, and a block during a conversation
+// ends it.
 //
-// Rings reach it through the account's "local:" device (tools/test-account.ts create
-// registered it), which the relay rings over the account's open connection: the bot's lobby
-// peer here, unless tools/bot.ts --account is connected as the bot at the time.
+// Rings reach it through the account's test delivery (tools/test-account.ts create registered
+// it), which the relay rings over the account's open connection: the bot's lobby peer here,
+// unless tools/bot.ts is connected as the bot at the time. It answers by joining with the
+// ring's ID, and names each burst's codec at talk-start (its greeting is Opus; an echo is said
+// back in the codec it came in).
 //
 // Each conversation gets its own peer (device relay-bot.<n>), because audio frames carry no
 // conversation ID. The relay allows an account one burst at a time, so the bot talks in one
@@ -95,10 +97,9 @@ export class TestBot {
     this.lobby = {
       userId: this.opts.userId,
       deviceId: this.opts.deviceId,
-      account: true,
       noRings: true,
       sendJSON: (m) => {
-        if (m.type === "ring") this.later(0, () => this.ringed(m.conversationId, m.from));
+        if (m.type === "ring") this.later(0, () => this.ringed(m.conversationId, m.from, m.ringId));
       },
       sendBinary: () => {},
     };
@@ -135,7 +136,7 @@ export class TestBot {
     return timer;
   }
 
-  private ringed(conversationId: string, caller: string): void {
+  private ringed(conversationId: string, caller: string, ringId: string): void {
     if (this.conversations.has(conversationId) || this.answering.has(conversationId)) return;
     if (this.conversations.size + this.answering.size >= this.opts.maxConversations) {
       console.warn(`[test-bot] not answering ${caller}: ${this.opts.maxConversations} conversations already`);
@@ -164,14 +165,13 @@ export class TestBot {
       conversation.peer = {
         userId: this.opts.userId,
         deviceId: `${this.opts.deviceId}.${this.nextPeer++}`,
-        account: true,
         noRings: true,
         sendJSON: (m) => deliver(m),
         sendBinary: (frame) => deliver(Buffer.from(frame)),
       };
       this.conversations.set(conversationId, conversation);
       this.relay.connect(conversation.peer);
-      this.relay.handleMessage(conversation.peer, { type: "join", conversationId });
+      this.relay.handleMessage(conversation.peer, { type: "join", conversationId, ringId });
       this.resetIdle(conversation);
     });
   }
@@ -265,7 +265,9 @@ export class TestBot {
           conversation.lastSaid = null;
           return this.stopSpeaking();
         }
-        this.relay.handleMessage(conversation.peer, { type: "talk-start", to: conversation.caller, burstId });
+        // The burst's own codec: the greeting is Opus, and an echo is said back as it came.
+        const codec = frames[0]?.[0] === Codec.pcm16le16k ? Codec.pcm16le16k : Codec.opus16k;
+        this.relay.handleMessage(conversation.peer, { type: "talk-start", to: conversation.caller, burstId, codec });
         talk.startedAt = performance.now();
         this.sendFrames();
       });

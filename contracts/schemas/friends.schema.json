@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "friends.schema.json",
+  "title": "GET /v2/friends",
+  "type": "object",
+  "required": ["friends"],
+  "properties": {
+    "friends": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "name", "since"],
+        "properties": {
+          "id": { "$ref": "common.schema.json#/$defs/userId" },
+          "name": { "type": "string" },
+          "since": { "$ref": "common.schema.json#/$defs/millis" },
+          "photoVersion": { "$ref": "common.schema.json#/$defs/millis" },
+          "avatar": { "type": "string" },
+          "favorite": { "type": "boolean" },
+          "lastMessageAt": { "$ref": "common.schema.json#/$defs/millis" }
+        },
+        "not": { "anyOf": [{ "required": ["signInProvider"] }, { "required": ["identity"] }, { "required": ["appleSub"] }] }
+      }
+    }
+  }
+}

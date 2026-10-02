@@ -5,104 +5,80 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { startServer, type RunningServer } from "../src/main.ts";
 import { DryRunPusher } from "../src/apns.ts";
 import { Accounts } from "../src/accounts.ts";
 import { apiFromEnv } from "../src/api-main.ts";
-import { createApi } from "../src/api.ts";
 import { MemoryDocs } from "../src/docs.ts";
 import { Relay, type Peer } from "../src/relay.ts";
 import { Codec, MAX_OPUS_PACKET_BYTES, type ServerMessage } from "../src/protocol.ts";
-import { SessionSigner, SessionVerifier, generateSigningKey } from "../src/session.ts";
+import { generateSigningKey } from "../src/session.ts";
 import { MemorySink, TelemetryMetricsStore, conversationRecord } from "../src/telemetry.ts";
 import { activeAccounts } from "../src/stats.ts";
-import { JsonDeviceStore, JsonMetricsStore } from "../src/store.ts";
+import { JsonMetricsStore } from "../src/store.ts";
 import { loadGreeting } from "../src/test-bot.ts";
-import { SpikeClient } from "../tools/client.ts";
+import { DEFAULT_CAPABILITIES } from "../src/contract.ts";
+import type { SpikeClient } from "../tools/client.ts";
+import { call, user, withServer, type Kind, type TestServer, type TestUser } from "./harness.ts";
 
 const INVITE = "bot-invite-code-1234";
 // A short stand-in for the committed greeting: three "Opus packets" the tests can tell apart.
 const GREETING = [Buffer.from([0xa1, 1]), Buffer.from([0xa1, 2]), Buffer.from([0xa1, 3])];
 
-interface Harness {
-  server: RunningServer;
-  url: string;
+interface Harness extends TestServer {
   botId: string;
   sink: MemorySink;
-  pusher: DryRunPusher;
 }
 
 async function withBot(fn: (h: Harness) => Promise<void>, { authTtlMs, idleMs = 30_000, replyDelayMs = 20 }: { authTtlMs?: number; idleMs?: number; replyDelayMs?: number } = {}): Promise<void> {
-  const { signingKey, publicKeys } = generateSigningKey("test");
-  const signer = new SessionSigner(signingKey);
-  const verifier = new SessionVerifier(publicKeys);
   const docs = new MemoryDocs();
-  // The bot's account and its "local:" device, as tools/test-account.ts create makes them.
+  // The bot's account, its "device" and its test delivery, as tools/test-account.ts create
+  // writes them (it needs the account's ID before the relay starts).
   const setup = new Accounts(docs);
   const { user: bot } = await setup.signInWithApple("test-bot.overandout", "Test Bot");
-  await setup.createSession(bot.id, "test-bot", "watch");
-  await setup.registerDevice(bot.id, "test-bot", { platform: "watch", pushToken: `local:${bot.id}`, apnsEnvironment: "sandbox" });
-  const accounts = new Accounts(docs, { botInvite: { code: INVITE, userId: bot.id } });
-  const api = createApi({
-    accounts,
-    signer,
-    verifier,
-    apple: { verify: async (identityToken) => ({ sub: identityToken }) },
-    revoker: null,
-    inviteBaseUrl: "https://overandout.app/i/",
-    log: () => {},
-    telemetry: new MemorySink(),
+  await setup.createSession(bot.id, "test-bot", "watchos");
+  await setup.registerDevice(bot.id, "test-bot", {
+    clientKind: "watchos",
+    delivery: { provider: "test", mode: "connection" },
+    availability: { enabled: true, notifications: "authorized" },
+    capabilities: structuredClone(DEFAULT_CAPABILITIES),
   });
   const sink = new MemorySink();
-  const pusher = new DryRunPusher();
-  const server = await startServer({
-    port: 0,
-    dataDir: null,
-    token: "shared",
-    sessions: verifier,
-    accounts,
-    api,
-    pusher,
+  await withServer(async (h) => fn({ ...h, botId: bot.id, sink }), {
+    docs,
+    // The API's accounts know the bot's standing invite; the relay's share the same documents.
+    api: { accounts: new Accounts(docs, { botInvite: { code: INVITE, userId: bot.id } }) },
     metrics: new TelemetryMetricsStore(sink, { endedMs: 5 }),
     ...(authTtlMs !== undefined ? { authTtlMs } : {}),
     testBot: { userId: bot.id, greeting: GREETING, answerDelayMs: 10, replyDelayMs, frameMs: 0, idleMs, minEchoFrames: 2 },
   });
-  try {
-    await fn({ server, url: `http://localhost:${server.port}`, botId: bot.id, sink, pusher });
-  } finally {
-    await server.close();
-  }
 }
 
-async function call(url: string, method: string, path: string, token: string | null, body?: unknown): Promise<{ status: number; body: any }> {
-  const res = await fetch(new URL(path, url), {
-    method,
-    headers: { "content-type": "application/json", ...(token ? { authorization: `Bearer ${token}` } : {}) },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
-  return { status: res.status, body: await res.json() };
-}
-
-async function signIn(url: string, sub: string, name: string): Promise<{ token: string; user: { id: string; name: string } }> {
-  const res = await call(url, "POST", "/v1/auth/apple", null, { identityToken: sub, nonce: "nonce", name, deviceId: `${sub}-phone`, platform: "iphone" });
-  assert.equal(res.status, 200, JSON.stringify(res.body));
-  return res.body;
-}
-
-// A reviewer with the bot as their friend, by its standing invite.
-async function reviewer(url: string, sub = "apple.reviewer", name = "Reviewer") {
-  const account = await signIn(url, sub, name);
-  const accepted = await call(url, "POST", `/v1/invites/${INVITE}/accept`, account.token);
+// A reviewer with the bot as their friend, by its standing invite. Their device is rung through
+// APNs, so a ring from the bot would show up in the pusher.
+async function reviewer(h: TestServer, name = "Reviewer", kind: Kind = "watchos"): Promise<TestUser> {
+  const token = Buffer.from(name).toString("hex");
+  const person = await user(h, name, { kind, ringing: { apns: kind === "ios" ? "pushtotalk" : "alert", token } });
+  const accepted = await call(h.url, "POST", `/v2/invites/${INVITE}/accept`, person.token);
   assert.equal(accepted.status, 200, JSON.stringify(accepted.body));
   assert.equal(accepted.body.friend.name, "Test Bot");
-  return account;
+  return person;
 }
 
-// Distinct PCM frames, so the echo can be checked byte for byte.
+// Distinct stand-in Opus packets (the apps send Opus), so the echo can be checked byte for byte.
+function opus(frames: number, fill = 1): Buffer[] {
+  return Array.from({ length: frames }, (_, seq) => Buffer.alloc(40, (seq * 7 + fill) & 0xff));
+}
+
+// Distinct PCM frames.
 function pcm(frames: number, fill = 1): Buffer {
   const buf = Buffer.alloc(frames * 640);
   for (let i = 0; i < buf.length; i++) buf[i] = (i + fill) & 0xff;
   return buf;
+}
+
+// One burst of Opus packets, all at once.
+function say(client: SpikeClient, to: string, frames: Buffer[]): Promise<{ conversationId: string; pushed: boolean }> {
+  return client.talkFrames(to, { codec: Codec.opus16k, frames }, { realtime: false });
 }
 
 async function until(check: () => boolean, what: string, ms = 2000): Promise<void> {
@@ -116,10 +92,10 @@ async function until(check: () => boolean, what: string, ms = 2000): Promise<voi
 // The bursts a caller hears, as they arrive; next() waits for the next one to end and returns
 // its frames' codecs, sequence numbers and payloads.
 function listen(client: SpikeClient) {
-  const bursts: Array<{ from: string; frames: Buffer[]; ended: boolean }> = [];
+  const bursts: Array<{ from: string; codec?: string; frames: Buffer[]; ended: boolean }> = [];
   let taken = 0;
   client.onMessage = (m) => {
-    if (m.type === "burst-start") bursts.push({ from: m.from, frames: [], ended: false });
+    if (m.type === "burst-start") bursts.push({ from: m.from, codec: m.codec, frames: [], ended: false });
     else if (m.type === "burst-end" && bursts.length) bursts.at(-1)!.ended = true;
   };
   client.onFrame = (f) => bursts.at(-1)?.frames.push(f);
@@ -127,47 +103,67 @@ function listen(client: SpikeClient) {
     get started(): number {
       return bursts.length;
     },
-    async next(): Promise<{ from: string; codecs: number[]; seqs: number[]; payloads: Buffer[] }> {
+    async next(): Promise<{ from: string; codec?: string; codecs: number[]; seqs: number[]; payloads: Buffer[] }> {
       await until(() => bursts[taken]?.ended === true, "a burst");
-      const { from, frames } = bursts[taken++];
-      return { from, codecs: frames.map((f) => f[0]), seqs: frames.map((f) => f.readUInt32BE(1)), payloads: frames.map((f) => f.subarray(5)) };
+      const { from, codec, frames } = bursts[taken++];
+      return { from, codec, codecs: frames.map((f) => f[0]), seqs: frames.map((f) => f.readUInt32BE(1)), payloads: frames.map((f) => f.subarray(5)) };
     },
   };
 }
 
+test("the Test Bot answers an iPhone caller on either transport, and never through APNs", async () => {
+  await withBot(async (h) => {
+    const phone = await reviewer(h, "Reviewer", "ios");
+    for (const transport of ["http", "ws"] as const) {
+      const client = phone.client({ transport });
+      await client.connect();
+      const heard = listen(client);
+      const sent = opus(6);
+      const { pushed } = await say(client, h.botId, sent);
+      assert.equal(pushed, true);
+      assert.equal(h.pusher.sent.length, 0);
+      assert.deepEqual((await heard.next()).payloads, GREETING);
+      assert.deepEqual((await heard.next()).payloads, sent);
+      client.close();
+      await until(() => h.server.testBot!.conversationCount === 0 && h.server.relay.snapshot().length === 0, "the bot to leave");
+    }
+  });
+});
+
 for (const transport of ["http", "ws"] as const) {
   test(`the Test Bot answers a ring, greets, says each burst back, and leaves with the caller (${transport === "http" ? "the watch's HTTP stream" : "WebSocket"})`, async () => {
-    await withBot(async ({ server, url, botId, sink, pusher }) => {
-      const { token } = await reviewer(url);
-      const client = new SpikeClient({ server: url, userId: "ignored", token, transport });
+    await withBot(async (h) => {
+      const { server, botId, sink, pusher } = h;
+      const client = (await reviewer(h)).client({ transport });
       await client.connect();
       const heard = listen(client);
 
       // The ring goes to the bot inside the relay, not through APNs.
-      const sent = pcm(12);
-      const { conversationId, pushed } = await client.talk(botId, sent, { realtime: false });
+      const sent = opus(12);
+      const { conversationId, pushed } = await say(client, botId, sent);
       assert.equal(pushed, true);
       assert.equal(pusher.sent.length, 0);
 
       const greeting = await heard.next();
       assert.equal(greeting.from, botId);
+      assert.equal(greeting.codec, "opus16k");
       assert.deepEqual(greeting.codecs, [Codec.opus16k, Codec.opus16k, Codec.opus16k]);
       assert.deepEqual(greeting.seqs, [0, 1, 2]);
       assert.deepEqual(greeting.payloads, GREETING);
       const echo = await heard.next();
       assert.deepEqual(echo.seqs, Array.from({ length: 12 }, (_, i) => i));
-      assert.ok(echo.codecs.every((c) => c === Codec.pcm16le16k));
-      assert.deepEqual(Buffer.concat(echo.payloads), sent);
+      assert.ok(echo.codecs.every((c) => c === Codec.opus16k));
+      assert.deepEqual(echo.payloads, sent);
 
       // Live now: the next burst is said back without ringing or greeting again.
-      const again = pcm(3, 7);
-      const second = await client.talk(botId, again, { realtime: false });
+      const again = opus(3, 7);
+      const second = await say(client, botId, again);
       assert.equal(second.pushed, false);
       assert.equal(second.conversationId, conversationId);
-      assert.deepEqual(Buffer.concat((await heard.next()).payloads), again);
+      assert.deepEqual((await heard.next()).payloads, again);
 
       // A tap on Talk (shorter than minEchoFrames) isn't said back.
-      await client.talk(botId, pcm(1), { realtime: false });
+      await say(client, botId, opus(1));
       await new Promise((r) => setTimeout(r, 100));
       assert.equal(heard.started, 3);
 
@@ -189,66 +185,98 @@ for (const transport of ["http", "ws"] as const) {
   });
 }
 
-test("a caller who keeps talking isn't talked over: the bot replies once they stop", async () => {
-  await withBot(async ({ url, botId }) => {
-    const { token } = await reviewer(url);
-    const client = new SpikeClient({ server: url, userId: "ignored", token });
+test("a PCM burst is said back in PCM", async () => {
+  await withBot(async (h) => {
+    const client = (await reviewer(h)).client();
     await client.connect();
     const heard = listen(client);
-    const first = pcm(4, 1);
-    await client.talk(botId, first, { realtime: false });
+    const sent = pcm(6);
+    await client.talk(h.botId, sent, { realtime: false });
+    assert.deepEqual((await heard.next()).payloads, GREETING);
+    const echo = await heard.next();
+    assert.equal(echo.codec, "pcm16le16k");
+    assert.ok(echo.codecs.every((c) => c === Codec.pcm16le16k));
+    assert.deepEqual(Buffer.concat(echo.payloads), sent);
+    client.close();
+  });
+});
+
+test("a caller who keeps talking isn't talked over: the bot replies once they stop", async () => {
+  await withBot(async (h) => {
+    const client = (await reviewer(h)).client();
+    await client.connect();
+    const heard = listen(client);
+    const first = opus(4, 1);
+    await say(client, h.botId, first);
     // Talking again before the bot replies, and holding the floor for a while.
-    client.send({ type: "talk-start", to: botId, burstId: "b2" });
-    const second = pcm(5, 9);
-    for (let seq = 0; seq < 5; seq++) {
-      client.sendFrame(Codec.pcm16le16k, seq, second.subarray(seq * 640, (seq + 1) * 640));
+    client.send({ type: "talk-start", to: h.botId, burstId: "b2", codec: "opus16k" });
+    const second = opus(5, 9);
+    for (const [seq, packet] of second.entries()) {
+      client.sendFrame(Codec.opus16k, seq, packet);
       await new Promise((r) => setTimeout(r, 60));
     }
     assert.equal(heard.started, 0);
     client.send({ type: "talk-end", burstId: "b2" });
     assert.deepEqual((await heard.next()).payloads, GREETING);
-    assert.deepEqual(Buffer.concat((await heard.next()).payloads), first);
-    assert.deepEqual(Buffer.concat((await heard.next()).payloads), second);
+    assert.deepEqual((await heard.next()).payloads, first);
+    assert.deepEqual((await heard.next()).payloads, second);
     client.close();
   }, { replyDelayMs: 100 });
 });
 
+test("the Test Bot talks in one conversation at a time: a second caller waits their turn", async () => {
+  await withBot(async (h) => {
+    const callers = [await reviewer(h, "Ann"), await reviewer(h, "Ben")];
+    const clients = callers.map((c) => c.client());
+    for (const client of clients) await client.connect();
+    const heard = clients.map(listen);
+    const sent = [opus(4, 3), opus(4, 5)];
+    await Promise.all(clients.map((client, i) => say(client, h.botId, sent[i])));
+    // Each hears the greeting and their own burst back, in order, nothing of the other's.
+    for (const [i, listener] of heard.entries()) {
+      assert.deepEqual((await listener.next()).payloads, GREETING);
+      assert.deepEqual((await listener.next()).payloads, sent[i]);
+    }
+    for (const client of clients) client.close();
+  });
+});
+
 test("the Test Bot leaves a quiet conversation after the apps' window", async () => {
-  await withBot(async ({ server, url, botId }) => {
-    const { token } = await reviewer(url);
-    const client = new SpikeClient({ server: url, userId: "ignored", token });
+  await withBot(async (h) => {
+    const client = (await reviewer(h)).client();
     await client.connect();
     const heard = listen(client);
-    const { conversationId } = await client.talk(botId, pcm(4), { realtime: false });
+    const { conversationId } = await say(client, h.botId, opus(4));
     await heard.next();
     await heard.next();
     const left = await client.waitFor("peer-left");
     assert.equal(left.conversationId, conversationId);
-    assert.equal(left.peer, botId);
-    assert.equal(server.testBot!.conversationCount, 0);
+    assert.equal(left.peer, h.botId);
+    assert.equal(h.server.testBot!.conversationCount, 0);
     client.close();
   }, { idleMs: 200 });
 });
 
 test("the Test Bot's standing invite: anyone can use it, any number of times, only for the bot", async () => {
-  await withBot(async ({ url, botId }) => {
-    const alice = await signIn(url, "apple.alice", "Alice");
-    const preview = await call(url, "GET", `/v1/invites/${INVITE}`, alice.token);
+  await withBot(async (h) => {
+    const { url, botId } = h;
+    const alice = await user(h, "Alice", { kind: "ios", ringing: "none" });
+    const preview = await call(url, "GET", `/v2/invites/${INVITE}`, alice.token);
     assert.equal(preview.status, 200);
     assert.deepEqual(preview.body.from, { id: botId, name: "Test Bot" });
     assert.equal(preview.body.alreadyFriends, false);
     assert.ok(preview.body.expiresAt > Date.now());
-    assert.equal((await call(url, "POST", `/v1/invites/${INVITE}/accept`, alice.token)).status, 200);
+    assert.equal((await call(url, "POST", `/v2/invites/${INVITE}/accept`, alice.token)).status, 200);
     // Not used up: Alice again (already friends), then Bob.
-    assert.equal((await call(url, "GET", `/v1/invites/${INVITE}`, alice.token)).body.alreadyFriends, true);
-    assert.equal((await call(url, "POST", `/v1/invites/${INVITE}/accept`, alice.token)).status, 200);
-    await reviewer(url, "apple.bob", "Bob");
+    assert.equal((await call(url, "GET", `/v2/invites/${INVITE}`, alice.token)).body.alreadyFriends, true);
+    assert.equal((await call(url, "POST", `/v2/invites/${INVITE}/accept`, alice.token)).status, 200);
+    await reviewer(h, "Bob");
     // Alice and Bob are the bot's friends, not each other's.
-    assert.deepEqual((await call(url, "GET", "/v1/friends", alice.token)).body.friends.map((f: { name: string }) => f.name), ["Test Bot"]);
+    assert.deepEqual((await call(url, "GET", "/v2/friends", alice.token)).body.friends.map((f: { name: string }) => f.name), ["Test Bot"]);
     // It isn't a stored invite: nobody can cancel it, and the bot's own invites are as usual.
-    assert.equal((await call(url, "DELETE", `/v1/invites/${INVITE}`, alice.token)).status, 404);
+    assert.equal((await call(url, "DELETE", `/v2/invites/${INVITE}`, alice.token)).status, 404);
     // A different code of the same shape is just an unknown invite.
-    assert.equal((await call(url, "GET", `/v1/invites/${INVITE}x`, alice.token)).status, 404);
+    assert.equal((await call(url, "GET", `/v2/invites/${INVITE}x`, alice.token)).status, 404);
   });
 });
 
@@ -265,42 +293,44 @@ function key(): string {
 }
 
 test("a reviewer who blocks and reports the Test Bot can't ring it, or re-add it until they unblock", async () => {
-  await withBot(async ({ server, url, botId }) => {
-    const { token } = await reviewer(url);
-    const report = await call(url, "POST", "/v1/reports", token, { userId: botId, reason: "spam", block: true });
+  await withBot(async (h) => {
+    const { server, url, botId } = h;
+    const person = await reviewer(h);
+    const report = await call(url, "POST", "/v2/reports", person.token, { userId: botId, reason: "spam", block: true });
     assert.equal(report.status, 200);
-    assert.deepEqual((await call(url, "GET", "/v1/friends", token)).body.friends, []);
+    assert.deepEqual((await call(url, "GET", "/v2/friends", person.token)).body.friends, []);
 
-    const client = new SpikeClient({ server: url, userId: "ignored", token });
+    const client = person.client();
     await client.connect();
-    client.send({ type: "talk-start", to: botId, burstId: "b1" });
+    client.send({ type: "talk-start", to: botId, burstId: "b1", codec: "pcm16le16k" });
     assert.equal((await client.waitFor("talk-refused")).reason, "not-friends");
     await new Promise((r) => setTimeout(r, 50));
     assert.equal(server.testBot!.conversationCount, 0);
     assert.ok(!client.received.some((m) => m.type === "burst-start"));
 
     // The standing invite respects the block, both ways.
-    assert.equal((await call(url, "GET", `/v1/invites/${INVITE}`, token)).status, 404);
-    assert.equal((await call(url, "POST", `/v1/invites/${INVITE}/accept`, token)).status, 404);
-    assert.equal((await call(url, "DELETE", `/v1/blocks/${botId}`, token)).status, 200);
-    assert.equal((await call(url, "POST", `/v1/invites/${INVITE}/accept`, token)).status, 200);
+    assert.equal((await call(url, "GET", `/v2/invites/${INVITE}`, person.token)).status, 404);
+    assert.equal((await call(url, "POST", `/v2/invites/${INVITE}/accept`, person.token)).status, 404);
+    assert.equal((await call(url, "DELETE", `/v2/blocks/${botId}`, person.token)).status, 200);
+    assert.equal((await call(url, "POST", `/v2/invites/${INVITE}/accept`, person.token)).status, 200);
     client.close();
   });
 });
 
 test("blocking the Test Bot mid-conversation ends it, and the bot stops answering", async () => {
-  await withBot(async ({ server, url, botId }) => {
-    const { token } = await reviewer(url);
-    const client = new SpikeClient({ server: url, userId: "ignored", token, transport: "http" });
+  await withBot(async (h) => {
+    const { server, url, botId } = h;
+    const person = await reviewer(h);
+    const client = person.client({ transport: "http" });
     await client.connect();
     const heard = listen(client);
-    const { conversationId } = await client.talk(botId, pcm(4), { realtime: false });
+    const { conversationId } = await say(client, botId, opus(4));
     await heard.next();
     await heard.next();
 
-    assert.equal((await call(url, "POST", "/v1/blocks", token, { userId: botId })).status, 200);
+    assert.equal((await call(url, "POST", "/v2/blocks", person.token, { userId: botId })).status, 200);
     // The next Talk is checked again (no grace period here): the conversation ends for both.
-    client.send({ type: "talk-start", to: botId, burstId: "after-block" });
+    client.send({ type: "talk-start", to: botId, burstId: "after-block", codec: "pcm16le16k" });
     assert.equal((await client.waitFor("talk-refused")).reason, "not-friends");
     assert.ok(!server.relay.snapshot().some((c) => c.id === conversationId));
     await until(() => server.testBot!.conversationCount === 0 && server.relay.snapshot().length === 0, "the bot to drop it");
@@ -311,12 +341,12 @@ test("blocking the Test Bot mid-conversation ends it, and the bot stops answerin
 });
 
 test("the Test Bot never rings: a caller who left before the echo isn't rung", async () => {
-  await withBot(async ({ server, url, botId, pusher }) => {
-    const { token } = await reviewer(url);
-    await call(url, "PUT", "/v1/me/device", token, { platform: "iphone", pushToken: "abcdef0123456789", apnsEnvironment: "sandbox" });
-    const client = new SpikeClient({ server: url, userId: "ignored", token });
+  await withBot(async (h) => {
+    const { server, botId, pusher } = h;
+    // An iPhone the bot could ring through PushToTalk, if it ever rang.
+    const client = (await reviewer(h, "Reviewer", "ios")).client();
     await client.connect();
-    const { conversationId } = await client.talk(botId, pcm(4), { realtime: false });
+    const { conversationId } = await say(client, botId, opus(4));
     // Leave while the bot waits to reply.
     await until(() => server.relay.snapshot().some((c) => c.joined.includes(botId)), "the bot to answer");
     client.send({ type: "leave", conversationId });
@@ -330,21 +360,39 @@ test("the Test Bot never rings: a caller who left before the echo isn't rung", a
 test("the relay refuses, rather than rings, a noRings peer talking to someone who isn't there", async () => {
   const pusher = new DryRunPusher();
   const metrics = new JsonMetricsStore(null);
+  let lookups = 0;
   const relay = new Relay({
-    devices: new JsonDeviceStore(null),
     accounts: {
-      ringLookup: async () => ({ allowed: true, fromName: "Test Bot", devices: [{ id: "phone", platform: "iphone", pushToken: "abcdef", pushType: "alert", apnsEnvironment: "sandbox", updatedAt: 0 }] }),
+      ringLookup: async () => {
+        lookups++;
+        return {
+          allowed: true,
+          fromName: "Test Bot",
+          devices: [{
+            id: "phone",
+            clientKind: "ios",
+            formFactor: "phone",
+            delivery: { provider: "apns", mode: "pushtotalk", token: "abcdef", environment: "sandbox" },
+            receiveMode: "automatic",
+            availability: { enabled: true, notifications: "unknown" },
+            capabilities: structuredClone(DEFAULT_CAPABILITIES),
+            lastActiveAt: 0,
+            updatedAt: 0,
+          }],
+        };
+      },
     },
     pusher,
     metrics,
   });
   const received: ServerMessage[] = [];
-  const bot: Peer = { userId: "u_bot", deviceId: "relay-bot", account: true, noRings: true, sendJSON: (m) => received.push(m), sendBinary: () => {} };
+  const bot: Peer = { userId: "u_bot", deviceId: "relay-bot", noRings: true, sendJSON: (m) => received.push(m), sendBinary: () => {} };
   relay.connect(bot);
-  relay.handleMessage(bot, { type: "talk-start", to: "u_alice", burstId: "b1" });
+  relay.handleMessage(bot, { type: "talk-start", to: "u_alice", burstId: "b1", codec: Codec.opus16k });
   assert.deepEqual(received, [{ type: "talk-refused", burstId: "b1", reason: "unavailable" }]);
   await new Promise((r) => setTimeout(r, 20));
   assert.equal(pusher.sent.length, 0);
+  assert.equal(lookups, 0);
   assert.deepEqual(relay.snapshot(), []);
   relay.close();
 });
@@ -358,7 +406,7 @@ test("the committed greeting is Opus frames the apps can play", () => {
 test("telemetry marks the Test Bot's conversations", () => {
   const events = [
     { source: "server", name: "talkStart", t: 1, detail: "u_rev -> u_bot" },
-    { source: "server", name: "pushSent", t: 2, detail: "watch" },
+    { source: "server", name: "pushSent", t: 2, detail: "watch; r_abc; watchos test/connection" },
     { source: "server", name: "pushAccepted", t: 3, detail: "local ring" },
     { source: "server", name: "testBotAnswered", t: 500, detail: "1 buffered" },
     { source: "server", name: "receiverJoined", t: 501, detail: "1 buffered" },

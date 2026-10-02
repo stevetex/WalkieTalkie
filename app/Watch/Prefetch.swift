@@ -4,6 +4,9 @@ import OverAndOutKit
 /// Prototype: a ring's message that the notification service extension downloaded before
 /// the tap (see WatchNotificationService/NotificationService.swift, which writes these
 /// files). The app plays it straight away and skips those frames when the relay replays.
+///
+/// Files are keyed by the ring's ID (contracts/README.md, "Rings"): a tap plays only what was
+/// downloaded for that ring, for this account, before the ring's deadline.
 struct Prefetched {
     struct Burst {
         let burstId: String
@@ -25,14 +28,17 @@ struct Prefetched {
         return container.appendingPathComponent("prefetch", isDirectory: true)
     }
 
-    /// Reads and removes what the extension saved for this conversation, and leftovers
-    /// from rings never answered. Nil if it saved nothing (no prefetch push yet, or it's
-    /// still downloading). No audio if it was saved for another account, or the ring has
-    /// expired: the relay has dropped that message, so it mustn't play now.
-    static func take(conversationId: String, userId: String?) -> Prefetched? {
+    /// The files' name for a ring.
+    static func key(for ring: Ring) -> String { ring.ringId }
+
+    /// Reads and removes what the extension saved for this ring, and leftovers from rings
+    /// never answered. Nil if it saved nothing (no prefetch push yet, or it's still
+    /// downloading). No audio if it was saved for another account or another ring, or the
+    /// ring has expired: the relay has dropped that message, so it mustn't play now.
+    static func take(ring: Ring, userId: String?) -> Prefetched? {
         guard let directory else { return nil }
-        let records = directory.appendingPathComponent("\(conversationId).records")
-        let metaFile = directory.appendingPathComponent("\(conversationId).json")
+        let records = directory.appendingPathComponent("\(key(for: ring)).records")
+        let metaFile = directory.appendingPathComponent("\(key(for: ring)).json")
         defer {
             try? FileManager.default.removeItem(at: records)
             try? FileManager.default.removeItem(at: metaFile)
@@ -40,7 +46,7 @@ struct Prefetched {
         }
         guard let metaData = try? Data(contentsOf: metaFile),
               let meta = try? JSONSerialization.jsonObject(with: metaData) as? [String: Any] else { return nil }
-        if let unusable = unusable(meta, userId: userId) {
+        if let unusable = unusable(meta, ring: ring, userId: userId) {
             var meta = meta
             meta["error"] = "not played: \(unusable)"
             return Prefetched(meta: meta)
@@ -63,23 +69,28 @@ struct Prefetched {
     }
 
     /// Saves a held message the app downloaded itself, in the extension's format, for `take`.
-    static func save(conversationId: String, records: Data?, meta: [String: Any]) {
+    static func save(ring: Ring, records: Data?, meta: [String: Any]) {
         guard let directory else { return }
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        if let records { try? records.write(to: directory.appendingPathComponent("\(conversationId).records"), options: .atomic) }
+        var meta = meta
+        meta["schemaVersion"] = ServiceContract.schemaVersion
+        meta["ringId"] = ring.ringId
+        if let expiresAt = ring.expiresAt { meta["expiresAt"] = expiresAt }
+        if let records { try? records.write(to: directory.appendingPathComponent("\(key(for: ring)).records"), options: .atomic) }
         if let data = try? JSONSerialization.data(withJSONObject: meta) {
-            try? data.write(to: directory.appendingPathComponent("\(conversationId).json"), options: .atomic)
+            try? data.write(to: directory.appendingPathComponent("\(key(for: ring)).json"), options: .atomic)
         }
     }
 
     /// The relay gives up on a ring 35 s after sending it.
     static let ringLifetimeMs: Double = 35_000
 
-    /// Why the saved message can't be played, if it can't. The extension records the account
-    /// and when the ring expires (server clock; the push says).
-    private static func unusable(_ meta: [String: Any], userId: String?) -> String? {
+    /// Why the saved message can't be played, if it can't. The extension records the account,
+    /// the ring and when it expires (server clock; the push says).
+    private static func unusable(_ meta: [String: Any], ring: Ring, userId: String?) -> String? {
         guard let userId, meta["userId"] as? String == userId else { return "another account's" }
-        let expiresAt = meta["ringExpiresAt"] as? Double
+        if meta["ringId"] as? String != ring.ringId { return "another ring's" }
+        let expiresAt = meta["expiresAt"] as? Double
             ?? (meta["pushSentAt"] as? Double).map { $0 + ringLifetimeMs }
             ?? (meta["receivedAt"] as? Double).map { $0 + ringLifetimeMs }
         guard let expiresAt, Clock.nowMs() < expiresAt else { return "the ring expired" }

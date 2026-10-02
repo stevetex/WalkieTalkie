@@ -1,0 +1,43 @@
+{
+  "description": "type byte (1 json, 2 audio), uint32 big-endian length (at most 65536), payload",
+  "records": [
+    {
+      "name": "json-hello-ack",
+      "type": "json",
+      "json": {
+        "type": "hello-ack",
+        "clientTime": 1790726400000,
+        "serverTime": 1790726400042
+      },
+      "hex": "010000004a7b2274797065223a2268656c6c6f2d61636b222c22636c69656e7454696d65223a313739303732363430303030302c2273657276657254696d65223a313739303732363430303034327d"
+    },
+    {
+      "name": "audio-opus",
+      "type": "audio",
+      "frame": "opus-apple-0",
+      "hex": "020000003e010000000048011e6108a89071fef6ac626e2a136136655ca7f06a3e677d6a2529f70ddcc7adcb44cecec918a250169a7d6d0dc7a94b9dc32c1e10ba5280"
+    },
+    {
+      "name": "split-stream",
+      "chunks": [
+        "010000",
+        "004a7b2274797065223a2268656c6c6f2d61636b222c22636c6965",
+        "6e7454696d65223a313739303732363430303030302c2273657276657254696d65223a313739303732363430303034327d020000003e010000000048011e6108a89071fef6ac626e2a136136655ca7f06a3e677d6a2529f70ddcc7adcb44cecec918a250169a7d6d0dc7a94b9dc32c1e10ba5280"
+      ],
+      "records": [
+        "json-hello-ack",
+        "audio-opus"
+      ]
+    },
+    {
+      "name": "malformed-type",
+      "hex": "090000000100",
+      "valid": false
+    },
+    {
+      "name": "malformed-too-long",
+      "hex": "0200010001",
+      "valid": false
+    }
+  ]
+}

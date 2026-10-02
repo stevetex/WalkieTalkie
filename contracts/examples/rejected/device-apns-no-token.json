@@ -1,0 +1,1 @@
+{ "clientKind": "watchos", "delivery": { "provider": "apns", "mode": "alert", "environment": "sandbox" } }

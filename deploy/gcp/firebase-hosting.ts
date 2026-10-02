@@ -74,8 +74,8 @@ const servingConfig = {
     { glob: "**/*.@(html|css)", headers: { "Cache-Control": "max-age=300" } },
   ],
   rewrites: [
-    // The account API on Cloud Run (deploy-api.sh).
-    { glob: "/v1/**", run: { serviceId: "api", region } },
+    // The account API on Cloud Run (deploy-api.sh; contracts/README.md).
+    { glob: "/v2/**", run: { serviceId: "api", region } },
     // Invite links: the app opens them when it's installed; otherwise this page.
     { glob: "/i/**", path: "/invite.html" },
   ],

@@ -1,9 +1,10 @@
-// Scripted participant for spike runs with a single watch.
+// Scripted participant for device runs: the Test Bot's account (tools/test-account.ts create)
+// from this Mac.
 //
-//   node tools/bot.ts send --to <userId> [--say "text" | --wav file.wav] [--stay 45]
+//   node tools/bot.ts send [--to <userId or name>] [--say "text" | --wav file.wav] [--stay 45]
 //                         [--ring-until-answered] [--again 20 [--say-again "text"]]
-//       Rings <userId>, streams the audio in real time, then stays in the conversation
-//       for --stay seconds so replies from the watch are heard (and counted).
+//       Rings a friend of the bot's, streams the audio in real time, then stays in the
+//       conversation for --stay seconds so replies from the watch are heard (and counted).
 //       --ring-until-answered rings again whenever a ring times out unanswered (for a
 //       watch app that's closed until a notification opens it). --again sends a second
 //       message that many seconds after the first (for testing with the wrist down).
@@ -12,8 +13,8 @@
 //   encoder, so macOS only); --pcm sends raw 16 kHz PCM instead, about 10× the bytes.
 //
 //   node tools/bot.ts listen [--answer-delay 1500] [--stay 45]
-//       Registers as a bot, waits to be rung, "answers" after the delay, and saves what it
-//       hears. Use it to test the watch as the sender.
+//       Waits to be rung, "answers" after the delay, and saves what it hears. Use it to test the
+//       watch as the sender.
 //
 //   node tools/bot.ts greeting [--say "text" | --wav file.wav]
 //       Encodes the always-on Test Bot's greeting (src/test-bot.ts) into
@@ -21,15 +22,16 @@
 //       (16 kHz mono 16-bit WAV) rather than `say`, whose voices are licensed for personal,
 //       non-commercial use.
 //
-// Server and token come from SPIKE_SERVER (default http://localhost:8080) and SPIKE_TOKEN.
+// The relay comes from SPIKE_SERVER (default http://localhost:8080). The bot connects with its
+// account's session token, so it can only ring its friends, and --to (an ID or a name)
+// defaults to its oldest friend, not whoever added it with its standing invite since. While
+// it's connected, rings to the bot come here rather than to the relay's own Test Bot
+// (TEST_BOT_USER_ID). SPIKE_TOKEN, the operator's diagnostics token, is only used to read
+// timelines (--ring-until-answered).
 //
-// --account runs as the Test Bot's account (tools/test-account.ts create) instead of a
-// shared-token user: it connects with the account's session token, can only ring its
-// friends, and --to (an ID or a name) defaults to its oldest friend, not whoever added it with
-// its standing invite since. While it's connected, rings to the bot come here rather than to
-// the relay's own Test Bot (TEST_BOT_USER_ID). SPIKE_TOKEN is then only used to read
-// timelines (--ring-until-answered). Without --account the relay must run with
-// SHARED_TOKEN_CLIENTS=1 (local only; relay nodes accept accounts only).
+// --client-kind (default watchos, as the bot's session was made) says what it is; with an
+// Android account (OAO_BOT_TOKEN_FILE of a DEV_GOOGLE_SIGNIN account) it stands in for an
+// Android peer.
 
 import { parseArgs } from "node:util";
 import { execFileSync } from "node:child_process";
@@ -44,8 +46,6 @@ import { GREETING_FILE } from "../src/test-bot.ts";
 const { positionals, values } = parseArgs({
   allowPositionals: true,
   options: {
-    as: { type: "string", default: "bot" },
-    name: { type: "string", default: "Test Bot" },
     to: { type: "string" },
     say: { type: "string" },
     wav: { type: "string" },
@@ -54,8 +54,8 @@ const { positionals, values } = parseArgs({
     again: { type: "string" },
     "say-again": { type: "string", default: "This is the second message. Did it play with your wrist down? Over." },
     "answer-delay": { type: "string", default: "1500" },
-    account: { type: "boolean", default: false },
     pcm: { type: "boolean", default: false },
+    "client-kind": { type: "string", default: "watchos" },
   },
 });
 
@@ -74,20 +74,26 @@ if (mode === "greeting") {
   process.exit(0);
 }
 
-const client = values.account ? await accountClient() : new SpikeClient({ server, userId: values.as!, token });
+const client = await accountClient();
 
 // The Test Bot's account, with its token refreshed when it's within a day of expiring.
 async function accountClient(): Promise<SpikeClient> {
   const session = loadBotSession();
   if (session.expiresAt - Date.now() < 24 * 3600_000) {
-    const res = await fetch(new URL("/v1/auth/refresh", session.api), { method: "POST", headers: { authorization: `Bearer ${session.token}` } });
+    const res = await fetch(new URL("/v2/auth/refresh", session.api), { method: "POST", headers: { authorization: `Bearer ${session.token}` } });
     if (!res.ok) throw new Error(`refreshing the bot's token: HTTP ${res.status}; run node tools/test-account.ts create`);
     Object.assign(session, await res.json());
     writeFileSync(BOT_TOKEN_FILE, JSON.stringify(session, null, 2), { mode: 0o600 });
   }
-  const accountBot = new SpikeClient({ server, userId: session.userId, token: session.token });
+  const accountBot = new SpikeClient({
+    server,
+    userId: session.userId,
+    token: session.token,
+    clientKind: values["client-kind"] as "watchos",
+    encode: [values.pcm ? "pcm16le16k" : "opus16k"],
+  });
   if (mode === "send" && !values.to?.startsWith("u_")) {
-    const res = await fetch(new URL("/v1/friends", session.api), { headers: { authorization: `Bearer ${session.token}` } });
+    const res = await fetch(new URL("/v2/friends", session.api), { headers: { authorization: `Bearer ${session.token}` } });
     const { friends } = (await res.json()) as { friends: Array<{ id: string; name: string; since: number }> };
     if (!friends?.length) throw new Error("the bot has no friends yet: node tools/test-account.ts accept <invite link>");
     // Its oldest friend (Steve), or one by name: anyone can add the bot with its standing invite.
@@ -101,20 +107,15 @@ async function accountClient(): Promise<SpikeClient> {
   return accountBot;
 }
 
-// Shared-token bots register a device; the bot's account registered one when it was created.
-async function register(): Promise<void> {
-  if (!values.account) await client.register(values.name!);
-}
-
 if (mode === "send") {
-  if (!values.to) throw new Error("--to <userId> is required");
+  // accountClient() resolved a name, or the oldest friend, to an ID.
+  const to = values.to!;
   const pcm = values.wav ? readPcm16Mono16k(values.wav) : synthesize(values.say ?? "Hey, it's the test bot. Can you hear me? Over.");
-  await register();
   await client.connect();
   const audio = encode(pcm);
-  console.log(`Talking to ${values.to} for ${(pcm.length / 32000).toFixed(1)} s (${audio.codec === Codec.opus16k ? "Opus" : "PCM"}, ${audio.frames.reduce((n, f) => n + f.length, 0)} bytes)…`);
-  let { conversationId, pushed } = await client.talkFrames(values.to, audio);
-  console.log(pushed ? `Rang ${values.to} (conversation ${conversationId})` : `${values.to} was already live`);
+  console.log(`Talking to ${to} for ${(pcm.length / 32000).toFixed(1)} s (${audio.codec === Codec.opus16k ? "Opus" : "PCM"}, ${audio.frames.reduce((n, f) => n + f.length, 0)} bytes)…`);
+  let { conversationId, pushed } = await client.talkFrames(to, audio);
+  console.log(pushed ? `Rang ${to} (conversation ${conversationId})` : `${to} was already live`);
   reportIncoming(client);
   if (values["ring-until-answered"] && pushed) {
     // A ring for a closed app waits on the server until a notification opens the app, and
@@ -124,7 +125,7 @@ if (mode === "send") {
       const events = await serverEvents(conversationId);
       if (events.includes("receiverJoined")) break;
       if (events.filter((e) => e === "ringTimedOut").length >= attempt - 1) {
-        ({ conversationId } = await client.talkFrames(values.to, audio));
+        ({ conversationId } = await client.talkFrames(to, audio));
         console.log(`Rang again, attempt ${attempt}`);
         attempt++;
       }
@@ -133,7 +134,7 @@ if (mode === "send") {
   if (values.again) {
     await sleep(Number(values.again) * 1000);
     console.log(`Sending the second message…`);
-    ({ conversationId } = await client.talkFrames(values.to, encode(synthesize(values["say-again"]!))));
+    ({ conversationId } = await client.talkFrames(to, encode(synthesize(values["say-again"]!))));
   }
   await sleep(Number(values.stay) * 1000);
   client.send({ type: "leave", conversationId });
@@ -141,17 +142,29 @@ if (mode === "send") {
   client.close();
   console.log(`Done. Timeline: node tools/report.ts ${conversationId}`);
 } else if (mode === "listen") {
-  await register();
   await client.connect();
   console.log(`Listening as ${client.userId}. Waiting for a ring…`);
-  const ring = await client.waitFor("ring", () => true, 24 * 3600_000);
+  // A ring to an FCM device goes to the relay's stub, not this connection, so also look for
+  // pending rings, as an Android app opened from its notification would, and answer the one found.
+  let polling = true;
+  const pending = (async () => {
+    while (polling) {
+      const { rings } = (await client.api("GET", "/v2/rings/pending").catch(() => ({ rings: [] }))) as { rings: Array<{ type?: string; ringId: string; conversationId: string; fromName: string }> };
+      if (rings.length) return { type: "ring" as const, ...rings[0] };
+      await sleep(500);
+    }
+    return new Promise<never>(() => {});
+  })();
+  const ring = (await Promise.race([client.waitFor("ring", () => true, 24 * 3600_000), pending])) as { ringId: string; conversationId: string; fromName: string };
+  polling = false;
+  await client.api("POST", "/v2/rings/answer", { conversationId: ring.conversationId, ringId: ring.ringId });
   client.mark("pushReceived", `from ${ring.fromName}`);
   client.mark("callReported");
   console.log(`Ring from ${ring.fromName}. Answering in ${values["answer-delay"]} ms…`);
   await sleep(Number(values["answer-delay"]));
   client.mark("answerTapped");
   client.mark("socketOpen", "bot keeps its socket open");
-  client.send({ type: "join", conversationId: ring.conversationId });
+  client.send({ type: "join", conversationId: ring.conversationId, ringId: ring.ringId });
   let firstAudio = true;
   client.onFrame = () => {
     if (firstAudio) {
@@ -172,13 +185,13 @@ if (mode === "send") {
   client.close();
   console.log(`Done. Timeline: node tools/report.ts ${ring.conversationId}`);
 } else {
-  console.error("usage: node tools/bot.ts send --to <userId> | listen | greeting");
+  console.error("usage: node tools/bot.ts send [--to <userId or name>] | listen | greeting");
   process.exit(2);
 }
 
 // Server-side event names in a conversation's timeline, oldest first.
 async function serverEvents(conversationId: string): Promise<string[]> {
-  const res = await fetch(new URL(`/v1/metrics/${conversationId}`, server), {
+  const res = await fetch(new URL(`/admin/metrics/${conversationId}`, server), {
     headers: token ? { authorization: `Bearer ${token}` } : {},
   });
   if (!res.ok) return [];

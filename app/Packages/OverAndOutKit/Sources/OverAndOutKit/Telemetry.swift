@@ -5,10 +5,10 @@ import os
 /// decision 2026-09-28). Two things:
 ///
 /// - Events outside conversations (a PushToTalk leave, a crash, a failed registration) go to
-///   the API in small batches (`POST /v1/events`), where they become log entries.
+///   the API in small batches (`POST /v2/events`), where they become log entries.
 /// - A rolling diagnostics log on the device: those events plus every conversation's whole
 ///   timeline, for about 14 days. It leaves the device only when the person sends Report a
-///   Problem, or when the server asks (`diagnosticsRequestedAt` in GET /v1/me). During the
+///   Problem, or when the server asks (`diagnosticsRequestedAt` in GET /v2/me). During the
 ///   TestFlight Beta it's sent without asking; the App Store build must ask first.
 ///
 /// Everything here carries IDs, never names: callers pass friends' account IDs, not their names.
@@ -20,7 +20,7 @@ public final class Telemetry: Sendable {
     public typealias Fields = [String: any Sendable]
     /// Sends a batch of events and this device's details.
     public typealias Sender = @Sendable (_ events: [Fields], _ device: [String: String]) async throws -> Void
-    /// Sends one conversation's timeline to the relay (the body of POST /v1/metrics).
+    /// Sends one conversation's timeline to the relay (the body of POST /v2/metrics).
     public typealias TimelineSender = @Sendable (_ body: Fields) async throws -> Void
 
     private struct State {
@@ -216,7 +216,7 @@ public final class Telemetry: Sendable {
         return kept
     }
 
-    /// The server asked for this device's log (GET /v1/me) after its last upload: sends it.
+    /// The server asked for this device's log (GET /v2/me) after its last upload: sends it.
     /// Returns true if it uploaded.
     @discardableResult
     public func uploadIfRequested(requestedAt: Double?, upload: @Sendable (Data) async throws -> Void) async -> Bool {
@@ -235,8 +235,8 @@ public final class Telemetry: Sendable {
     }
 }
 
-/// This device, as the server's summaries label it: kind, model identifier, OS version and
-/// the app's build number.
+/// This device, as the server's summaries label it: kind (the dashboards' platform label, and
+/// the client kind), model identifier, OS version and the app's build number.
 public enum DeviceInfo {
     public static func current(platform: Platform) -> [String: String] {
         var system = utsname()
@@ -247,6 +247,7 @@ public enum DeviceInfo {
         let os = ProcessInfo.processInfo.operatingSystemVersion
         var info = [
             "platform": platform.rawValue,
+            "clientKind": (platform == .iphone ? ClientKind.ios : ClientKind.watchos).rawValue,
             "os": "\(os.majorVersion).\(os.minorVersion).\(os.patchVersion)",
             "model": model,
         ]

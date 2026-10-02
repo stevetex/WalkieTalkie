@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "device.schema.json",
+  "title": "PUT /v2/me/device (answer)",
+  "type": "object",
+  "required": ["device"],
+  "properties": {
+    "device": {
+      "type": "object",
+      "required": ["id", "clientKind", "formFactor", "delivery", "receiveMode"],
+      "properties": {
+        "id": { "$ref": "common.schema.json#/$defs/id" },
+        "clientKind": { "$ref": "common.schema.json#/$defs/openClientKind" },
+        "formFactor": { "$ref": "common.schema.json#/$defs/openFormFactor" },
+        "delivery": {
+          "type": "object",
+          "required": ["provider", "mode"],
+          "properties": { "provider": { "type": "string" }, "mode": { "type": "string" }, "environment": { "type": "string" } },
+          "not": { "required": ["token"] }
+        },
+        "receiveMode": { "type": "string" },
+        "availability": { "type": "object" },
+        "capabilities": { "type": "object" }
+      }
+    }
+  }
+}

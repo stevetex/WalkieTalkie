@@ -195,10 +195,10 @@ struct WalkieTalkieSection: View {
             if model.canChooseRingOn {
                 Picker("Ring Me On", selection: Binding(
                     get: { model.ringsOn },
-                    set: { platform in Task { await model.setRingOn(platform) } }
+                    set: { formFactor in Task { await model.setRingOn(formFactor) } }
                 )) {
-                    Text("Apple Watch").tag(Platform.watch)
-                    Text("iPhone").tag(Platform.iphone)
+                    Text("Apple Watch").tag(FormFactor.watch)
+                    Text("iPhone").tag(FormFactor.phone)
                 }
                 if model.ringsOn == .watch {
                     Toggle("Roll Over to iPhone", isOn: Binding(

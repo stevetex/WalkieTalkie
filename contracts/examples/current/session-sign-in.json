@@ -1,0 +1,6 @@
+{
+  "token": "eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCIsImtpZCI6ImsxIn0.eyJzdWIiOiJ1XzEifQ.c2ln",
+  "expiresAt": 1793318400000,
+  "user": { "id": "u_lddgnN9Qtcspo663", "name": "Steve", "signInProvider": "apple", "formFactors": [] },
+  "created": false
+}

@@ -9,7 +9,6 @@ server/perf-out/
 deploy/gcp/config.sh
 
 # Watch app
-watch/Config/Local.xcconfig
 
 # Product app
 app/Config/Local.xcconfig

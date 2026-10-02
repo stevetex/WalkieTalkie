@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "session.schema.json",
+  "title": "A session: sign-in, refresh and companion-device answers",
+  "type": "object",
+  "required": ["token", "expiresAt"],
+  "properties": {
+    "token": { "type": "string", "pattern": "^[\\w-]+\\.[\\w-]+\\.[\\w-]+$" },
+    "expiresAt": { "$ref": "common.schema.json#/$defs/millis" },
+    "user": { "$ref": "me.schema.json" },
+    "created": { "type": "boolean" },
+    "deviceId": { "$ref": "common.schema.json#/$defs/id" },
+    "clientKind": { "$ref": "common.schema.json#/$defs/openClientKind" },
+    "parentDeviceId": { "$ref": "common.schema.json#/$defs/id" }
+  }
+}

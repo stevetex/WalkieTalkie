@@ -1,25 +1,26 @@
-// Spike server: HTTP API for device registration and metrics, plus the relay WebSocket.
+// The relay node: the relay over WebSocket and HTTPS, ring calls and timelines for accounts
+// (contracts/README.md, "The relay"), and the operator's diagnostics. Every relay path is /v2: it
+// needs an account's session token, checks the stored session, and admits a client by its kind,
+// build, relay protocol and codecs before it opens a stream or joins anything.
 //
 //   PORT              listen port (default 8080)
 //   HOST              listen address (default: all interfaces; 127.0.0.1 behind a proxy)
 //   STORE             "json" (default) or "firestore"
-//   DATA_DIR          json store: where devices.json and metrics.jsonl live (default ./data)
+//   DATA_DIR          json store: where metrics.jsonl, telemetry.jsonl and (with SERVE_API)
+//                     accounts.json live (default ./data)
 //   FIRESTORE_PROJECT firestore store: the project (default: the VM's, from the metadata server)
 //   FIRESTORE_EMULATOR_HOST
 //                     firestore store: host:port of the Firestore emulator instead of Google Cloud
 //   FIRESTORE_AUTH    firestore store: "gcloud" uses the gcloud CLI's account instead of the VM's
 //                     service account (local runs against the real database)
-//   SPIKE_TOKEN       the shared relay token, for the diagnostics endpoints (timelines, status,
-//                     the legacy device list). Unset = no auth for those (local only)
-//   SHARED_TOKEN_CLIENTS
-//                     1 = the shared token also works for relay clients without accounts (the
-//                     spike's model: they name their own user ID). Off on relay nodes
+//   SPIKE_TOKEN       the operator's diagnostics token, for /admin/status and /admin/metrics
+//                     (tools/report.ts, beta.ts). Unset = no auth for those (local only)
 //   SESSION_PUBLIC_KEYS  JSON {kid: PEM} of Ed25519 keys that sign session tokens (see
-//                     session.ts); with it, clients can connect with an account's token.
-//                     SESSION_PUBLIC_KEYS_SECRET names a Secret Manager secret instead
+//                     session.ts). SESSION_PUBLIC_KEYS_SECRET names a Secret Manager secret instead
 //   SERVE_API         1 = also serve the account API (api.ts) on this port, for local runs.
 //                     Its settings are api-main.ts's; without SESSION_SIGNING_KEY a key is
-//                     generated and kept in DATA_DIR/session-key.json
+//                     generated and kept in DATA_DIR/session-key.json. A json store needs it:
+//                     the relay can't run without accounts
 //   APNS_KEY_PATH, APNS_KEY_ID, APNS_TEAM_ID, APNS_BUNDLE_ID
 //                     APNs token auth; if any is missing, pushes are logged (dry run)
 //   SPIKE_TOKEN_SECRET, APNS_KEY_SECRET
@@ -28,12 +29,18 @@
 //   PREFETCH_PUSH_MS  prototype: send a prefetch push this long after an APNs ring (or when the
 //                     sender's first burst ends, if sooner); unset or 0 = off (see prefetchAlert)
 //   DRAIN_MS          on SIGTERM, how long to let open conversations finish (default 0)
+//   RING_TIMEOUT_MS   how long an unanswered ring waits (default 35 s). Local runs only (the
+//                     performance suite shortens it); refused on Google Cloud
 //   REVISION          the git commit, reported by /healthz
 //   SIMULATOR_PUSH    1 = deliver rings to simulators on this Mac with simctl (development
 //                     only; see simulator.ts)
 //   FULL_TIMELINE_USERS
 //                     comma-separated account IDs whose devices' whole timelines are logged, not
 //                     only their summaries (telemetry.ts)
+//   MINIMUM_BUILDS    JSON {clientKind: build}: relay admission refuses older builds with 409
+//                     client-upgrade-required (contracts/README.md). Unset = no minimum
+//   FCM_STUB          1 = rings to Android devices are recorded instead of sent (local runs only;
+//                     there's no FCM until Phase 2)
 //   TEST_BOT_USER_ID  the Test Bot's account: it answers rings inside this process, greets and
 //                     says each burst back (test-bot.ts). Unset = no bot. With SERVE_API=1,
 //                     TEST_BOT_INVITE also works here (see api-main.ts)
@@ -47,48 +54,48 @@ import { join, resolve } from "node:path";
 import { MAX_QUEUED_BYTES, acceptUpgrade, rejectUpgrade } from "./ws.ts";
 import { ApnsPusher, DryRunPusher, apnsConfigFromEnv, type Pusher } from "./apns.ts";
 import { SimulatorPusher } from "./simulator.ts";
-import {
-  FirestoreDeviceStore,
-  JsonDeviceStore,
-  JsonMetricsStore,
-  ensureDir,
-  type DeviceStore,
-  type MetricsStore,
-} from "./store.ts";
+import { JsonMetricsStore, ensureDir, type MetricsStore } from "./store.ts";
 import { Firestore, gcloudAccessToken, metadataAccessToken, metadataProjectId } from "./firestore.ts";
 import { loadSecrets } from "./secrets.ts";
-import { Relay, type Peer } from "./relay.ts";
+import { Relay, type Peer, type RingCallResult } from "./relay.ts";
 import { TestBot, loadGreeting, type TestBotOptions } from "./test-bot.ts";
 import { summarizeAttempts } from "./report.ts";
 import { RecordParser, RecordType, encodeJSONRecord, encodeRecord } from "./records.ts";
-import { parseClientMessage, type MetricsUpload } from "./protocol.ts";
-import { SessionVerifier, parsePublicKeys } from "./session.ts";
+import { isRingId, parseClientMessage, type MetricsUpload, type RelayErrorCode } from "./protocol.ts";
+import { SessionVerifier, parsePublicKeys, type SessionClaims } from "./session.ts";
 import { bearer, type ApiHandler } from "./api.ts";
-import { Accounts, USER_ID_PREFIX } from "./accounts.ts";
+import { Accounts } from "./accounts.ts";
 import { apiFromEnv, type ApiSetup } from "./api-main.ts";
 import { MemoryDocs } from "./docs.ts";
 import { CloudLoggingSink, FileSink, StdoutSink, TelemetryMetricsStore, type DeviceInfo, type LogSink } from "./telemetry.ts";
+import { ContractError, parseAdmission, parseMinimumBuilds, type Admission, type MinimumBuilds } from "./contract.ts";
+import { ApnsDelivery, Deliveries, FcmStub } from "./delivery.ts";
+import { SessionGate } from "./session-gate.ts";
 
 export interface ServerOptions {
   port: number;
   host?: string;
-  // The JSON stores' directory; null keeps them in memory. Ignored for stores passed in.
+  // The JSON metrics store's directory; null keeps it in memory. Ignored for a store passed in.
   dataDir: string | null;
-  devices?: DeviceStore;
   metrics?: MetricsStore;
-  token: string | null;
-  // Relay clients without accounts, with the shared token (the spike's model). Off = the shared
-  // token only reads diagnostics.
-  sharedTokenClients?: boolean;
-  // Verifies account session tokens; null or absent = only the shared token works.
-  sessions?: SessionVerifier | null;
-  // Friend checks for accounts' rings.
-  accounts?: Accounts;
+  // The operator's diagnostics token (/admin/…); null = no auth for those (local only).
+  adminToken: string | null;
+  // Verifies account session tokens.
+  sessions: SessionVerifier;
+  // Friend checks for rings, and the stored sessions the relay checks.
+  accounts: Accounts;
   // The account API, served on the same port (local runs).
   api?: ApiHandler;
   pusher: Pusher;
+  // Ring deliveries by provider; default APNs through `pusher` (tests add the FCM stub).
+  deliveries?: Deliveries;
   // Relay errors as structured entries (telemetry.ts); none = console only.
   telemetry?: LogSink;
+  // The lowest build of each client kind admitted (MINIMUM_BUILDS); none = no minimum.
+  minimumBuilds?: MinimumBuilds;
+  // How old a session check may be at admission, and how often an open connection is checked
+  // again (default 10 s).
+  sessionCheckMs?: number;
   ringTimeoutMs?: number;
   answerJoinTimeoutMs?: number;
   rollOverMs?: number;
@@ -97,7 +104,7 @@ export interface ServerOptions {
   authTtlMs?: number;
   maxBurstMs?: number;
   maxBufferedBytes?: number;
-  // The always-on Test Bot (test-bot.ts); its account needs accounts.
+  // The always-on Test Bot (test-bot.ts).
   testBot?: TestBotOptions;
 }
 
@@ -105,19 +112,45 @@ export interface RunningServer {
   server: Server;
   relay: Relay;
   testBot: TestBot | null;
-  devices: DeviceStore;
   metrics: MetricsStore;
+  sessionGate: SessionGate;
   port: number;
   close(): Promise<void>;
 }
 
+// A refusal with a stable code (contracts/README.md, "Errors").
+class Refusal extends Error {
+  status: number;
+  body: Record<string, unknown>;
+  constructor(status: number, body: Record<string, unknown>) {
+    super(String(body.error));
+    this.status = status;
+    this.body = body;
+  }
+}
+
+const RING_ERROR_STATUS: Record<RelayErrorCode, number> = {
+  "ring-expired": 410,
+  "ring-answered-elsewhere": 409,
+  "unknown-conversation": 404,
+  "unsupported-codec": 409,
+  "burst-too-long": 400,
+  "too-much-audio": 400,
+  "unknown-message": 400,
+};
+
+const RING_ERROR_MESSAGE: Partial<Record<RelayErrorCode, string>> = {
+  "ring-expired": "This conversation has expired.",
+  "ring-answered-elsewhere": "Answered on another device.",
+};
+
 export function startServer(options: ServerOptions): Promise<RunningServer> {
-  const devices = options.devices ?? new JsonDeviceStore(options.dataDir);
   const metrics = options.metrics ?? new JsonMetricsStore(options.dataDir);
+  const deliveries = options.deliveries ?? new Deliveries({ apns: new ApnsDelivery(options.pusher) });
   const relay = new Relay({
-    devices,
-    ...(options.accounts ? { accounts: options.accounts } : {}),
+    accounts: options.accounts,
     pusher: options.pusher,
+    deliveries,
     metrics,
     ...(options.ringTimeoutMs ? { ringTimeoutMs: options.ringTimeoutMs } : {}),
     ...(options.answerJoinTimeoutMs ? { answerJoinTimeoutMs: options.answerJoinTimeoutMs } : {}),
@@ -129,24 +162,49 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
   });
   const testBot = options.testBot ? new TestBot(relay, metrics, options.testBot) : null;
   testBot?.start();
+  const minimumBuilds = options.minimumBuilds ?? {};
+  const gate = new SessionGate(options.accounts, { ttlMs: options.sessionCheckMs ?? 10_000 });
 
-  // Who's calling: an account (its user ID from the session token), or a client with the
-  // shared token, which names its own user ID. Null = unauthorized.
-  const authenticate = (req: IncomingMessage, url: URL): Caller | null => {
-    const presented = bearer(req) ?? url.searchParams.get("token");
-    if (presented && options.sessions && presented.split(".").length === 3) {
-      try {
-        const claims = options.sessions.verify(presented);
-        return { account: true, userId: claims.sub, deviceId: claims.dev };
-      } catch {
-        return null;
-      }
+  // The caller's session token, checked for its signature and expiry. Null = unauthorized.
+  const authenticate = (req: IncomingMessage): Caller | null => {
+    const token = bearer(req);
+    if (!token) return null;
+    try {
+      const claims = options.sessions.verify(token);
+      return { userId: claims.sub, deviceId: claims.dev, claims };
+    } catch {
+      return null;
     }
-    if (options.token && presented !== options.token) return null;
-    // Shared-token clients can't claim an account's user ID.
-    const userId = url.searchParams.get("userId");
-    if (userId?.startsWith(USER_ID_PREFIX)) return null;
-    return { account: false, userId, deviceId: userId };
+  };
+
+  // The session must still be current (a sign-out, a revoked watch or a deleted account ends
+  // it, whatever the token says). Fails closed: a lookup that fails refuses the request.
+  const admitSession = async (caller: Caller): Promise<void> => {
+    let session;
+    try {
+      session = await gate.admit(caller.claims);
+    } catch (err) {
+      console.error(`[relay] checking ${caller.userId}'s session failed: ${(err as Error).message}`);
+      throw new Refusal(503, { error: "temporarily-unavailable", message: "Try again in a moment." });
+    }
+    if (!session) throw new Refusal(401, { error: "session-ended", message: "session-ended" });
+    caller.session = session;
+  };
+
+  // Admission (contracts/README.md, "The relay"): the client's kind, build, relay protocol and
+  // codecs, before it opens a stream or joins anything.
+  const admit = (req: IncomingMessage, caller: Caller): Admission => {
+    try {
+      const admission = parseAdmission((name) => headerValue(req, name), minimumBuilds);
+      if (caller.session && caller.session.clientKind !== admission.clientKind) {
+        throw new ContractError(400, "client-kind-mismatch", `this session is for a ${caller.session.clientKind} device`);
+      }
+      return admission;
+    } catch (err) {
+      if (!(err instanceof ContractError)) throw err;
+      options.telemetry?.write({ kind: "oao.admission", userId: caller.userId, deviceId: caller.deviceId, error: err.code, clientKind: headerValue(req, "x-oao-client-kind") ?? null, build: headerValue(req, "x-oao-build") ?? null, protocol: headerValue(req, "x-oao-relay-protocol") ?? null }, "WARNING");
+      throw new Refusal(err.status, { error: err.code, message: err.message, ...err.detail });
+    }
   };
 
   const sockets = new Set<ReturnType<typeof acceptUpgrade>>();
@@ -154,11 +212,25 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
   const streams = new Map<string, { peer: Peer; res: ServerResponse }>();
   const streamKey = (caller: Caller): string => `${caller.userId}\n${caller.deviceId}`;
 
-  // GET /v1/relay/stream: the server-to-client half of the HTTP transport. The response
-  // stays open for the conversation and carries the same messages as the WebSocket.
-  const openStream = (req: IncomingMessage, res: ServerResponse, url: URL, caller: Caller): void => {
-    const userId = caller.userId;
-    if (!userId) return send(res, 400, { error: "userId is required" });
+  // An open connection is checked again every sessionCheckMs; once its session has ended it's
+  // told and closed.
+  const watchSession = (caller: Caller, peer: Peer, close: () => void): (() => void) => {
+    const claims = caller.claims;
+    const timer = setInterval(() => {
+      void gate.stillActive(claims).then((active) => {
+        if (active) return;
+        console.log(`[relay] ${peer.userId} (${peer.deviceId}): session ended, closing`);
+        peer.sendJSON({ type: "session-ended" });
+        close();
+      });
+    }, gate.checkIntervalMs);
+    timer.unref();
+    return () => clearInterval(timer);
+  };
+
+  // GET /v2/relay/stream: the server-to-client half of the HTTP transport. The response stays
+  // open for the conversation and carries the same messages as the WebSocket.
+  const openStream = (req: IncomingMessage, res: ServerResponse, url: URL, caller: Caller, admission: Admission): void => {
     const key = streamKey(caller);
     res.writeHead(200, {
       "content-type": "application/octet-stream",
@@ -172,22 +244,22 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
       res.write(record);
     };
     const peer: Peer = {
-      userId,
-      deviceId: caller.deviceId ?? userId,
-      account: caller.account,
+      userId: caller.userId,
+      deviceId: caller.deviceId,
+      clientKind: admission.clientKind,
+      decode: admission.decode,
       sendJSON: (m) => write(encodeJSONRecord(m)),
       sendBinary: (b) => write(encodeRecord(RecordType.audio, b)),
     };
     streams.get(key)?.res.end();
     streams.set(key, { peer, res });
     relay.connect(peer);
-    console.log(`[relay] ${userId} (${peer.deviceId}) connected (http)`);
+    console.log(`[relay] ${peer.userId} (${peer.deviceId}) connected (http, ${admission.clientKind} ${admission.build})`);
     // The stream's first message doubles as hello-ack for clock-offset estimates.
     const clientTime = Number(url.searchParams.get("clientTime") ?? 0);
     peer.sendJSON({ type: "hello-ack", clientTime, serverTime: Date.now() });
-    // ?join=<conversationId> answers and joins in this same request, saving the watch two
-    // round trips on a network that's still waking up (option C: the notification carries
-    // the ID). "pending" joins the user's newest queued ring (see Relay.join).
+    // ?join=<conversationId>&ring=<ringId> answers and joins in this same request, saving the
+    // watch two round trips on a network that's still waking up.
     const join = url.searchParams.get("join");
     // &resumeBurst=<id>&resumeFrom=<seq>: a rejoin after the stream dropped mid-burst.
     const resumeBurst = url.searchParams.get("resumeBurst");
@@ -195,22 +267,26 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
     const resume = resumeBurst && resumeBurst.length <= 128 && Number.isInteger(resumeFrom) && resumeFrom >= 0
       ? { burstId: resumeBurst, fromSeq: resumeFrom }
       : undefined;
-    if (join) relay.handleMessage(peer, { type: "join", conversationId: join, ...(resume ? { resume } : {}) });
+    const ring = url.searchParams.get("ring");
+    const ringId = isRingId(ring) ? ring : undefined;
+    if (join) relay.handleMessage(peer, { type: "join", conversationId: join, ...(ringId ? { ringId } : {}), ...(resume ? { resume } : {}) });
     // Keepalive, so idle proxies and carrier NATs don't drop the connection.
     const ping = setInterval(() => peer.sendJSON({ type: "ping" }), 15_000);
+    const unwatch = watchSession(caller, peer, () => res.end());
     req.on("close", () => {
       clearInterval(ping);
+      unwatch();
       if (streams.get(key)?.peer === peer) streams.delete(key);
       relay.disconnect(peer);
-      console.log(`[relay] ${userId} (${peer.deviceId}) disconnected (http)`);
+      console.log(`[relay] ${peer.userId} (${peer.deviceId}) disconnected (http)`);
     });
   };
 
-  // POST /v1/relay/send: the client-to-server half. Each body is a batch of records
-  // (control messages and audio frames), applied in order.
+  // POST /v2/relay/send: the client-to-server half. Each body is a batch of records (control
+  // messages and audio frames), applied in order.
   const receiveRecords = async (req: IncomingMessage, res: ServerResponse, caller: Caller): Promise<void> => {
     const stream = streams.get(streamKey(caller));
-    if (!stream) return send(res, 409, { error: "open GET /v1/relay/stream first" });
+    if (!stream) return send(res, 409, { error: "no-stream", message: "open GET /v2/relay/stream first" });
     const parser = new RecordParser();
     for await (const chunk of req) {
       for (const record of parser.push(chunk as Buffer)) {
@@ -219,11 +295,70 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
           continue;
         }
         const message = parseClientMessage(JSON.parse(record.payload.toString("utf8")));
-        if (!message) return send(res, 400, { error: "invalid message" });
+        if (!message) return send(res, 400, { error: "bad-request", message: "invalid message" });
         relay.handleMessage(stream.peer, message);
       }
     }
     send(res, 200, {});
+  };
+
+  // POST /v2/rings/answer and /decline, GET /v2/rings/pending and /audio, after admission. Each
+  // names the ring.
+  const ringCall = async (req: IncomingMessage, res: ServerResponse, url: URL, caller: Caller, path: string): Promise<void> => {
+    const { userId, deviceId } = caller;
+    const fail = (result: { ok: false; error: RelayErrorCode }) =>
+      send(res, RING_ERROR_STATUS[result.error], { error: result.error, message: RING_ERROR_MESSAGE[result.error] ?? result.error });
+    if (req.method === "GET" && path === "/rings/pending") return send(res, 200, { rings: relay.pendingRings(userId) });
+    if (req.method === "GET" && path === "/rings/audio") {
+      const ringId = url.searchParams.get("ringId");
+      if (!isRingId(ringId)) return send(res, 400, { error: "bad-request", message: "ringId is required" });
+      const audio = relay.bufferedAudio(userId, url.searchParams.get("conversationId") ?? "", ringId);
+      if (!audio.ok) return fail(audio);
+      res.writeHead(200, {
+        "content-type": "application/octet-stream",
+        "cache-control": "no-store",
+        "x-bursts": String(audio.value.bursts),
+        "x-frames": String(audio.value.frames),
+        ...(audio.value.ring ? { "x-ring-id": audio.value.ring.ringId, "x-ring-expires-at": String(audio.value.ring.expiresAt) } : {}),
+      });
+      return void res.end(audio.value.records);
+    }
+    if (req.method === "POST" && (path === "/rings/answer" || path === "/rings/decline")) {
+      const body = (await readJSON(req)) as Record<string, unknown>;
+      const { conversationId, ringId } = body ?? {};
+      if (typeof conversationId !== "string" || !isRingId(ringId)) {
+        return send(res, 400, { error: "bad-request", message: "conversationId and ringId are required" });
+      }
+      const result: RingCallResult<unknown> = path === "/rings/answer"
+        ? relay.answer(userId, deviceId, conversationId, ringId)
+        : relay.decline(userId, conversationId, ringId);
+      if (!result.ok) return fail(result);
+      return send(res, 200, path === "/rings/answer" ? { ring: result.value } : {});
+    }
+    send(res, 404, { error: "not-found", message: `no route for ${req.method} ${url.pathname}` });
+  };
+
+  const uploadMetrics = async (req: IncomingMessage, res: ServerResponse, caller: Caller): Promise<void> => {
+    const upload = (await readJSON(req)) as MetricsUpload & { device?: DeviceInfo; deviceId?: string };
+    if (!upload?.conversationId || !Array.isArray(upload.events)) return send(res, 400, { error: "bad-request", message: "bad metrics" });
+    upload.userId = caller.userId;
+    upload.deviceId = caller.deviceId;
+    upload.device = cleanDevice(upload.device);
+    await metrics.upload(upload);
+    send(res, 200, { ok: true });
+  };
+
+  // The operator's diagnostics, with the diagnostics token (never a session token).
+  const admin = async (req: IncomingMessage, res: ServerResponse, url: URL): Promise<void> => {
+    if (options.adminToken && bearer(req) !== options.adminToken) return send(res, 401, { error: "unauthorized", message: "unauthorized" });
+    if (req.method === "GET" && url.pathname === "/admin/status") return send(res, 200, relay.snapshot());
+    if (req.method === "GET" && url.pathname === "/admin/metrics") return send(res, 200, await metrics.conversations());
+    const match = url.pathname.match(/^\/admin\/metrics\/([\w-]+)$/);
+    if (req.method === "GET" && match) {
+      const timeline = await metrics.timeline(match[1]);
+      return send(res, 200, { conversationId: match[1], timeline, attempts: summarizeAttempts(timeline) });
+    }
+    send(res, 404, { error: "not-found", message: `no route for ${req.method} ${url.pathname}` });
   };
 
   const server = createServer(async (req, res) => {
@@ -231,146 +366,91 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
     try {
       if (req.method === "GET" && url.pathname === "/healthz") return send(res, 200, { ok: true, revision: process.env.REVISION ?? "local" });
       if (options.api && (await options.api(req, res, url))) return;
-      const caller = authenticate(req, url);
-      if (!caller) return send(res, 401, { error: "unauthorized" });
-      // Registration, the device list and diagnostics are for shared-token clients only.
-      // Accounts register with the account API.
-      const sharedOnly = ["/v1/devices", "/v1/users", "/v1/status"].includes(url.pathname) ||
-        (req.method === "GET" && url.pathname.startsWith("/v1/metrics"));
-      if (sharedOnly && caller.account) return send(res, 403, { error: "forbidden" });
-      // Without sharedTokenClients, the shared token reads diagnostics and nothing else.
-      const diagnostics = req.method === "GET" &&
-        (["/v1/users", "/v1/status"].includes(url.pathname) || url.pathname.startsWith("/v1/metrics"));
-      if (!caller.account && !diagnostics && !options.sharedTokenClients) return send(res, 403, { error: "forbidden" });
-
-      if (req.method === "POST" && url.pathname === "/v1/devices") {
-        const body = await readJSON(req);
-        const { userId, name, apnsEnvironment, ...rest } = body as Record<string, unknown>;
-        // The spike watch app still sends its token as voipToken.
-        const pushToken = rest.pushToken ?? rest.voipToken;
-        if (typeof userId !== "string" || !userId || typeof pushToken !== "string" || !pushToken) {
-          return send(res, 400, { error: "userId and pushToken are required" });
-        }
-        if (userId.startsWith(USER_ID_PREFIX)) return send(res, 403, { error: "forbidden" });
-        await devices.upsert({
-          userId,
-          name: typeof name === "string" && name ? name : userId,
-          pushToken,
-          apnsEnvironment: apnsEnvironment === "production" ? "production" : "sandbox",
-          updatedAt: Date.now(),
-        });
-        console.log(`[api] registered ${userId} (${apnsEnvironment ?? "sandbox"})`);
-        return send(res, 200, { ok: true });
+      if (url.pathname.startsWith("/admin/")) return await admin(req, res, url);
+      const path = url.pathname.match(/^\/v2(\/.*)$/)?.[1];
+      if (!path) return send(res, 404, { error: "not-found", message: `no route for ${req.method} ${url.pathname}` });
+      const caller = authenticate(req);
+      if (!caller) return send(res, 401, { error: "unauthorized", message: "unauthorized" });
+      await admitSession(caller);
+      if (req.method === "GET" && path === "/time") return send(res, 200, { serverTime: Date.now() });
+      if (req.method === "POST" && path === "/metrics") return await uploadMetrics(req, res, caller);
+      if (req.method === "GET" && path === "/relay/stream") return openStream(req, res, url, caller, admit(req, caller));
+      if (req.method === "POST" && path === "/relay/send") return await receiveRecords(req, res, caller);
+      if (path.startsWith("/rings/")) {
+        admit(req, caller);
+        return await ringCall(req, res, url, caller, path);
       }
-      if (req.method === "GET" && url.pathname === "/v1/users") {
-        return send(res, 200, (await devices.list()).map((d) => ({ userId: d.userId, name: d.name })));
-      }
-      if (req.method === "POST" && url.pathname === "/v1/metrics") {
-        const upload = (await readJSON(req)) as MetricsUpload & { device?: DeviceInfo; deviceId?: string };
-        if (!upload?.conversationId || !Array.isArray(upload.events)) return send(res, 400, { error: "bad metrics" });
-        if (caller.account) {
-          upload.userId = caller.userId!;
-          upload.deviceId = caller.deviceId ?? undefined;
-        }
-        upload.device = cleanDevice(upload.device);
-        await metrics.upload(upload);
-        return send(res, 200, { ok: true });
-      }
-      if (req.method === "GET" && url.pathname === "/v1/metrics") {
-        return send(res, 200, await metrics.conversations());
-      }
-      const match = url.pathname.match(/^\/v1\/metrics\/([\w-]+)$/);
-      if (req.method === "GET" && match) {
-        const timeline = await metrics.timeline(match[1]);
-        return send(res, 200, { conversationId: match[1], timeline, attempts: summarizeAttempts(timeline) });
-      }
-      if (req.method === "GET" && url.pathname === "/v1/status") return send(res, 200, relay.snapshot());
-      // Clock-offset sampling: clients time the round trip and keep the fastest sample.
-      if (req.method === "GET" && url.pathname === "/v1/time") return send(res, 200, { serverTime: Date.now() });
-      // The watch answered a ring. Sent over HTTPS because the relay socket can take
-      // several seconds to open after the call starts.
-      // A decline, likewise, so the ring doesn't roll over to the iPhone.
-      if (req.method === "POST" && (url.pathname === "/v1/rings/answer" || url.pathname === "/v1/rings/decline")) {
-        const body = (await readJSON(req)) as Record<string, unknown>;
-        const userId = caller.account ? caller.userId : body.userId;
-        const conversationId = body.conversationId;
-        if (typeof userId !== "string" || typeof conversationId !== "string") {
-          return send(res, 400, { error: "userId and conversationId are required" });
-        }
-        const found = url.pathname === "/v1/rings/answer"
-          ? relay.answered(userId, conversationId, caller.deviceId ?? userId)
-          : relay.declined(userId, conversationId);
-        return send(res, found ? 200 : 404, {});
-      }
-      if (req.method === "GET" && url.pathname === "/v1/relay/stream") return openStream(req, res, url, caller);
-      if (req.method === "POST" && url.pathname === "/v1/relay/send") return await receiveRecords(req, res, caller);
-      // Prototype: the message a ring is holding, for the watch's notification service
-      // extension to download before the tap (see Relay.bufferedAudio).
-      if (req.method === "GET" && url.pathname === "/v1/rings/audio") {
-        const audio = relay.bufferedAudio(caller.userId ?? "", url.searchParams.get("conversationId") ?? "");
-        if (!audio) return send(res, 404, { error: "unknown conversation" });
-        res.writeHead(200, {
-          "content-type": "application/octet-stream",
-          "cache-control": "no-store",
-          "x-bursts": String(audio.bursts),
-          "x-frames": String(audio.frames),
-        });
-        return void res.end(audio.records);
-      }
-      // For devices registered with a "poll:" token (no VoIP push): collect pending rings.
-      if (req.method === "GET" && url.pathname === "/v1/rings/poll") {
-        return send(res, 200, relay.takePolledRings(caller.userId ?? ""));
-      }
-      send(res, 404, { error: "not found" });
+      send(res, 404, { error: "not-found", message: `no route for ${req.method} ${url.pathname}` });
     } catch (err) {
-      if (url.pathname.startsWith("/v1/relay") || url.pathname === "/v1/metrics") {
+      if (err instanceof Refusal) return send(res, err.status, err.body);
+      if (url.pathname.includes("/relay") || url.pathname.endsWith("/metrics")) {
         options.telemetry?.write({ kind: "oao.relay_error", what: `${req.method} ${url.pathname}`, error: (err as Error).message.slice(0, 200) }, "ERROR");
       }
-      send(res, 400, { error: (err as Error).message });
+      send(res, 400, { error: "bad-request", message: (err as Error).message });
     }
   });
 
   server.on("upgrade", (req, socket) => {
-    const url = new URL(req.url ?? "/", "http://localhost");
-    if (url.pathname !== "/v1/relay") return rejectUpgrade(socket, 404, "Not Found");
-    const caller = authenticate(req, url);
-    if (!caller) return rejectUpgrade(socket, 401, "Unauthorized");
-    if (!caller.account && !options.sharedTokenClients) return rejectUpgrade(socket, 403, "Forbidden");
-    const userId = caller.userId;
-    if (!userId) return rejectUpgrade(socket, 400, "Bad Request");
-    const ws = acceptUpgrade(req, socket);
-    if (!ws) return;
-    sockets.add(ws);
-
-    const peer: Peer = { userId, deviceId: caller.deviceId ?? userId, account: caller.account, sendJSON: (m) => ws.sendJSON(m), sendBinary: (b) => ws.sendBinary(b) };
-    relay.connect(peer);
-    console.log(`[relay] ${userId} (${peer.deviceId}) connected`);
-    // A message that breaks the relay closes this connection, not the whole node.
-    const contained = (what: string, fn: () => void): void => {
+    void (async () => {
+      const url = new URL(req.url ?? "/", "http://localhost");
+      if (url.pathname !== "/v2/relay") return rejectUpgrade(socket, 404, "Not Found");
+      const caller = authenticate(req);
+      if (!caller) return rejectUpgrade(socket, 401, "Unauthorized", { error: "unauthorized", message: "unauthorized" });
+      let admission: Admission;
       try {
-        fn();
+        await admitSession(caller);
+        admission = admit(req, caller);
       } catch (err) {
-        console.error(`[relay] ${userId} (${peer.deviceId}): ${what} failed: ${(err as Error).stack ?? err}`);
-        options.telemetry?.write({ kind: "oao.relay_error", what, userId, deviceId: peer.deviceId, error: (err as Error).message.slice(0, 200) }, "ERROR");
-        ws.close(1011);
+        if (err instanceof Refusal) return rejectUpgrade(socket, err.status, "Refused", err.body);
+        throw err;
       }
-    };
-    ws.on("text", (text: string) => {
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(text);
-      } catch {
-        return ws.sendJSON({ type: "error", message: "invalid JSON" });
-      }
-      const message = parseClientMessage(parsed);
-      if (!message) return ws.sendJSON({ type: "error", message: "invalid message" });
-      contained("a message", () => relay.handleMessage(peer, message));
-    });
-    ws.on("binary", (frame: Buffer) => contained("an audio frame", () => relay.handleAudio(peer, frame)));
-    ws.on("close", () => {
-      sockets.delete(ws);
-      relay.disconnect(peer);
-      console.log(`[relay] ${userId} (${peer.deviceId}) disconnected`);
+      const ws = acceptUpgrade(req, socket);
+      if (!ws) return;
+      sockets.add(ws);
+
+      const { userId, deviceId } = caller;
+      const peer: Peer = {
+        userId,
+        deviceId,
+        clientKind: admission.clientKind,
+        decode: admission.decode,
+        sendJSON: (m) => ws.sendJSON(m),
+        sendBinary: (b) => ws.sendBinary(b),
+      };
+      relay.connect(peer);
+      console.log(`[relay] ${userId} (${deviceId}) connected (${admission.clientKind} ${admission.build})`);
+      const unwatch = watchSession(caller, peer, () => ws.close(1008));
+      // A message that breaks the relay closes this connection, not the whole node.
+      const contained = (what: string, fn: () => void): void => {
+        try {
+          fn();
+        } catch (err) {
+          console.error(`[relay] ${userId} (${deviceId}): ${what} failed: ${(err as Error).stack ?? err}`);
+          options.telemetry?.write({ kind: "oao.relay_error", what, userId, deviceId, error: (err as Error).message.slice(0, 200) }, "ERROR");
+          ws.close(1011);
+        }
+      };
+      ws.on("text", (text: string) => {
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(text);
+        } catch {
+          return ws.sendJSON({ type: "error", code: "unknown-message", message: "invalid JSON" });
+        }
+        const message = parseClientMessage(parsed);
+        if (!message) return ws.sendJSON({ type: "error", code: "unknown-message", message: "invalid message" });
+        contained("a message", () => relay.handleMessage(peer, message));
+      });
+      ws.on("binary", (frame: Buffer) => contained("an audio frame", () => relay.handleAudio(peer, frame)));
+      ws.on("close", () => {
+        unwatch();
+        sockets.delete(ws);
+        relay.disconnect(peer);
+        console.log(`[relay] ${userId} (${deviceId}) disconnected`);
+      });
+    })().catch((err: Error) => {
+      console.error(`[relay] upgrade failed: ${err.stack ?? err}`);
+      rejectUpgrade(socket, 500, "Internal Server Error");
     });
   });
 
@@ -386,14 +466,14 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
         server,
         relay,
         testBot,
-        devices,
         metrics,
+        sessionGate: gate,
         port,
         close: () =>
           new Promise<void>((done) => {
             testBot?.close();
             relay.close();
-            options.pusher.close();
+            deliveries.close();
             // Upgraded WebSocket sockets aren't covered by closeAllConnections().
             for (const ws of sockets) ws?.close(1001);
             for (const { res } of streams.values()) res.end();
@@ -406,11 +486,17 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
 }
 
 interface Caller {
-  account: boolean;
-  // From the session token for accounts; from the request (?userId=) otherwise.
-  userId: string | null;
-  // The session token's device for accounts; the user ID otherwise.
-  deviceId: string | null;
+  userId: string;
+  deviceId: string;
+  claims: SessionClaims;
+  // Once admitted, the stored session.
+  session?: { clientKind: string };
+}
+
+function headerValue(req: IncomingMessage, name: string): string | undefined {
+  const value = req.headers[name];
+  const text = Array.isArray(value) ? value[0] : value;
+  return text?.trim() || undefined;
 }
 
 function send(res: ServerResponse, status: number, body: unknown): void {
@@ -422,7 +508,7 @@ function send(res: ServerResponse, status: number, body: unknown): void {
 function cleanDevice(value: unknown): DeviceInfo | undefined {
   if (!value || typeof value !== "object") return undefined;
   const out: DeviceInfo = {};
-  for (const key of ["platform", "model", "os", "build"] as const) {
+  for (const key of ["platform", "clientKind", "model", "os", "build"] as const) {
     const v = (value as Record<string, unknown>)[key];
     if (typeof v === "string" && v) out[key] = v.replace(/[^\w .()-]/g, "").slice(0, 40);
   }
@@ -450,48 +536,55 @@ if (import.meta.main) {
   const apnsPusher = apnsConfig ? new ApnsPusher(apnsConfig) : new DryRunPusher();
   const simulatorPush = env.SIMULATOR_PUSH === "1";
   const pusher = simulatorPush ? new SimulatorPusher(apnsPusher) : apnsPusher;
-  const token = env.SPIKE_TOKEN || null;
-  const sharedTokenClients = env.SHARED_TOKEN_CLIENTS === "1";
+  const adminToken = env.SPIKE_TOKEN || null;
   const host = env.HOST || undefined;
   const port = Number(env.PORT ?? 8080);
   const prefetchPushAfterMs = Number(env.PREFETCH_PUSH_MS ?? 0);
-  let sessions = env.SESSION_PUBLIC_KEYS ? new SessionVerifier(parsePublicKeys(env.SESSION_PUBLIC_KEYS)) : null;
+  const minimumBuilds = parseMinimumBuilds(env.MINIMUM_BUILDS);
+  // FCM_STUB: Android rings are recorded, not sent (Phase 0's later-service fixture). Never on
+  // the real database: there's no FCM in production until Phase 2.
+  const fcmStub = env.FCM_STUB === "1" ? new FcmStub() : null;
+  if (fcmStub && onGoogleCloud) throw new Error("FCM_STUB is for local runs only");
+  const deliveries = new Deliveries({ apns: new ApnsDelivery(pusher), ...(fcmStub ? { fcm: fcmStub } : {}) });
+  const configuredKeys = env.SESSION_PUBLIC_KEYS ? new SessionVerifier(parsePublicKeys(env.SESSION_PUBLIC_KEYS)) : null;
   let running: RunningServer;
   let api: ApiSetup | null = null;
   const fullTimelineUsers = (env.FULL_TIMELINE_USERS ?? "").split(",").map((u) => u.trim()).filter(Boolean);
   const testBot = env.TEST_BOT_USER_ID ? { userId: env.TEST_BOT_USER_ID, greeting: loadGreeting() } : undefined;
+  const ringTimeoutMs = env.RING_TIMEOUT_MS ? Number(env.RING_TIMEOUT_MS) : undefined;
+  if (ringTimeoutMs !== undefined && (onGoogleCloud || !(ringTimeoutMs > 0))) throw new Error("RING_TIMEOUT_MS is a positive number, for local runs only");
+  const relayOptions = { pusher, deliveries, prefetchPushAfterMs, testBot, minimumBuilds, adminToken, ...(ringTimeoutMs ? { ringTimeoutMs } : {}) };
   if (env.STORE === "firestore") {
     const db = new Firestore({ projectId, emulatorHost, accessToken });
-    const devices = new FirestoreDeviceStore(db);
     const telemetry: LogSink = onGoogleCloud
       ? new CloudLoggingSink({ projectId, accessToken, labels: { node: hostname(), revision: env.REVISION ?? "local" } })
       : new StdoutSink();
     const metrics = new TelemetryMetricsStore(telemetry, { fullTimelineUsers });
     if (env.SERVE_API === "1") api = apiFromEnv(env, db, null);
     const accounts = api?.accounts ?? new Accounts(db);
-    sessions = api?.verifier ?? sessions;
-    running = await startServer({ port, host, dataDir: null, devices, metrics, telemetry, token, sharedTokenClients, sessions, accounts, api: api?.handler, pusher, prefetchPushAfterMs, testBot });
+    const sessions = api?.verifier ?? configuredKeys;
+    if (!sessions) throw new Error("SESSION_PUBLIC_KEYS (or SESSION_PUBLIC_KEYS_SECRET) is required");
+    running = await startServer({ port, host, dataDir: null, metrics, telemetry, sessions, accounts, api: api?.handler, ...relayOptions });
     console.log(`[server] listening on ${host ?? ""}:${running.port}, data in Firestore ${emulatorHost ? `emulator ${emulatorHost}, ` : ""}project ${projectId}`);
   } else {
     const dataDir = ensureDir(resolve(env.DATA_DIR ?? "data"));
     // Accounts are only kept locally when this process also serves the API.
-    if (env.SERVE_API === "1") api = apiFromEnv(env, new MemoryDocs(join(dataDir, "accounts.json")), dataDir);
-    sessions = api?.verifier ?? sessions;
+    if (env.SERVE_API !== "1") throw new Error("the relay needs accounts: STORE=firestore, or SERVE_API=1 for local accounts");
+    api = apiFromEnv(env, new MemoryDocs(join(dataDir, "accounts.json")), dataDir);
     const telemetry = new FileSink(dataDir);
     const metrics = new TelemetryMetricsStore(telemetry, { inner: new JsonMetricsStore(dataDir), fullTimelineUsers });
-    if (testBot && !api) throw new Error("TEST_BOT_USER_ID needs accounts: STORE=firestore, or SERVE_API=1");
-    running = await startServer({ port, host, dataDir, metrics, telemetry, token, sharedTokenClients, sessions, accounts: api?.accounts, api: api?.handler, pusher, prefetchPushAfterMs, testBot });
+    running = await startServer({ port, host, dataDir, metrics, telemetry, sessions: api.verifier, accounts: api.accounts, api: api.handler, ...relayOptions });
     console.log(`[server] listening on ${host ?? ""}:${running.port}, data in ${dataDir}`);
   }
   for (const note of api?.notes ?? []) console.log(`[api] ${note}`);
-  if (sessions) console.log("[server] accounts can connect with session tokens");
   console.log(`[server] revision ${env.REVISION ?? "local"}${secrets.length ? `, secrets ${secrets.join(", ")} from Secret Manager` : ""}`);
   console.log(apnsConfig ? `[server] APNs alert pushes, topic ${apnsConfig.bundleId}` : "[server] APNs not configured: dry-run pushes");
   if (prefetchPushAfterMs) console.log(`[server] prefetch pushes ${prefetchPushAfterMs} ms after a ring (prototype)`);
   if (testBot) console.log(`[server] the Test Bot ${testBot.userId} answers rings here (${testBot.greeting.length} greeting frames)`);
   if (simulatorPush) console.warn("[server] SIMULATOR_PUSH: rings to simulator tokens run xcrun simctl push");
-  if (!token) console.warn("[server] SPIKE_TOKEN not set: diagnostics are unauthenticated");
-  if (sharedTokenClients) console.warn("[server] SHARED_TOKEN_CLIENTS: relay clients without accounts are allowed");
+  if (!adminToken) console.warn("[server] SPIKE_TOKEN not set: the diagnostics (/admin) are unauthenticated");
+  if (Object.keys(minimumBuilds).length) console.log(`[server] minimum builds ${JSON.stringify(minimumBuilds)}`);
+  if (fcmStub) console.warn("[server] FCM_STUB: Android rings are recorded, not sent");
   // Container stops (deploys, autohealing) send SIGTERM. Let conversations in progress
   // finish, up to DRAIN_MS, then write buffered metrics and exit.
   const drainMs = Number(env.DRAIN_MS ?? 0);

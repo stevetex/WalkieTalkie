@@ -188,6 +188,30 @@ The identifiers/timestamps above are illustrative. Each new ring attempt gets a 
 | P0.7 Generalize diagnostics and tooling | Add client kind, form factor, delivery provider/mode, protocol, codec, ring ID, and version dimensions to metrics/reports without changing existing event meanings silently. Update stats/admin/test tools and avoid credentials/audio in logs. | Apple dashboards remain interpretable; simulated Android delivery is distinguishable from actual APNs success; legacy metrics remain readable. |
 | P0.8 Rehearse, deploy, and freeze | Execute section 7 with reviewed migration scripts, rollback artifacts, baseline clients, and the section 9 compatibility suite. | All Phase 0 release gates pass; oldest commercial client artifact and fixtures are retained; Android enablement demonstrably needs no Apple update. |
 
+### Phase 0 status (2026-10-01)
+
+Built on branch `phase0-v2`; nothing deployed or migrated yet. The frozen contract is
+[contracts/README.md](contracts/README.md); the cutover is
+[deploy/gcp/PHASE0_ROLLOUT.md](deploy/gcp/PHASE0_ROLLOUT.md). With three testers, Steve chose
+(2026-10-01) to retire v1 at once rather than run a bridge: the service is v2 only, the tester
+data is converted around a single deploy, and everyone updates to the v2 build in the same
+window. Rollback is the previous revisions and the snapshot.
+
+| Package | State | Evidence so far |
+| --- | --- | --- |
+| P0.1 | Done | `contracts/`: spec, 19 schemas, current/future/rejected examples, binary fixtures with real Apple Opus packets; checked by `server/test/contracts.test.ts` and the kit's `ContractTests` |
+| P0.2 | Code done | Only `/v2` (the API, the relay on both transports, `GET /v2/config`), admission headers, `MINIMUM_BUILDS`; the operator's diagnostics on `/admin`; `/v2/**` Hosting rewrite; deploy smoke checks |
+| P0.3 | Code done | Provider-neutral identities, the Google provider seam (dev double only), provider-tagged deletion, sessions with client kind and parent phone, companion revocation, stored-session checks at the relay (10 s cache, fail closed) |
+| P0.4 | Code done | v2 device records only (kind, delivery, availability, capabilities, use order), scoped push-token ownership |
+| P0.5 | Code done | Ring IDs and deadlines (required everywhere), one device per ring, answer claims, pending-ring lookup, ring-scoped prefetch, codec admission, provider-neutral delivery outcomes, FCM stub |
+| P0.6 | Code done | Kit, iPhone, watch and extension on v2 only; tolerant enums; update-required state; watch link with schema versions and request IDs |
+| P0.7 | Code done | Telemetry carries client kind, provider, mode and ring ID; simulated deliveries never count as delivered |
+| P0.8 | Prepared | `tools/migrate-v2.ts`: snapshot, plan, apply (additive, before and after the deploy), verify, cleanup (removes the v1 data after the deploy), retire, restore (`--exact` for the rollback); tested on v1-shaped records; production steps await Steve's OK |
+
+Release gates still open: the production cutover, device runs on the v2 TestFlight build, and the
+baseline archive. Simulator runs on 2026-10-01 covered Apple↔Apple, Apple↔synthetic Android
+(Google dev account, FCM stub) in both directions, and the update-required screen.
+
 ### Work deliberately left out of Phase 0
 
 Do not implement an Android UI, enable production Google login/FCM, provision Android store apps, replace the relay transport, add end-to-end encryption, change Apple OS minimums, or migrate the Swift language mode solely for this project. The [Swift 6 migration plan](SWIFT6_MIGRATION_PLAN.md) is a separate workstream; coordinate shared-file changes without making it a prerequisite.
@@ -208,6 +232,8 @@ Build the provider interfaces and test doubles now. Implement Google verificatio
 ## 7. Tester migration, deployment, and rollback
 
 Treat this as a coordinated service/client transition, not an unannounced database rewrite. Prepare scripts and builds before requesting the operational approvals required by the project's deployment workflow.
+
+> **Decision (Steve, 2026-10-01):** with three testers, all of whom update at once, there's no bridge release and no staged retirement. Steps 3–7 below collapse into one window: snapshot, upload the v2 build, convert the data additively, deploy the v2-only service, convert again for anything written in between, everyone updates, then remove the v1 data. Rollback is the previous revisions plus an exact snapshot restore. [deploy/gcp/PHASE0_ROLLOUT.md](deploy/gcp/PHASE0_ROLLOUT.md) is the runbook; the steps below are kept as the original plan.
 
 1. **Inventory and snapshot.** Record deployed API/relay revisions, supported tester builds, schema counts, identity mappings, registration ownership, and session layouts. Take an access-controlled recoverable snapshot; preserve IDs and relationships. Do not place tokens, provider subjects, or production exports in Git.
 2. **Rehearse in isolation.** Run the backfill against a disposable local/emulator snapshot with synthetic sensitive fields. Support dry-run, bounded batches, checkpoints, idempotent restart, collision detection, and before/after counts. Stop on ambiguous identity ownership rather than inventing mappings.

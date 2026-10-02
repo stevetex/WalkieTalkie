@@ -51,3 +51,9 @@ SUPPORT_EMAIL=""
 # set, the invite page (overandout.app/i/<code>) offers "Join the beta on TestFlight";
 # empty, it shows "Coming soon to the App Store". Redeploy the site after changing it.
 TESTFLIGHT_URL=""
+
+# The contract's compatibility setting (contracts/README.md; Phase 0 of
+# ANDROID_WEAR_OS_PLAN.md), for deploy-api.sh and deploy-relay.sh:
+# MINIMUM_BUILDS: JSON of the lowest build of each client kind still admitted, e.g.
+# {"ios":170,"watchos":170}; older builds get "Update Over&Out". Empty = no minimum.
+MINIMUM_BUILDS=""

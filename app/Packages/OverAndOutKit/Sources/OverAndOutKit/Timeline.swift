@@ -37,7 +37,7 @@ public struct Timeline: Sendable {
     /// How many times the event was recorded (events not marked `once` can repeat).
     public func count(_ name: String) -> Int { events.lazy.filter { $0.name == name }.count }
 
-    /// The body of POST /v1/metrics. `clockOffsetMs` is server time minus device time.
+    /// The body of POST /v2/metrics. `clockOffsetMs` is server time minus device time.
     public func upload(conversationId: String, userId: String, clockOffsetMs: Double) -> [String: any Sendable] {
         [
             "conversationId": conversationId,

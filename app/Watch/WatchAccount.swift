@@ -17,6 +17,9 @@ final class WatchAccount: NSObject, ObservableObject {
     @Published private(set) var friendsLoaded = false
     /// Waiting for the iPhone: "Open Over&Out on your iPhone" until a session arrives.
     @Published private(set) var phoneSignedIn: Bool?
+    /// The service no longer supports this build: the friends list asks for an update (which
+    /// comes with the iPhone app's). The session stays.
+    @Published private(set) var upgradeRequired = AppSettings.config.upgradeRequired
 
     /// Called whenever the session appears or changes hands, so the push token can be
     /// registered under the account.
@@ -25,6 +28,9 @@ final class WatchAccount: NSObject, ObservableObject {
     let deviceId = DeviceIdentity.id()
     let client: AccountClient?
     private let store: SessionStoring
+    /// The request for a session the iPhone is answering, so asking again (by message, user
+    /// info and context, or after a retry) gets the same session.
+    private var sessionRequestId: String?
 
     private enum Key {
         static let friends = "friends"
@@ -45,6 +51,9 @@ final class WatchAccount: NSObject, ObservableObject {
         UserDefaults.standard.removeObject(forKey: Key.selectedFriend)
         NotificationCenter.default.addObserver(forName: AccountClient.signedOutNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.signedOut(askPhone: true) }
+        }
+        NotificationCenter.default.addObserver(forName: ServiceContract.upgradeRequiredNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.upgradeRequired = true }
         }
     }
 
@@ -73,7 +82,7 @@ final class WatchAccount: NSObject, ObservableObject {
         Task {
             do {
                 let result = try await client.signInWithApple(identityToken: "dev:\(user.lowercased())", nonce: "dev",
-                                                              name: user, deviceId: deviceId, platform: .watch)
+                                                              name: user, deviceId: deviceId)
                 adopt(result.session)
             } catch {
                 print("[oao] dev sign-in failed: \(error.localizedDescription)")
@@ -82,11 +91,13 @@ final class WatchAccount: NSObject, ObservableObject {
     }
     #endif
 
-    /// On launch and whenever the app comes to the front: a day-old token is refreshed, and
-    /// the friends list reloaded.
+    /// On launch and whenever the app comes to the front: a day-old token is refreshed, the
+    /// friends list reloaded, and the service's config read again (never on the ring path).
     func refresh() {
         guard session != nil, let client else { return askPhoneForSession() }
         Task {
+            await AppSettings.config.refresh(apiBase: client.baseURL)
+            upgradeRequired = upgradeRequired || AppSettings.config.upgradeRequired
             do {
                 try await client.refreshIfNeeded()
                 let loaded = try await client.friends()
@@ -129,9 +140,9 @@ final class WatchAccount: NSObject, ObservableObject {
         }
     }
 
-    func registerDevice(pushToken: String, apnsEnvironment: String) async throws {
+    func registerDevice(_ registration: DeviceRegistration) async throws {
         guard let client else { throw AccountAPIError.notSignedIn }
-        try await client.registerDevice(platform: .watch, pushToken: pushToken, apnsEnvironment: apnsEnvironment)
+        try await client.registerDevice(registration)
     }
 
     private func setFriends(_ loaded: [Friend]) {
@@ -144,6 +155,7 @@ final class WatchAccount: NSObject, ObservableObject {
     // MARK: Getting a session from the iPhone
 
     private func adopt(_ new: AccountSession) {
+        sessionRequestId = nil
         let changedAccount = session?.userId != new.userId
         store.save(new)
         session = new
@@ -176,8 +188,12 @@ final class WatchAccount: NSObject, ObservableObject {
         guard session == nil, WCSession.isSupported(), WCSession.default.activationState == .activated else { return }
         updateContext()
         guard WCSession.default.isReachable else { return }
+        let requestId = sessionRequestId ?? UUID().uuidString.lowercased()
+        sessionRequestId = requestId
+        let request: [String: Any] = [WatchLink.request: WatchLink.sessionRequest, WatchLink.deviceId: deviceId,
+                                      WatchLink.requestId: requestId, WatchLink.schemaVersion: WatchLink.currentSchemaVersion]
         // Both handlers run on a WatchConnectivity queue, so they're @Sendable, not main-actor.
-        WCSession.default.sendMessage([WatchLink.request: WatchLink.sessionRequest, WatchLink.deviceId: deviceId]) { @Sendable [weak self] reply in
+        WCSession.default.sendMessage(request) { @Sendable [weak self] reply in
             let message = PhoneMessage(reply)
             DispatchQueue.main.async { self?.handle(message) }
         } errorHandler: { @Sendable error in
@@ -187,7 +203,8 @@ final class WatchAccount: NSObject, ObservableObject {
 
     private func updateContext() {
         guard WCSession.isSupported(), WCSession.default.activationState == .activated else { return }
-        try? WCSession.default.updateApplicationContext([WatchLink.deviceId: deviceId, WatchLink.needsSession: session == nil])
+        try? WCSession.default.updateApplicationContext([WatchLink.deviceId: deviceId, WatchLink.needsSession: session == nil,
+                                                         WatchLink.schemaVersion: WatchLink.currentSchemaVersion])
     }
 
     private func handle(_ message: PhoneMessage) {

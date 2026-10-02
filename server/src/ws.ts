@@ -36,8 +36,11 @@ export function acceptUpgrade(req: IncomingMessage, socket: Duplex): WebSocketCo
   return new WebSocketConnection(socket);
 }
 
-export function rejectUpgrade(socket: Duplex, status: number, reason: string): void {
-  socket.end(`HTTP/1.1 ${status} ${reason}\r\nConnection: close\r\n\r\n`);
+// `body`: a JSON error (v2's admission refusals), so a client sees the same as over HTTPS.
+export function rejectUpgrade(socket: Duplex, status: number, reason: string, body?: unknown): void {
+  const json = body === undefined ? "" : JSON.stringify(body);
+  const headers = json ? `Content-Type: application/json\r\nContent-Length: ${Buffer.byteLength(json)}\r\n` : "";
+  socket.end(`HTTP/1.1 ${status} ${reason}\r\nConnection: close\r\n${headers}\r\n${json}`);
 }
 
 // Events: "text" (string), "binary" (Buffer), "close" (code: number)

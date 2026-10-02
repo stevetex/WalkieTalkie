@@ -8,6 +8,8 @@
 //   dailyStats     one day's activity, plus 7- and 30-day active counts and the snapshot: the
 //                  stats/{YYYY-MM-DD} document rollup-main.ts writes
 
+import { preferredFormFactorOf, toDevice } from "./accounts.ts";
+import { platformLabel, type FormFactor } from "./contract.ts";
 import type { Docs } from "./docs.ts";
 import type { LogEntry } from "./log-reader.ts";
 
@@ -50,6 +52,11 @@ export interface UsageSnapshot {
   lastHeard: Record<string, number>;
 }
 
+// Ring Me On as the dashboards label it.
+function ringOnLabel(formFactor: FormFactor | undefined): string {
+  return formFactor === "phone" ? "iphone" : formFactor ?? "default";
+}
+
 function friendBucket(n: number): string {
   return n === 0 ? "0" : n === 1 ? "1" : n <= 3 ? "2-3" : n <= 9 ? "4-9" : "10+";
 }
@@ -81,14 +88,16 @@ export async function usageSnapshot(docs: Docs, now = Date.now()): Promise<Usage
     snapshot.friendships += friends.length;
     if (friends.some((f) => f.data.favorite === true)) snapshot.accountsWithFavorites++;
     if (friends.length) hoursToFirst.push((Math.min(...friends.map((f) => millis(f.data.since))) - created) / 3_600_000);
-    const kinds = new Set(devices.filter((d) => d.data.pushToken).map((d) => String(d.data.platform)));
-    bump(snapshot.devices, kinds.has("iphone") && kinds.has("watch") ? "both" : kinds.has("iphone") ? "iphone" : kinds.has("watch") ? "watch" : "none");
-    for (const d of devices) {
-      if (d.data.platform !== "iphone") continue;
-      if (d.data.pushType === "pushtotalk") snapshot.iphones.walkieTalkie++;
-      else if (d.data.pushToken === "app:") snapshot.iphones.appOnly++;
+    // Registrations, labelled as the dashboards always have.
+    const registered = devices.flatMap((d) => toDevice(d.id, d.data) ?? []);
+    const kinds = new Set(registered.map((d) => platformLabel(d.clientKind)));
+    bump(snapshot.devices, kinds.has("iphone") && kinds.has("watch") ? "both" : kinds.has("iphone") ? "iphone" : kinds.has("watch") ? "watch" : kinds.size ? [...kinds].sort().join("+") : "none");
+    for (const d of registered) {
+      if (d.clientKind !== "ios") continue;
+      if (d.delivery.provider === "apns" && d.delivery.mode === "pushtotalk") snapshot.iphones.walkieTalkie++;
+      else if (d.delivery.provider === "relay") snapshot.iphones.appOnly++;
     }
-    bump(snapshot.ringOn, u.data.ringOn === "watch" || u.data.ringOn === "iphone" ? String(u.data.ringOn) : "default");
+    bump(snapshot.ringOn, ringOnLabel(preferredFormFactorOf(u.data)));
     const heard = Math.max(0, ...friends.map((f) => millis(f.data.lastMessageAt)));
     const ago = now - heard;
     bump(snapshot.lastHeard, !heard ? "never" : ago < DAY_MS ? "day" : ago < 7 * DAY_MS ? "week" : ago < 30 * DAY_MS ? "month" : "older");

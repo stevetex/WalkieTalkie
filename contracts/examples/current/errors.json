@@ -1,0 +1,6 @@
+[
+  { "error": "ring-expired", "message": "This conversation has expired." },
+  { "error": "client-upgrade-required", "message": "Update Over&Out to keep talking.", "minimumBuild": 170 },
+  { "error": "unsupported-protocol", "message": "relay protocol 3 isn't supported", "supported": { "relayProtocols": [2] } },
+  { "error": "session-ended", "message": "session-ended" }
+]
