@@ -206,7 +206,7 @@ window. Rollback is the previous revisions and the snapshot.
 | P0.5 | Code done | Ring IDs and deadlines (required everywhere), one device per ring, answer claims, pending-ring lookup, ring-scoped prefetch, codec admission, provider-neutral delivery outcomes, FCM stub |
 | P0.6 | Code done | Kit, iPhone, watch and extension on v2 only; tolerant enums; update-required state; watch link with schema versions and request IDs |
 | P0.7 | Code done | Telemetry carries client kind, provider, mode and ring ID; simulated deliveries never count as delivered |
-| P0.8 | Done | Production cut over 2026-10-01/02 with `tools/migrate-v2.ts`: snapshot, plan, apply (additive, before and after the deploy), verify, cleanup (removes the v1 data after the deploy), retire, restore (`--exact` for the rollback); tested on v1-shaped records; production steps await Steve's OK |
+| P0.8 | Done | Production cut over 2026-10-01/02 with `tools/migrate-v2.ts`: snapshot, plan, apply (additive, before and after the deploy), verify, cleanup (removes the v1 data after the deploy), retire, restore (`--exact` for the rollback); tested on v1-shaped records |
 
 Release gates: the cutover, the device runs (build 171, runs 109–115) and the baseline tag are done;
 Helen's and Cooper's devices are still to update to build 182. Simulator runs on 2026-10-01 covered Apple↔Apple, Apple↔synthetic Android
