@@ -211,7 +211,7 @@ struct FocusSteps: View {
             step(1, "Open **Settings** and tap **Focus**.")
             step(2, "Tap a Focus you use, such as **Do Not Disturb** or **Sleep**.")
             step(3, "Under **Allow Notifications**, tap **Apps**, then **Add** and choose **Over&Out**.")
-            step(4, "Repeat for each Focus. Your watch follows your iPhone.")
+            step(4, "Repeat for each Focus. Your watch follows your iPhone by default.")
             Button {
                 if let url = URL(string: UIApplication.openSettingsURLString) { openURL(url) }
             } label: {
