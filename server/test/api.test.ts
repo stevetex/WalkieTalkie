@@ -377,7 +377,9 @@ test("one device rings: the watch by default, the iPhone when chosen, the other 
     const { alice, watchToken, bob } = await twoDevices(url);
     const bobClient = relayClient(url, "bob", bob.token, "ios");
     await bobClient.connect();
-    const pushes = () => pusher.sent.map((p) => [p.token, p.pushType ?? "alert"]);
+    // Rings only: each unanswered ring here also ends with its "Missed message" notice.
+    const rings = () => pusher.sent.filter((p) => !(p.payload as { missed?: number }).missed);
+    const pushes = () => rings().map((p) => [p.token, p.pushType ?? "alert"]);
 
     // The iPhone is in its PushToTalk channel, but the watch is the default.
     await register(url, alice.token, pushToTalk(PHONE));
@@ -397,7 +399,7 @@ test("one device rings: the watch by default, the iPhone when chosen, the other 
     await register(url, alice.token, inApp);
     ring = await bobClient.talk(alice.user.id, pcm(1), { realtime: false });
     assert.deepEqual(pushes().at(-1), [WATCH, "alert"]);
-    assert.equal(pusher.sent.length, 3);
+    assert.equal(rings().length, 3);
     await hangUp(bobClient, ring.conversationId);
 
     // With the app on screen, the iPhone rings in the app, over its stream.
@@ -405,7 +407,7 @@ test("one device rings: the watch by default, the iPhone when chosen, the other 
     await alicePhone.connect();
     ring = await bobClient.talk(alice.user.id, pcm(1), { realtime: false });
     assert.equal((await alicePhone.waitFor("ring")).conversationId, ring.conversationId);
-    assert.equal(pusher.sent.length, 3);
+    assert.equal(rings().length, 3);
     await hangUp(bobClient, ring.conversationId);
     alicePhone.close();
     await sleep(50);

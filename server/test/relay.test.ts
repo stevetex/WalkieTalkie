@@ -263,6 +263,18 @@ test("an unanswered ring drops the unheard audio and the next talk rings again",
       const timeout = await a.waitFor("ring-timeout");
       assert.equal(timeout.peer, bob.id);
       assert.equal(timeout.droppedBursts, 2);
+      // The watch's "Tap to listen" is replaced: same collapse ID, no sound, no ring ID (so the
+      // app doesn't take it for a ring), passive.
+      assert.equal(h.pusher.sent.length, 2);
+      const [ring, missed] = h.pusher.sent;
+      const notice = missed.payload as Record<string, unknown> & { aps: Record<string, unknown> };
+      assert.equal(missed.collapseId, ring.collapseId);
+      assert.deepEqual(notice.aps.alert, { title: "Alice", body: "Missed message" });
+      assert.equal(notice.aps["interruption-level"], "passive");
+      assert.equal(notice.aps.sound, undefined);
+      assert.equal(notice.ringId, undefined);
+      assert.deepEqual([notice.missed, notice.conversationId, notice.from], [1, first.conversationId, alice.id]);
+      assert.ok(missed.expiresAt > Date.now() + 23 * 3600_000);
 
       // Bob answering late hears nothing stale: that ring has ended.
       const late = pushed(h, 0).ringId;
@@ -273,8 +285,8 @@ test("an unanswered ring drops the unheard audio and the next talk rings again",
 
       const next = await a.talk(bob.id, pcm(2), { realtime: false });
       assert.equal(next.pushed, true);
-      assert.equal(h.pusher.sent.length, 2);
-      const ringId = pushed(h, 1).ringId;
+      assert.equal(h.pusher.sent.length, 3);
+      const ringId = pushed(h, 2).ringId;
       assert.notEqual(ringId, late);
       b.send({ type: "join", conversationId: next.conversationId, ringId });
       assert.equal((await b.waitFor("joined")).replayBursts, 1);
