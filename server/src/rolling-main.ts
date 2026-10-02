@@ -26,7 +26,7 @@ import { join } from "node:path";
 import { CANARY_DEVICE, canaryToken, runCanary, type CanaryResult } from "./canary.ts";
 import { parseMinimumBuilds, type MinimumBuilds } from "./contract.ts";
 import type { Docs } from "./docs.ts";
-import type { FirestoreData } from "./firestore.ts";
+import type { FirestoreData, FirestoreDocument } from "./firestore.ts";
 import { DAY_MS, jobContext, relayNodes, utcDate, type ReadEntries } from "./job-env.ts";
 import { fetchRelayStats, sumRelayStats } from "./ops-relay.ts";
 import { ROLLING_KINDS, botsFromEnv, providersOf, rollingStats, type Bots, type RollingStats } from "./stats.ts";
@@ -41,6 +41,8 @@ export interface RollingDocument extends RollingStats {
   canary: { runs: number; passes: number; last?: CanaryResult; history: CanaryResult[] };
   // Unresolved user reports, and when the oldest was made.
   openReports: { count: number; oldestAt?: number };
+  // Accounts now (the bots left out), and by sign-in provider.
+  accounts: { total: number; byProvider: Record<string, number> };
   relayNodes: { total: number; answering: number };
 }
 
@@ -96,6 +98,7 @@ export async function rollingRun(run: RollingRun): Promise<RollingDocument> {
       history,
     },
     openReports: { count: openReports.length, ...(oldest ? { oldestAt: oldest } : {}) },
+    accounts: accountCounts(users, run.bots),
     relayNodes: relay ? { total: relay.total, answering: relay.answering } : (before?.relayNodes ?? { total: 0, answering: 0 }),
   };
   await run.out.commit([{ set: `statsLive/${date}`, data: { ...JSON.parse(JSON.stringify(doc)), expireAt: new Date(dayStart + 14 * DAY_MS) } }]);
@@ -104,6 +107,13 @@ export async function rollingRun(run: RollingRun): Promise<RollingDocument> {
     (run.sink ?? new StdoutSink()).write({ kind: "oao.canary", ...fields }, canary.ok ? "INFO" : "WARNING");
   }
   return doc;
+}
+
+function accountCounts(users: FirestoreDocument[], bots: Bots): RollingDocument["accounts"] {
+  const people = users.filter((u) => u.id !== bots.testBot && u.id !== bots.canary);
+  const byProvider: Record<string, number> = {};
+  for (const provider of providersOf(people).values()) byProvider[provider] = (byProvider[provider] ?? 0) + 1;
+  return { total: people.length, byProvider };
 }
 
 function millis(value: unknown): number {

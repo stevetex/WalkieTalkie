@@ -72,3 +72,7 @@ RELAY_PUBLIC_HOST=""
 CANARY_USER_ID=""
 RELAY_NODES=""
 OPS_URL=""
+# The dashboard's IAP OAuth client (setup-ops.sh): made in the console, under the "Over&Out"
+# consent screen (APIs & Services → Credentials → Web application).
+OPS_OAUTH_CLIENT_ID=""
+OPS_OAUTH_CLIENT_SECRET=""

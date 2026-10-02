@@ -287,6 +287,7 @@ test("the rolling run: statsLive/{date}, the peaks kept, the Canary's history an
     sink,
   });
   assert.deepEqual(first.openReports, { count: 1, oldestAt: Date.parse("2026-10-09T01:00:00Z") });
+  assert.deepEqual(first.accounts, { total: 2, byProvider: { apple: 2 } });
   assert.equal(first.canary.passes, 1);
   // The relay restarted (its peaks are lower) and the Canary failed: the day's peaks stay.
   const second = await rollingRun({

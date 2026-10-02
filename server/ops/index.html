@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Over&amp;Out Ops</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="/ops.css">
+<script src="/ops.js" defer></script>
+</head>
+<body>
+<!-- The page is filled in by ops.js from /api/live (every 5 s) and /api/summary (every 60 s),
+     both paused while the tab is hidden. OPS_DASHBOARD_SPEC.md says what each number means. -->
+<header class="mast">
+  <div class="mast-in">
+    <div class="brand">
+      <svg width="26" height="30" viewBox="0 0 26 30" aria-hidden="true"><rect x="4" y="9" width="18" height="20" rx="4" fill="#ff8b1a"/><rect x="16" y="1" width="3" height="10" rx="1.5" fill="#ff8b1a"/><rect x="8" y="13" width="10" height="6" rx="1.5" fill="#252a51"/><circle cx="13" cy="24" r="2.2" fill="#252a51"/></svg>
+      <h1>Over<span>&amp;</span>Out Ops</h1>
+    </div>
+    <div class="env"><span><span class="dot"></span>Production</span><span>us-central1</span><span id="nodes">relay · api · Firestore</span><span id="who"></span></div>
+    <div class="controls">
+      <a id="service-graphs" href="#" hidden>Service graphs ↗</a>
+      <div class="seg" role="group" aria-label="Time range for engagement and rings">
+        <button type="button" data-range="today" aria-pressed="true">Today</button>
+        <button type="button" data-range="7d" aria-pressed="false">7 days</button>
+        <button type="button" data-range="30d" aria-pressed="false">30 days</button>
+      </div>
+      <label class="toggle" for="bot"><input type="checkbox" id="bot"><span class="switch"></span>Include Test Bot</label>
+      <span class="updated" id="updated">Loading…</span>
+    </div>
+  </div>
+</header>
+<div class="mockbar" id="sample" hidden>Local run: the Cloud Monitoring numbers are samples.</div>
+
+<main class="wrap">
+
+  <div class="legend" aria-label="How fresh each number is">
+    <div><span class="fresh"><span class="sig s4"><i></i><i></i><i></i><i></i></span>Live · 5 s</span><p>Polled from the relays' memory while this page is open.</p></div>
+    <div><span class="fresh"><span class="sig s3"><i></i><i></i><i></i><i></i></span>Near-live · 1 min</span><p>Cloud Monitoring: service metrics and the <code>oao_*</code> log-based metrics.</p></div>
+    <div><span class="fresh"><span class="sig s2"><i></i><i></i><i></i><i></i></span>Rolling · 15 min</span><p>The <code>stats-rolling</code> job's today-so-far totals and the Canary.</p></div>
+    <div><span class="fresh"><span class="sig s1"><i></i><i></i><i></i><i></i></span>Daily · 00:30 UTC</span><p>The <code>stats/{date}</code> rollup and the accounts snapshot.</p></div>
+    <div><span class="fresh"><span class="sig doc"></span>Report</span><p>Made nightly, or on request: cohorts, deep dives, anything that needs joins.</p></div>
+  </div>
+
+  <section id="now">
+    <div class="sec-h">
+      <h2>Right now</h2><span class="q">Is the service up, and what's on the air?</span>
+      <div class="right"><span class="fresh" data-tier="live"></span></div>
+    </div>
+    <div class="grid">
+      <div class="card c4" id="card-open"></div>
+      <div class="card c4" id="card-devices"></div>
+      <div class="card c4" id="card-health"></div>
+      <div class="card c8" id="card-air"></div>
+      <div class="card c4" id="card-canary"></div>
+    </div>
+  </section>
+
+  <section id="engagement">
+    <div class="sec-h">
+      <h2>Engagement</h2><span class="q">Are people using it, and how much do they talk?</span>
+      <div class="right"><span class="fresh" data-tier="rolling"></span><a href="/reports/retention-cohorts">Retention cohorts →</a></div>
+    </div>
+    <div class="card">
+      <div class="kpis" id="kpis"></div>
+      <div class="note"><b>Active</b> means the account talked or listened to a friend that day (UTC); opening the app alone doesn't count, and the Test Bot and the Canary never do. DAU is today so far; WAU, MAU and DAU/MAU come from the daily rollup. <span id="dau-providers"></span></div>
+    </div>
+    <div class="grid">
+      <div class="card c7" id="card-depth"></div>
+      <div class="card c5" id="card-conversations"></div>
+    </div>
+  </section>
+
+  <section id="rings">
+    <div class="sec-h">
+      <h2>Rings and delivery</h2><span class="q">When someone calls, does their friend hear it?</span>
+      <div class="right"><span class="fresh" data-tier="rolling"></span><a href="/reports/ring-delivery">Ring delivery report →</a></div>
+    </div>
+    <div class="grid">
+      <div class="card c8" id="card-funnel"></div>
+      <div class="card c4" id="card-push"></div>
+    </div>
+  </section>
+
+  <section id="speed">
+    <div class="sec-h">
+      <h2>Speed</h2><span class="q">How long from a tap or a push to a voice?</span>
+      <div class="right"><span class="fresh" data-tier="rolling"></span><a href="/reports/speed-by-build">Speed by build →</a></div>
+    </div>
+    <div class="card" id="card-speed"></div>
+  </section>
+
+  <section id="quality">
+    <div class="sec-h">
+      <h2>Quality and stability</h2><span class="q">Is anything breaking on people's devices?</span>
+      <div class="right"><span class="fresh" data-tier="rolling"></span><a href="/reports/audio-quality">Audio quality report →</a></div>
+    </div>
+    <div class="grid">
+      <div class="card c8" style="padding:0" id="card-quality"></div>
+      <div class="card c4" id="card-feedback"></div>
+    </div>
+  </section>
+
+  <section id="growth">
+    <div class="sec-h">
+      <h2>Growth and network</h2><span class="q">Are new people arriving and connecting?</span>
+      <div class="right"><span class="fresh" data-tier="daily"></span><a href="/reports/invite-funnel">Invite funnel →</a></div>
+    </div>
+    <div class="grid">
+      <div class="card c3" id="card-accounts"></div>
+      <div class="card c3" id="card-invites"></div>
+      <div class="card c3" id="card-activation"></div>
+      <div class="card c3" id="card-settings"></div>
+    </div>
+  </section>
+
+  <section id="data">
+    <div class="sec-h">
+      <h2>Data, capacity and cost</h2><span class="q">How big is it getting, and what does it cost?</span>
+      <div class="right"><span class="fresh" data-tier="near"></span><a href="/reports/cost-quotas">Cost and quotas →</a></div>
+    </div>
+    <div class="grid">
+      <div class="card c5" id="card-collections"></div>
+      <div class="card c4" id="card-headroom"></div>
+      <div class="card c3" id="card-capacity"></div>
+    </div>
+  </section>
+
+  <section id="safety">
+    <div class="sec-h">
+      <h2>Trust and safety</h2><span class="q">Are we keeping the promise to act on reports within a day?</span>
+      <div class="right"><span class="fresh" data-tier="rolling"></span></div>
+    </div>
+    <div class="grid">
+      <div class="card c4" id="card-reports-open"></div>
+      <div class="card c8" style="padding:0" id="card-safety"></div>
+    </div>
+  </section>
+
+  <section id="reports">
+    <div class="sec-h">
+      <h2>Reports</h2><span class="q">Questions that need joins, history or a closer look</span>
+      <div class="right"><span class="fresh"><span class="sig doc"></span>Nightly after the 00:30 UTC rollup, or on request</span></div>
+    </div>
+    <div class="reports" id="report-list"></div>
+  </section>
+
+</main>
+</body>
+</html>
