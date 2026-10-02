@@ -10,8 +10,10 @@
 #   1. APIs & Services → OAuth consent screen: External, app name "Over&Out", support email
 #      support@cypressoakstudios.com, privacy policy https://overandout.app/privacy, scopes
 #      name, email and profile only, no logo; publishing status In production.
-#   2. APIs & Services → Credentials → OAuth client ID → Web application, "Over&Out Ops (IAP)".
-#      Then put its ID and secret in config.sh as OPS_OAUTH_CLIENT_ID and OPS_OAUTH_CLIENT_SECRET
+#   2. Google Auth Platform → Clients → Create client → Web application, "Over&Out Ops (IAP)".
+#      Copy the secret at once (it's shown only then). Then edit the client and add the
+#      authorized redirect URI https://iap.googleapis.com/v1/oauth/clientIds/<client ID>:handleRedirect
+#      Put the ID and secret in config.sh as OPS_OAUTH_CLIENT_ID and OPS_OAUTH_CLIENT_SECRET
 #      (never printed; passed to IAP's settings below).
 # Then grant people with ops-access.sh. After this, redeploy the relay (deploy-relay.sh) so it
 # reads the new token, and re-run setup-stats.sh so the rolling job does too.

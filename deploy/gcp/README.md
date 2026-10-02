@@ -190,7 +190,7 @@ For the Beta, the one charge is the static IP, about $3.65 a month. One e2-micro
 
 The product dashboard ([OPS_DASHBOARD_SPEC.md](../../OPS_DASHBOARD_SPEC.md)): a Cloud Run service `ops` behind Identity-Aware Proxy, the rolling job `stats-rolling` with the Canary, and nightly reports. In order, each with Steve's OK:
 
-1. Console: the "Over&Out" OAuth consent screen and an IAP web client (`setup-ops.sh`'s header has the settings); put the client's ID and secret in `config.sh` (`OPS_OAUTH_CLIENT_ID`, `OPS_OAUTH_CLIENT_SECRET`).
+1. Console: the "Over&Out" OAuth consent screen and an IAP web client with the redirect URI `https://iap.googleapis.com/v1/oauth/clientIds/<client ID>:handleRedirect` (`setup-ops.sh`'s header has the settings); put the client's ID and secret in `config.sh` (`OPS_OAUTH_CLIENT_ID`, `OPS_OAUTH_CLIENT_SECRET`).
 2. `node server/tools/test-account.ts canary` (with `TEST_BOT_USER_ID` set) makes the Canary; put its ID in `config.sh` as `CANARY_USER_ID`.
 3. `deploy/gcp/setup-ops.sh`: the `ops-viewer` account, the `ops-stats-token` secret, the service behind IAP. Put the URL it prints in `config.sh` as `OPS_URL`.
 4. `deploy/gcp/deploy-relay.sh` (about 2 minutes without the relay): the relay reads the token and leaves the Canary out of its live view.
