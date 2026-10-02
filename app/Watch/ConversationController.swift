@@ -514,7 +514,11 @@ final class ConversationController: NSObject, ObservableObject {
         guard let prefetched = Prefetched.take(ring: ring, userId: account.session?.userId) else { return }
         let meta = prefetched.meta
         if let t = meta["receivedAt"] as? Double { conversation?.timeline.mark("nseReceived", at: t) }
-        if let t = meta["fetchStartedAt"] as? Double { conversation?.timeline.mark("nseFetchStarted", at: t) }
+        // Which ring the files were downloaded for, and its deadline (they're keyed by the ring).
+        if let t = meta["fetchStartedAt"] as? Double {
+            let expires = (meta["expiresAt"] as? Double).map { ", expires \(Int($0))" } ?? ""
+            conversation?.timeline.mark("nseFetchStarted", at: t, detail: "\(meta["ringId"] as? String ?? "no ring")\(expires)")
+        }
         let error = (meta["error"] as? String).map { ", \($0)" } ?? ""
         if let t = meta["fetchEndedAt"] as? Double {
             conversation?.timeline.mark("nseFetchEnded", at: t,
@@ -579,7 +583,13 @@ final class ConversationController: NSObject, ObservableObject {
                 } catch {
                     detail = "error: \(error.localizedDescription.prefix(60))"
                 }
-                guard let self, self.conversation?.conversationId == conversationId else { return }
+                // A late tap's conversation has usually ended (the join was refused) before the
+                // report comes back: it goes in as an event instead, so the 410 still shows.
+                guard let self, self.conversation?.conversationId == conversationId else {
+                    Telemetry.shared.event("answerReported", ["conversationId": conversationId, "ringId": ring.ringId, "result": detail,
+                                                              "ms": Int(Clock.nowMs() - sentAt)])
+                    return
+                }
                 self.conversation?.timeline.mark("answerReportSent", at: sentAt)
                 self.conversation?.timeline.mark("answerReported", detail: detail)
             }
@@ -592,7 +602,7 @@ final class ConversationController: NSObject, ObservableObject {
         preconnect = (Clock.nowMs(), nil)
         account.withToken { [unowned self] session in
             guard let session, preconnect != nil, conversation == nil else { return }
-            relay.connect(baseURL: baseURL, token: session.token, userId: session.userId)
+            relay.connect(baseURL: baseURL, token: session.token)
         }
     }
 
@@ -667,11 +677,27 @@ final class ConversationController: NSObject, ObservableObject {
         }
     }
 
+    /// The conversation's ring notifications, and the relay's "Missed message" that replaces an
+    /// unanswered one (it has no ring ID, so it's matched by the conversation).
     private func removeDeliveredNotifications(for conversationId: String) {
         UNUserNotificationCenter.current().getDeliveredNotifications { notifications in
             let ids = notifications
-                .filter { Ring(userInfo: $0.request.content.userInfo)?.conversationId == conversationId }
+                .filter { $0.request.content.userInfo["conversationId"] as? String == conversationId }
                 .map(\.request.identifier)
+            UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: ids)
+        }
+    }
+
+    /// Ring notifications whose deadline has passed: the relay has dropped their message, so
+    /// "Tap to listen" would only lead to Missed. Called when the app comes to the front (the
+    /// relay also replaces them with "Missed message", but only once it reaches the watch).
+    func removeExpiredRingNotifications() {
+        let offset = clockOffsetMs
+        UNUserNotificationCenter.current().getDeliveredNotifications { notifications in
+            let ids = notifications
+                .filter { Ring(userInfo: $0.request.content.userInfo)?.isExpired(clockOffsetMs: offset) == true }
+                .map(\.request.identifier)
+            guard !ids.isEmpty else { return }
             UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: ids)
         }
     }
@@ -728,7 +754,7 @@ final class ConversationController: NSObject, ObservableObject {
                 // The app shows its sign-in prompt.
                 return finish()
             }
-            relay.connect(baseURL: baseURL, token: session.token, userId: session.userId, join: join, ring: ring, resume: resume)
+            relay.connect(baseURL: baseURL, token: session.token, join: join, ring: ring, resume: resume)
         }
     }
 
@@ -863,6 +889,7 @@ final class ConversationController: NSObject, ObservableObject {
         case "error":
             log("Relay error: \(message.code ?? message.message ?? "unknown")")
             let receiving = conversation?.outgoing == false && conversation?.joined == false
+            if receiving, let code = message.code { conversation?.timeline.mark("joinRefused", detail: code) }
             switch message.code {
             case "ring-expired" where receiving, "unknown-conversation" where receiving:
                 // Answered after the relay gave up on the ring (or a newer one replaced it): the

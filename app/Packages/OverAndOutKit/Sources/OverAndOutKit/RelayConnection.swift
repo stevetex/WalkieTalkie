@@ -191,7 +191,7 @@ public final class RelayConnection: NSObject, URLSessionDataDelegate {
     /// names the ring being answered (none for a rejoin or a move). `resume`, with `join`,
     /// rejoins after the stream dropped mid-message: the relay replays that burst from the
     /// first frame missed.
-    public func connect(baseURL: URL, token: String, userId: String, join: String? = nil, ring: String? = nil, resume: RelayResume? = nil) {
+    public func connect(baseURL: URL, token: String, join: String? = nil, ring: String? = nil, resume: RelayResume? = nil) {
         close()
         self.token = token
         let configuration = URLSessionConfiguration.default
@@ -203,16 +203,15 @@ public final class RelayConnection: NSObject, URLSessionDataDelegate {
 
         helloSentAt = Clock.nowMs()
         var stream = URLComponents(url: baseURL.appendingPathComponent("v2/relay/stream"), resolvingAgainstBaseURL: false)
+        // The session token says who's connecting: no user ID in the query.
         stream?.queryItems = [
-            URLQueryItem(name: "userId", value: userId),
             URLQueryItem(name: "clientTime", value: String(Int(helloSentAt))),
         ] + (join.map { [URLQueryItem(name: "join", value: $0)] } ?? [])
             + (join != nil ? ring.map { [URLQueryItem(name: "ring", value: $0)] } ?? [] : [])
             + (join != nil ? resume.map { [URLQueryItem(name: "resumeBurst", value: $0.burstId),
                                           URLQueryItem(name: "resumeFrom", value: String($0.fromSeq))] } ?? [] : [])
-        var send = URLComponents(url: baseURL.appendingPathComponent("v2/relay/send"), resolvingAgainstBaseURL: false)
-        send?.queryItems = [URLQueryItem(name: "userId", value: userId)]
-        guard let streamURL = stream?.url, let sendURL = send?.url else { return }
+        let sendURL = baseURL.appendingPathComponent("v2/relay/send")
+        guard let streamURL = stream?.url else { return }
         self.sendURL = sendURL
 
         let task = session.dataTask(with: request(streamURL))

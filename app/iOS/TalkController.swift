@@ -208,7 +208,7 @@ final class TalkController: ObservableObject {
                 idleStream = false
                 return
             }
-            relay.connect(baseURL: baseURL, token: session.token, userId: session.userId)
+            relay.connect(baseURL: baseURL, token: session.token)
         }
     }
 
@@ -403,7 +403,7 @@ final class TalkController: ObservableObject {
                 return finish(status: "You're signed out")
             }
             log(join.map { "Connecting to the relay, joining \($0)" } ?? "Connecting to the relay")
-            relay.connect(baseURL: baseURL, token: session.token, userId: session.userId, join: join, ring: ring, resume: resume)
+            relay.connect(baseURL: baseURL, token: session.token, join: join, ring: ring, resume: resume)
         }
     }
 
