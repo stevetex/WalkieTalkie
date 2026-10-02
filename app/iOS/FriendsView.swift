@@ -109,7 +109,7 @@ struct FriendsView: View {
                 VStack(alignment: .leading, spacing: 10) {
                     Label("Walkie-talkie is off", systemImage: "iphone.slash")
                         .font(.headline)
-                    Text(model.formFactors.contains(.watch)
+                    Text(model.watchCanRing
                          ? "Friends' messages ring your Apple Watch instead of playing on this iPhone."
                          : "Friends' messages won't play on this iPhone until you turn it on.")
                         .font(.callout)

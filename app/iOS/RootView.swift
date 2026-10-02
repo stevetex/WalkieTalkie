@@ -6,6 +6,7 @@ import SwiftUI
 struct RootView: View {
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var talk: TalkController
+    @EnvironmentObject private var watch: PhoneWatchLink
     @State private var path: [Friend] = []
     @AppStorage(Appearance.key) private var appearance = Appearance.system
 
@@ -44,13 +45,16 @@ struct RootView: View {
             InviteAcceptView()
                 .environmentObject(model)
         }
-        // A watch and this iPhone on one account: ask once. The watch comes first (design
-        // decision 2026-09-29), so it's the default, bold answer.
+        // A watch and this iPhone on one account: ask once. Apple Watch only comes first and
+        // is the default, bold answer (design decision 2026-10-02).
+        .onChange(of: watch.isPaired) { _, _ in model.askRingChoiceIfNeeded() }
         .alert("Where should friends ring you?", isPresented: ringOnBinding) {
-            Button("Apple Watch", role: .cancel) { Task { await model.setRingOn(.watch) } }
-            Button("This iPhone") { Task { await model.setRingOn(.phone) } }
+            ForEach(RingChoice.allCases) { choice in
+                Button(choice.title) { Task { await model.setRingChoice(choice) } }
+                    .keyboardShortcut(choice == .watchOnly ? .defaultAction : nil)
+            }
         } message: {
-            Text("Over&Out is on your Apple Watch and this iPhone. Only one of them rings, your Apple Watch unless you choose this iPhone. You can change this in Settings.")
+            Text("Over&Out is on your Apple Watch and this iPhone. With Apple Watch, Then iPhone, your iPhone rings if you don't answer your watch within 12 seconds. You can change this in Settings.")
         }
         .alert("Over&Out", isPresented: errorBinding) {
             Button("OK", role: .cancel) {}

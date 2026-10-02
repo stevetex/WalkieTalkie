@@ -117,7 +117,7 @@ Yes: Identity-Aware Proxy (IAP) puts Google sign-in in front of the `ops` servic
 
 The project has no Google Cloud organization, so IAP can't use Google's managed OAuth client and the client can't be created from the command line ([custom OAuth](https://docs.cloud.google.com/iap/docs/custom-oauth-configuration)):
 
-1. **OAuth consent screen:** user type External, app name "Over&Out" (the app's name, not the dashboard's; see below), support email support@cypressoakstudios.com, privacy policy overandout.app/privacy, scopes only name, email and profile, no logo for now.
+1. **OAuth consent screen:** user type External, app name "Over&Out" (the app's name, not the dashboard's; see below), support email overandout@cypressoakstudios.com, privacy policy overandout.app/privacy, scopes only name, email and profile, no logo for now.
 2. **Publishing status:** In production, so anyone Steve grants can sign in without also being a test user. With only the basic scopes this should need no Google verification; to confirm when Steve publishes it. If Google asks for verification, stay in Testing, which allows 100 test users, and add each person as a test user too.
 3. **OAuth client:** a Web application client for IAP. `setup-ops.sh` then passes its ID and secret to IAP's settings.
 

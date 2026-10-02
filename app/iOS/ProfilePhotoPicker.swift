@@ -57,7 +57,8 @@ struct PictureChooser: View {
     @Environment(\.dismiss) private var dismiss
     @State private var selection: PhotosPickerItem?
 
-    private let columns = [GridItem(.adaptive(minimum: 84), spacing: 16)]
+    /// Three across, so each mascot is about 100 pt on the smallest iPhone.
+    private let columns = Array(repeating: GridItem(.flexible(), spacing: 16), count: 3)
 
     /// The mascot shown for you now: your choice, or the default without a photo.
     private var current: Mascot? {
@@ -124,15 +125,17 @@ struct PictureChooser: View {
 
     /// The picture alone; its name is only for VoiceOver.
     private func cell(_ mascot: Mascot) -> some View {
-        Image(mascot.imageName)
-            .resizable()
-            .scaledToFill()
-            .frame(width: 76, height: 76)
+        Color.clear
+            .aspectRatio(1, contentMode: .fit)
+            .overlay {
+                Image(mascot.imageName)
+                    .resizable()
+                    .scaledToFill()
+            }
             .clipShape(Circle())
             .overlay {
                 Circle().stroke(mascot == current ? Brand.orange : .clear, lineWidth: 4)
             }
-            .frame(maxWidth: .infinity)
     }
 
     private func choose(_ mascot: Mascot) {

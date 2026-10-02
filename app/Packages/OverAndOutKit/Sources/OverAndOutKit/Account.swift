@@ -469,6 +469,12 @@ public actor AccountClient {
         try await request("PATCH", "/v2/me", body: ["rollOver": on])
     }
 
+    /// Which kind of device rings first and whether an unanswered watch rolls over to the
+    /// iPhone, in one request (the iPhone's "When Friends Ring You").
+    public func setRingPreference(_ formFactor: FormFactor, rollOver: Bool) async throws -> AccountUser {
+        try await request("PATCH", "/v2/me", body: ["preferredFormFactor": formFactor.rawValue, "rollOver": rollOver])
+    }
+
     /// A built-in mascot as the profile picture (replacing any photo); nil removes it.
     public func setAvatar(_ mascot: Mascot?) async throws -> AccountUser {
         try await request("PATCH", "/v2/me", body: ["avatar": mascot?.rawValue ?? NSNull()])
