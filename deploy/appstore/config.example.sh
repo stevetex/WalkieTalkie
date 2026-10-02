@@ -11,3 +11,6 @@ ASC_ISSUER_ID=""
 
 # The internal TestFlight group that gets every build.
 ASC_GROUP="House"
+
+# The external TestFlight group that asc.ts beta-review submits builds for (Beta App Review).
+ASC_EXTERNAL_GROUP="Early Testers"

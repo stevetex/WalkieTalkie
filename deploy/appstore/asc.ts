@@ -8,6 +8,13 @@
 //       Waits for Apple to finish processing the build (testflight.sh runs this), sets its
 //       What to Test notes, and makes sure the internal group (ASC_GROUP) has it.
 //
+//   node deploy/appstore/asc.ts beta-review <build> [--group "Early Testers"]
+//       External TestFlight: adds a processed build to the external group (ASC_EXTERNAL_GROUP,
+//       default "Early Testers") and submits it for Beta App Review, after printing what review
+//       sees (What to Test, the beta description and feedback email, the review contact). Run
+//       again to see the review's state. Apple emails when the review is done; then the group's
+//       testers (and its public link) get the build.
+//
 //   node deploy/appstore/asc.ts add-tester <email> [first name] [last name]
 //       Adds someone to the internal group. Internal testers must already be users on the
 //       App Store Connect team (Users and Access), with any role.
@@ -51,7 +58,13 @@ const groupName = config.ASC_GROUP || "House";
 
 const { positionals, values } = parseArgs({
   allowPositionals: true,
-  options: { notes: { type: "string" }, days: { type: "string" }, log: { type: "string" }, replace: { type: "boolean" } },
+  options: {
+    notes: { type: "string" },
+    days: { type: "string" },
+    log: { type: "string" },
+    replace: { type: "boolean" },
+    group: { type: "string" },
+  },
 });
 const [command, ...args] = positionals;
 
@@ -188,6 +201,53 @@ switch (command) {
       await api("POST", `/v1/betaGroups/${group.id}/relationships/builds`, { data: [{ type: "builds", id: found.id }] });
     }
     console.log(`"${groupName}" has build ${build}; testers get it in the TestFlight app.`);
+    break;
+  }
+  case "beta-review": {
+    const build = args[0] ?? fail('usage: beta-review <build> [--group "Early Testers"]');
+    const name = values.group || config.ASC_EXTERNAL_GROUP || "Early Testers";
+    const app = await appId();
+    const found = await findBuild(app, build);
+    if (!found) fail(`No build ${build} in App Store Connect.`);
+    if (found.attributes.processingState !== "VALID") fail(`Build ${build} is ${found.attributes.processingState}, not processed yet.`);
+    const groups = await api("GET", `/v1/apps/${app}/betaGroups?limit=50`);
+    const group = groups.data.find((g: any) => g.attributes.name === name && !g.attributes.isInternalGroup);
+    if (!group) fail(`No external group named "${name}".`);
+
+    // What Beta App Review sees; Apple refuses the submission if a required part is missing.
+    const [notes, appLocalizations, reviewDetail] = await Promise.all([
+      api("GET", `/v1/builds/${found.id}/betaBuildLocalizations`),
+      api("GET", `/v1/apps/${app}/betaAppLocalizations`),
+      api("GET", `/v1/apps/${app}/betaAppReviewDetail`),
+    ]);
+    const whatsNew = notes.data.find((l: any) => l.attributes.locale === "en-US")?.attributes.whatsNew;
+    const local = appLocalizations.data.find((l: any) => l.attributes.locale === "en-US") ?? appLocalizations.data[0];
+    const review = reviewDetail.data?.attributes ?? {};
+    const check = (label: string, ok: unknown) => console.log(`  ${ok ? "✓" : "✗"} ${label}`);
+    console.log(`Build ${build} (${found.attributes.version}), external group "${name}":`);
+    check("What to Test", whatsNew);
+    check("Beta description", local?.attributes.description);
+    check("Feedback email", local?.attributes.feedbackEmail);
+    check("Privacy policy URL", local?.attributes.privacyPolicyUrl);
+    check("Review contact", review.contactEmail && review.contactPhone);
+    check("Review notes", review.notes);
+    check(`Encryption answered (${found.attributes.usesNonExemptEncryption === false ? "exempt" : found.attributes.usesNonExemptEncryption ?? "not set"})`, found.attributes.usesNonExemptEncryption !== null && found.attributes.usesNonExemptEncryption !== undefined);
+
+    // A build uploaded with testFlightInternalTestingOnly can never go to an external group.
+    const detail = (await api("GET", `/v1/builds/${found.id}/buildBetaDetail`)).data.attributes;
+    console.log(`  TestFlight states: internal ${detail.internalBuildState}, external ${detail.externalBuildState}`);
+
+    const existing = await api("GET", `/v1/builds/${found.id}/betaAppReviewSubmission`).catch(() => null);
+    if (existing?.data) {
+      console.log(`Already submitted: Beta App Review state ${existing.data.attributes.betaReviewState}.`);
+      break;
+    }
+    await api("POST", `/v1/betaGroups/${group.id}/relationships/builds`, { data: [{ type: "builds", id: found.id }] });
+    console.log(`Added build ${build} to "${name}".`);
+    const submission = await api("POST", "/v1/betaAppReviewSubmissions", {
+      data: { type: "betaAppReviewSubmissions", relationships: { build: { data: { type: "builds", id: found.id } } } },
+    });
+    console.log(`Submitted for Beta App Review: ${submission.data.attributes.betaReviewState}. Apple emails when it's reviewed (often within a day).`);
     break;
   }
   case "add-tester": {

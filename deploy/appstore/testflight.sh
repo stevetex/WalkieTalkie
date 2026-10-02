@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Archives the iPhone app (with the watch app and its notification service extension) in
-# Release and uploads it to App Store Connect for internal TestFlight testing, with the App
-# Store Connect API key in config.sh. Xcode's automatic signing makes the distribution
+# Release and uploads it to App Store Connect for TestFlight, with the App Store Connect API
+# key in config.sh. Internal testers ("House") get every build; for external testers, submit a
+# build for Beta App Review with asc.ts beta-review. Xcode's automatic signing makes the distribution
 # certificate and profiles it needs through the same key.
 #
 #   deploy/appstore/testflight.sh [--notes "What to test"]
@@ -56,7 +57,7 @@ cat >"$out/ExportOptions.plist" <<EOF
 	<key>signingStyle</key>
 	<string>automatic</string>
 	<key>testFlightInternalTestingOnly</key>
-	<true/>
+	<false/>
 	<key>manageAppVersionAndBuildNumber</key>
 	<false/>
 	<key>uploadSymbols</key>
