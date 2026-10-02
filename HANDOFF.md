@@ -4,7 +4,7 @@ Read this first. Over&Out: Watch Walkie Talkie replaces Apple's Watch Walkie-Tal
 
 ## Start here
 
-**Newest (2026-10-02): the Over&Out Ops dashboard is live** at https://ops-yqgprbu3ja-uc.a.run.app (Google sign-in through IAP; granted: stevelt@gmail.com; more with `deploy/gcp/ops-access.sh add <email>`). Built as PR #44 (branch `ops-dashboard`; [OPS_DASHBOARD_SPEC.md](OPS_DASHBOARD_SPEC.md)'s "Implementation status" says what was checked and where the build differs). **Merge PR #44 so `main` matches what runs.** Rolled out with Steve's OK, steps in `deploy/gcp/README.md` → "The Over&Out Ops dashboard":
+**Newest (2026-10-02): the Over&Out Ops dashboard is live** at https://ops-yqgprbu3ja-uc.a.run.app (Google sign-in through IAP; granted: stevelt@gmail.com and helen@imhelendt.com (Steve, 2026-10-02); more with `deploy/gcp/ops-access.sh add <email>`). Built as PR #44 (branch `ops-dashboard`; [OPS_DASHBOARD_SPEC.md](OPS_DASHBOARD_SPEC.md)'s "Implementation status" says what was checked and where the build differs). **Merge PR #44 so `main` matches what runs.** Rolled out with Steve's OK, steps in `deploy/gcp/README.md` → "The Over&Out Ops dashboard":
 - Steve made the "Over&Out" consent screen (In production) and the IAP web client in Google Auth Platform; its ID and secret are in `config.sh`.
 - The Canary is `u_E-YGZ216ctVAiDv3` (Apple stand-in `canary.overandout`, friend of the Test Bot, an iPhone session on device `canary`); `CANARY_USER_ID`, `OPS_URL` and `MONITORING_DASHBOARD` are in `config.sh`.
 - `setup-ops.sh`: service account `ops-viewer`, secret `ops-stats-token` (read by ops-viewer, relay-node, account-api), Cloud Run service `ops` (`api:21592cb`, behind IAP with the custom client).
