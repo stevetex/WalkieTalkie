@@ -39,7 +39,7 @@ struct RelayEndToEndTests {
         let sender = RelayConnection(identity: phone)
         var senderHeard: [RelayMessage] = []
         sender.onMessage = { senderHeard.append($0) }
-        sender.connect(baseURL: base, token: alice.token, userId: alice.userId)
+        sender.connect(baseURL: base, token: alice.token)
         defer { sender.close() }
         let first = UUID().uuidString
         talk(sender, to: bob.userId, burstId: first, frames: replayed)
@@ -71,7 +71,7 @@ struct RelayEndToEndTests {
             heard[burst, default: []].append(frame)
         }
         let answerAt = Clock.nowMs()
-        receiver.connect(baseURL: base, token: bob.token, userId: bob.userId, join: conversationId, ring: ring.ringId)
+        receiver.connect(baseURL: base, token: bob.token, join: conversationId, ring: ring.ringId)
         defer { receiver.close() }
         try await pollUntil(seconds: 10) { messages.contains { $0.type == "burst-end" && $0.burstId == first } }
         let replayDoneAt = Clock.nowMs()

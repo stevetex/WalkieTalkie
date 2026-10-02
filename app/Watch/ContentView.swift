@@ -53,6 +53,7 @@ struct ContentView: View {
                 return
             }
             defer { leftAt = nil }
+            controller.removeExpiredRingNotifications()
             guard let leftAt, Date().timeIntervalSince(leftAt) >= Self.homeAfter,
                   controller.phase == .idle, controller.incomingRing == nil else { return }
             path = []

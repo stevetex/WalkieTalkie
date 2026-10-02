@@ -58,7 +58,7 @@ final class NotificationService: UNNotificationServiceExtension {
             $0.meta["receivedAt"] = receivedAt
             $0.conversationId = conversationId
         }
-        Self.diagnostics(["name": "nseStarted", "prefetch": info["prefetch"] != nil], requestId: requestId, conversationId: conversationId)
+        Self.diagnostics(["name": "nseStarted", "prefetch": info["prefetch"] != nil, "ringId": ringId ?? "none"], requestId: requestId, conversationId: conversationId)
         guard info["prefetch"] != nil, info["conversationId"] is String, let ringId,
               let group = Bundle.main.object(forInfoDictionaryKey: "OAOAppGroup") as? String,
               let container = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: group),

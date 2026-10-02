@@ -132,7 +132,7 @@ struct RelayConnectionTests {
         let relay = connection(stampsArrivals: stampsArrivals)
         var readyOnMain = false
         relay.onReady = { _ in readyOnMain = Thread.isMainThread }
-        relay.connect(baseURL: base, token: "t", userId: "u")
+        relay.connect(baseURL: base, token: "t")
         relay.send(["type": "talk-start", "burstId": "b1"])
         relay.send(frame: Data([1]))
         relay.send(frame: Data([2]))
@@ -151,9 +151,9 @@ struct RelayConnectionTests {
     @Test func aRejoinAsksForTheBurstFromItsFirstMissedFrame() async throws {
         RelayStub.reset()
         let relay = connection(stampsArrivals: false)
-        relay.connect(baseURL: base, token: "t", userId: "u", join: "c1", resume: RelayResume(burstId: "b1", fromSeq: 42))
+        relay.connect(baseURL: base, token: "t", join: "c1", resume: RelayResume(burstId: "b1", fromSeq: 42))
         try await waitUntil { relay.isReady }
-        relay.connect(baseURL: base, token: "t", userId: "u", resume: RelayResume(burstId: "b1", fromSeq: 42))
+        relay.connect(baseURL: base, token: "t", resume: RelayResume(burstId: "b1", fromSeq: 42))
         try await waitUntil { RelayStub.streamURLs.count == 2 }
         let query = { (url: URL) in
             Dictionary(uniqueKeysWithValues: (URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []).map { ($0.name, $0.value ?? "") })
@@ -171,7 +171,7 @@ struct RelayConnectionTests {
         RelayStub.reset()
         let relay = RelayConnection(identity: ClientIdentity(kind: .watchos, version: "1.0", build: "170", encodes: ["opus16k"]))
         relay.protocolClasses = [RelayStub.self]
-        relay.connect(baseURL: base, token: "t", userId: "u", join: "c1", ring: "r_abc")
+        relay.connect(baseURL: base, token: "t", join: "c1", ring: "r_abc")
         try await waitUntil { relay.isReady }
         let query = Dictionary(uniqueKeysWithValues: (URLComponents(url: RelayStub.streamURLs[0], resolvingAgainstBaseURL: false)?.queryItems ?? []).map { ($0.name, $0.value ?? "") })
         #expect(query["join"] == "c1")
@@ -193,7 +193,7 @@ struct RelayConnectionTests {
         var closed: String?
         relay.onRefused = { refusal = $0 }
         relay.onClose = { closed = $0 }
-        relay.connect(baseURL: base, token: "t", userId: "u")
+        relay.connect(baseURL: base, token: "t")
         try await waitUntil { closed != nil }
         #expect(refusal == RelayRefusal(status: 409, code: "client-upgrade-required", message: "Update Over&Out to keep talking."))
         #expect(refusal?.requiresUpgrade == true)
@@ -222,7 +222,7 @@ struct RelayConnectionTests {
             seen.append("frame \(frame[0])")
         }
         let before = Clock.nowMs()
-        relay.connect(baseURL: base, token: "t", userId: "u")
+        relay.connect(baseURL: base, token: "t")
         try await waitUntil { seen.count == 5 }
         // "ping" is the relay's keepalive, handled inside the connection.
         #expect(seen == ["ready", "burst-start", "frame 7", "frame 8", "burst-end"])
@@ -237,7 +237,7 @@ struct RelayConnectionTests {
         let relay = connection(stampsArrivals: true)
         var closes: [String] = []
         relay.onClose = { closes.append($0) }
-        relay.connect(baseURL: base, token: "t", userId: "u")
+        relay.connect(baseURL: base, token: "t")
         relay.send(["type": "talk-start", "burstId": "b1"])
         try await waitUntil { !closes.isEmpty }
         try await Task.sleep(nanoseconds: 50_000_000)
@@ -254,11 +254,11 @@ struct RelayConnectionTests {
         var closes = 0
         relay.onPostFinished = { _, _, _, status in statuses.append(status) }
         relay.onClose = { _ in closes += 1 }
-        relay.connect(baseURL: base, token: "t", userId: "u")
+        relay.connect(baseURL: base, token: "t")
         relay.send(["type": "talk-start", "burstId": "old"])
         try await waitUntil { RelayStub.heldSends == 1 }
 
-        relay.connect(baseURL: base, token: "t", userId: "u")
+        relay.connect(baseURL: base, token: "t")
         relay.send(["type": "talk-start", "burstId": "new"])
         try await waitUntil { RelayStub.heldSends == 2 && relay.isReady }
         RelayStub.releaseHeldSends()
