@@ -4,7 +4,7 @@ Read this first. Over&Out: Watch Walkie Talkie replaces Apple's Watch Walkie-Tal
 
 ## Start here
 
-**Newest (2026-10-02, afternoon): pre-beta tweaks, one PR (branch `pre-beta-tweaks`).** Needs a TestFlight build and a website deploy (ask first); nothing is deployed.
+**Newest (2026-10-02, afternoon): pre-beta tweaks, PR #46 (merged, `cce71b7`); TestFlight build 205 (`cce71b7`) is in "House" with What to Test notes (Steve's OK).** The website is deployed from `cce71b7` (Steve's OK, 2026-10-02): the privacy, support and terms pages show overandout@cypressoakstudios.com and the support page explains When Friends Ring You (checked on overandout.app). TestFlight uploads from a GitHub Action: Steve wants to wait (backlog row).
 - **Customer contact is now overandout@cypressoakstudios.com:** About (`AboutView.swift`), the beta review notes, the Ops OAuth notes, and the site. The privacy, support and terms pages now use the `SUPPORT_EMAIL` placeholder that `firebase-hosting.ts` fills from `config.sh` (until now they hard-coded the address, so the setting did nothing); `config.sh`'s `SUPPORT_EMAIL` is set. Steve still updates the Feedback Email in App Store Connect (TestFlight → Test Information) and the support email on the Google Auth Platform consent screen.
 - **Mascot picker:** 3 columns that fill the width (about 100 pt on the smallest iPhone, 122 pt on the 18 Pro Max; they were 76 pt).
 - **iPhone Talk screen:** no longer says "In a conversation with <someone else>". `TalkController` keeps `peerId`/`peerName` after a conversation ends, so that line also appeared after the other conversation was over. Pressing the mouth already ends the other conversation, so the screen now shows only this friend, as the watch does.
