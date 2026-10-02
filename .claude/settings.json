@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(deploy/appstore/testflight.sh:*)",
+      "Bash(node deploy/appstore/asc.ts:*)"
+    ]
+  }
+}
