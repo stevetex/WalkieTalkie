@@ -57,3 +57,7 @@ TESTFLIGHT_URL=""
 # MINIMUM_BUILDS: JSON of the lowest build of each client kind still admitted, e.g.
 # {"ios":170,"watchos":170}; older builds get "Update Over&Out". Empty = no minimum.
 MINIMUM_BUILDS=""
+
+# The relay GET /v2/config names (deploy-api.sh). It must be under overandout.app: the apps
+# ignore any other host and use the one they were built with. Default relay-1.overandout.app.
+RELAY_PUBLIC_HOST=""

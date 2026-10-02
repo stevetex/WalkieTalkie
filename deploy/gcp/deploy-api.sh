@@ -26,7 +26,8 @@ trap 'rm -rf "$stage"' EXIT
   echo "APPLE_AUDIENCES: \"${APPLE_AUDIENCES:-com.cypressoakstudios.overandout}\""
   echo "INVITE_BASE_URL: https://overandout.app/i/"
   # GET /v2/config's relay, and the contract's compatibility setting (contracts/README.md).
-  echo "RELAY_BASE_URL: https://${DOMAIN:-relay-1.overandout.app}"
+  # The apps only take a relay under overandout.app from it (ServiceConfigStore.approved).
+  echo "RELAY_BASE_URL: https://${RELAY_PUBLIC_HOST:-relay-1.overandout.app}"
   if [ -n "${MINIMUM_BUILDS:-}" ]; then echo "MINIMUM_BUILDS: '${MINIMUM_BUILDS}'"; fi
   # The Test Bot's standing invite (server/src/accounts.ts): befriends the bot, and only the bot.
   if [ -n "${TEST_BOT_INVITE:-}" ]; then
