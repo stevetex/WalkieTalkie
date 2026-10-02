@@ -198,4 +198,6 @@ The product dashboard ([OPS_DASHBOARD_SPEC.md](../../OPS_DASHBOARD_SPEC.md)): a 
 6. `deploy/gcp/ops-access.sh add <email>` (or `add group:<email>`) for each person.
 7. `deploy/gcp/setup-telemetry.sh` (or `node deploy/gcp/telemetry-monitoring.ts apply` with `OPS_URL`): the link row on "Over&Out Beta", both links in every alert email, the Canary's charts.
 
+8. `deploy/gcp/setup-ops-redirect.sh`: `ops.overandout.app` as a friendly address, a second Firebase Hosting site (`overandout-ops`, no files) that redirects every path to `OPS_URL` with a 302. Steve adds the CNAME it prints at GoDaddy; `setup-ops-redirect.sh dns` shows the certificate's progress. The dashboard stays on its `run.app` address behind IAP (a custom domain there would need a Cloud Run domain mapping, still preview, or a load balancer).
+
 `deploy-api.sh` keeps the `ops` service and both stats jobs on the API's image. Locally: `OPS_LOCAL=1 STATS_LOCAL_DIR=<DATA_DIR> RELAY_NODES=http://localhost:8080 OPS_STATS_TOKEN=<the relay's> node server/src/ops-main.ts`, after `rolling-main.ts` with the same `STATS_LOCAL_DIR`.
