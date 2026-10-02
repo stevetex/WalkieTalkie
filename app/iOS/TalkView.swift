@@ -43,9 +43,10 @@ struct TalkView: View {
         return talk.unavailablePeer == friend.id ? .unavailable : nil
     }
 
+    /// Only this friend shows here, as on the watch: a conversation with someone else isn't
+    /// mentioned (pressing ends it and starts one with this friend).
     private var status: String {
-        if let other = talk.peerName, !isCurrent { return "In a conversation with \(other)" }
-        if !talk.statusLine.isEmpty { return talk.statusLine }
+        if isCurrent, !talk.statusLine.isEmpty { return talk.statusLine }
         return "Hold the mouth to talk to \(friend.name)"
     }
 
@@ -117,11 +118,12 @@ struct TalkView: View {
 
     private var inConversation: Bool { talk.phase != .idle && isCurrent }
 
-    /// How friends reach this iPhone, when it isn't through the walkie-talkie channel.
+    /// How friends reach this iPhone, when it isn't through the walkie-talkie channel (and not
+    /// because the person chose Apple Watch only).
     @ViewBuilder
     private var availabilityNote: some View {
-        if ptt.isAvailable && !ptt.isJoined {
-            Text("Walkie-talkie is off on this iPhone, so friends reach it only while Over&Out is open. Turn it on in Settings.")
+        if ptt.isAvailable && !ptt.isJoined && model.ringChoice != .watchOnly {
+            Text("This iPhone can't ring while it's locked, so friends reach it only while Over&Out is open. Turn on Allow iPhone to Ring When Locked in Settings.")
                 .font(.footnote)
                 .foregroundStyle(Brand.silver)
                 .multilineTextAlignment(.center)

@@ -8,7 +8,7 @@
 # Before the first run, Steve sets up in the console (the project has no organization, so IAP
 # can't use Google's managed OAuth client and the client can't be made from the command line):
 #   1. APIs & Services → OAuth consent screen: External, app name "Over&Out", support email
-#      support@cypressoakstudios.com, privacy policy https://overandout.app/privacy, scopes
+#      overandout@cypressoakstudios.com, privacy policy https://overandout.app/privacy, scopes
 #      name, email and profile only, no logo; publishing status In production.
 #   2. Google Auth Platform → Clients → Create client → Web application, "Over&Out Ops (IAP)".
 #      Copy the secret at once (it's shown only then). Then edit the client and add the

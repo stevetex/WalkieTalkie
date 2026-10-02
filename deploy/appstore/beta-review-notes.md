@@ -14,7 +14,7 @@ The Test Bot parts assume the always-on Test Bot is deployed (`TEST_BOT_USER_ID`
 >
 > Please try: talking from your watch and from your iPhone; answering a ring on your watch with the app closed; replying from the iPhone's Lock Screen; Bluetooth headphones and hearing aids. Tell us if the start of a message is ever cut off, if a ring doesn't arrive, or if audio is delayed.
 
-**Feedback Email:** support@cypressoakstudios.com
+**Feedback Email:** overandout@cypressoakstudios.com
 
 **Marketing URL:** https://overandout.app
 

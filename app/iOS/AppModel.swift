@@ -106,7 +106,7 @@ final class AppModel: ObservableObject {
             guard let self else { return }
             // On screen, Friends and Settings show it; otherwise say so at once (run 54).
             if UIApplication.shared.applicationState != .active {
-                WalkieTalkieOffNotice.post(ringsWatch: formFactors.contains(.watch))
+                WalkieTalkieOffNotice.post(ringsWatch: watchCanRing)
             }
         }
         pushToTalk.start()
@@ -205,7 +205,12 @@ final class AppModel: ObservableObject {
             friends = loadedFriends
             blocks = loadedBlocks
             friendsLoaded = true
-            if formFactors.contains(.watch), formFactors.contains(.phone), !askedRingOn { askingRingOn = true }
+            askRingChoiceIfNeeded()
+            // Apple Watch only keeps walkie-talkie off, also if it was turned on meanwhile (with
+            // the watch unpaired, when the choice showed iPhone only).
+            if askedRingOn, ringChoice == .watchOnly, pushToTalk.isAvailable, pushToTalk.isJoined || pushToTalk.wanted == true {
+                pushToTalk.turnOff()
+            }
             // The server asked for this iPhone's diagnostics log (tools/beta.ts pull).
             let client = client
             await Telemetry.shared.uploadIfRequested(requestedAt: user.diagnosticsRequestedAt) { data in
@@ -271,36 +276,61 @@ final class AppModel: ObservableObject {
     /// the watch if one is registered, else this iPhone.
     var ringsOn: FormFactor { preferredFormFactor ?? (formFactors.contains(.watch) ? .watch : .phone) }
 
-    /// Ring Me On is a choice once the account has both kinds of device (or made a choice).
-    var canChooseRingOn: Bool { preferredFormFactor != nil || formFactors.count > 1 }
+    /// A watch that can ring: paired with this iPhone, with Over&Out on it signed in.
+    var watchCanRing: Bool { watch.isPaired && formFactors.contains(.watch) }
 
-    /// Whether this iPhone has asked (or the person chose in Settings) since a watch appeared.
-    private var askedRingOn: Bool {
-        get { session.map { UserDefaults.standard.bool(forKey: "askedRingOn-\($0.userId)") } ?? true }
-        set { if let session { UserDefaults.standard.set(newValue, forKey: "askedRingOn-\(session.userId)") } }
+    /// "When Friends Ring You" (design decision 2026-10-02): the server's preferredFormFactor
+    /// and rollOver as one choice. Without a watch that can ring, always iPhone only; with one
+    /// and no choice made, Apple Watch only (the server rings the watch first, no rollover).
+    var ringChoice: RingChoice {
+        guard watchCanRing else { return .phoneOnly }
+        if ringsOn == .phone { return .phoneOnly }
+        return rollOver ? .watchThenPhone : .watchOnly
     }
 
-    func setRingOn(_ formFactor: FormFactor) async {
+    /// Whether this iPhone has asked (or the person chose in Settings) since a watch appeared.
+    /// A new key for the three-way choice, so people who answered the old two-way question
+    /// are asked once more.
+    private var askedRingOn: Bool {
+        get { session.map { UserDefaults.standard.bool(forKey: "askedRingChoice-\($0.userId)") } ?? true }
+        set { if let session { UserDefaults.standard.set(newValue, forKey: "askedRingChoice-\(session.userId)") } }
+    }
+
+    /// Asks once where friends ring you: after a refresh, and when this iPhone's watch pairing
+    /// becomes known (WatchConnectivity activates after launch). Only with a watch paired to this
+    /// iPhone; the account can have a watch that isn't.
+    func askRingChoiceIfNeeded() {
+        if watchCanRing, formFactors.contains(.phone), !askedRingOn { askingRingOn = true }
+    }
+
+    func setRingChoice(_ choice: RingChoice) async {
         askedRingOn = true
         askingRingOn = false
-        let previous = preferredFormFactor
+        let previous = (choice: ringChoice, formFactor: preferredFormFactor, rollOver: rollOver)
+        let formFactor: FormFactor = choice == .phoneOnly ? .phone : .watch
         preferredFormFactor = formFactor
+        rollOver = choice == .watchThenPhone
         do {
-            preferredFormFactor = try await client.setPreferredFormFactor(formFactor).preferredFormFactor
+            let user = try await client.setRingPreference(formFactor, rollOver: choice == .watchThenPhone)
+            preferredFormFactor = user.preferredFormFactor.flatMap { $0.isKnown ? $0 : nil }
+            rollOver = user.rollOver ?? false
+            applyWalkieTalkie(for: choice, from: previous.choice)
         } catch {
-            preferredFormFactor = previous
+            preferredFormFactor = previous.formFactor
+            rollOver = previous.rollOver
             errorMessage = describe(error)
         }
     }
 
-    func setRollOver(_ on: Bool) async {
-        let previous = rollOver
-        rollOver = on
-        do {
-            rollOver = try await client.setRollOver(on).rollOver ?? false
-        } catch {
-            rollOver = previous
-            errorMessage = describe(error)
+    /// Apple Watch only leaves the PushToTalk channel, so this iPhone can't ring while locked
+    /// (Settings shows "Allow iPhone to Ring When Locked" off). Moving from it to a choice with
+    /// the iPhone joins again; otherwise the toggle stays as the person set it.
+    private func applyWalkieTalkie(for choice: RingChoice, from previous: RingChoice) {
+        guard pushToTalk.isAvailable else { return }
+        if choice == .watchOnly {
+            pushToTalk.turnOff()
+        } else if previous == .watchOnly, !pushToTalk.isJoined {
+            pushToTalk.join()
         }
     }
 
@@ -495,5 +525,20 @@ final class AppModel: ObservableObject {
             return urlError.code == .notConnectedToInternet ? "You're offline." : "Couldn't reach Over&Out. Try again."
         }
         return (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+    }
+}
+
+/// How friends ring you, in Settings and asked once when a watch appears.
+enum RingChoice: CaseIterable, Identifiable {
+    case watchOnly, watchThenPhone, phoneOnly
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .watchOnly: return "Apple Watch Only"
+        case .watchThenPhone: return "Apple Watch, Then iPhone"
+        case .phoneOnly: return "iPhone Only"
+        }
     }
 }

@@ -5,7 +5,7 @@ import SwiftUI
 struct AboutView: View {
     @EnvironmentObject private var model: AppModel
 
-    private static let supportEmail = "support@cypressoakstudios.com"
+    private static let supportEmail = "overandout@cypressoakstudios.com"
 
     private var version: String {
         let info = Bundle.main.infoDictionary ?? [:]

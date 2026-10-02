@@ -177,35 +177,51 @@ struct BlockedView: View {
     }
 }
 
-/// How this iPhone talks (design decisions 2026-09-27): being in the PushToTalk channel, and
-/// which device rings.
+/// How friends ring you and how this iPhone talks (design decisions 2026-09-27 and
+/// 2026-10-02): one choice of device, then whether this iPhone is in the PushToTalk channel.
 struct WalkieTalkieSection: View {
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var watch: PhoneWatchLink
     @EnvironmentObject private var ptt: PushToTalkChannel
 
+    private var choice: RingChoice { model.ringChoice }
+
     var body: some View {
         Section {
+            // Without a watch that can ring, shown as iPhone only and greyed out.
+            Picker("When Friends Ring You", selection: Binding(
+                get: { choice },
+                set: { new in Task { await model.setRingChoice(new) } }
+            )) {
+                ForEach(RingChoice.allCases) { option in
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(option.title)
+                        if option == .watchThenPhone {
+                            Text("Your iPhone rings if you don't answer your watch within 12 seconds.")
+                                .font(.footnote)
+                                .foregroundStyle(Brand.secondary)
+                        }
+                    }
+                    .tag(option)
+                }
+            }
+            .pickerStyle(.inline)
+            .labelsHidden()
+            .disabled(!model.watchCanRing)
+        } header: {
+            Text("When Friends Ring You")
+        } footer: {
+            if let ringFooter { Text(ringFooter) }
+        }
+
+        Section {
             if ptt.isAvailable {
-                Toggle("Walkie-Talkie on This iPhone", isOn: Binding(
-                    get: { ptt.isJoined },
+                // Apple Watch only keeps this iPhone out of the channel: off and greyed out.
+                Toggle("Allow iPhone to Ring When Locked", isOn: Binding(
+                    get: { choice != .watchOnly && ptt.isJoined },
                     set: { $0 ? ptt.join() : ptt.turnOff() }
                 ))
-            }
-            if model.canChooseRingOn {
-                Picker("Ring Me On", selection: Binding(
-                    get: { model.ringsOn },
-                    set: { formFactor in Task { await model.setRingOn(formFactor) } }
-                )) {
-                    Text("Apple Watch").tag(FormFactor.watch)
-                    Text("iPhone").tag(FormFactor.phone)
-                }
-                if model.ringsOn == .watch {
-                    Toggle("Roll Over to iPhone", isOn: Binding(
-                        get: { model.rollOver },
-                        set: { on in Task { await model.setRollOver(on) } }
-                    ))
-                }
+                .disabled(choice == .watchOnly)
             }
             if !model.microphoneAllowed {
                 Button("Allow the Microphone") {
@@ -229,29 +245,39 @@ struct WalkieTalkieSection: View {
             }
             #endif
         } header: {
-            Text("Walkie-Talkie")
+            Text("This iPhone")
         } footer: {
-            Text(footer)
+            Text(phoneFooter)
         }
     }
 
-    private var footer: String {
-        var lines: [String] = []
-        if ptt.isAvailable {
-            lines.append(ptt.isJoined
-                ? "Friends' messages play on this iPhone right away, even when it's locked. You can talk back from the Lock Screen."
-                : "Friends can reach this iPhone only while Over&Out is open.")
-        } else {
-            lines.append("Friends can reach this iPhone while Over&Out is open.")
+    /// What the choice means when it isn't obvious: why it can't be changed, and where rings go
+    /// when the chosen device can't be reached.
+    private var ringFooter: String? {
+        if !watch.isPaired { return "No Apple Watch is paired with this iPhone, so friends ring this iPhone." }
+        if !model.watchCanRing {
+            return watch.isWatchAppInstalled
+                ? "Once Over&Out on your Apple Watch is signed in, you can choose which one rings."
+                : "Install Over&Out on your Apple Watch to choose which one rings."
         }
-        if model.canChooseRingOn {
-            lines.append("Only one device rings. If it can't be reached, the other one does.")
-            if model.ringsOn == .watch {
-                lines.append("With Roll Over to iPhone, your iPhone rings if you don't answer your watch in 12 seconds.")
-            }
-        } else if watch.isWatchAppInstalled {
-            lines.append("Once Over&Out on your Apple Watch is signed in, you can choose which one rings.")
+        let lockedOff = ptt.isAvailable && !ptt.isJoined
+        switch choice {
+        case .watchOnly:
+            return "If your watch can't be reached, this iPhone rings while Over&Out is open on it."
+        case .watchThenPhone:
+            return lockedOff ? "Allow iPhone to Ring When Locked is off, so your iPhone rings only while Over&Out is open on it." : nil
+        case .phoneOnly:
+            return lockedOff
+                ? "Allow iPhone to Ring When Locked is off, so this iPhone rings only while Over&Out is open on it. Otherwise your watch rings."
+                : "If this iPhone can't be reached, your watch rings."
         }
-        return lines.joined(separator: " ")
+    }
+
+    private var phoneFooter: String {
+        guard ptt.isAvailable else { return "Friends can reach this iPhone while Over&Out is open." }
+        if choice == .watchOnly { return "Choose a setting with iPhone above to let this iPhone ring when it's locked." }
+        return ptt.isJoined
+            ? "Friends' messages play on this iPhone right away, even when it's locked. You can talk back from the Lock Screen."
+            : "Friends can reach this iPhone only while Over&Out is open."
     }
 }
