@@ -7,6 +7,10 @@
 //                                                 DNS records to add at GoDaddy
 //   node deploy/gcp/firebase-hosting.ts dns       prints the domain's DNS and certificate state
 //   node deploy/gcp/firebase-hosting.ts deploy    uploads web/public and releases it
+//   node deploy/gcp/firebase-hosting.ts redirect  a site with no files that sends every path to
+//                                                 REDIRECT_URL (ops.overandout.app → the Ops
+//                                                 dashboard): creates the site and its custom
+//                                                 domain if needed, releases, prints the DNS records
 //
 //   PROJECT_ID, REGION   from config.sh
 //   SITE                 the Hosting site (default: PROJECT_ID)
@@ -18,6 +22,7 @@
 //   SUPPORT_EMAIL        shown on the privacy and support pages
 //   TESTFLIGHT_URL       optional: the Beta's public TestFlight link, which the invite page
 //                        offers instead of "Coming soon to the App Store"
+//   REDIRECT_URL         redirect only: the https:// address every path goes to
 
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -151,7 +156,27 @@ async function deploy(): Promise<void> {
   console.log(`Released ${content.size} files (${needed.size} uploaded) to https://${site}.web.app and https://${domain}.`);
 }
 
-async function setup(): Promise<void> {
+// Releases a version whose only job is a temporary redirect (302, so a changed target isn't
+// cached), for a site that serves nothing itself.
+async function releaseRedirect(location: string): Promise<void> {
+  const version = await call("POST", `${hosting}/sites/${site}/versions`, {
+    config: { redirects: [{ glob: "**", statusCode: 302, location }] },
+  });
+  await call("POST", `${hosting}/${version.name}:populateFiles`, { files: {} });
+  await call("PATCH", `${hosting}/${version.name}?update_mask=status`, { status: "FINALIZED" });
+  await call("POST", `${hosting}/sites/${site}/releases?versionName=${encodeURIComponent(version.name)}`, {});
+  console.log(`https://${site}.web.app and https://${domain} redirect to ${location}.`);
+}
+
+async function redirect(): Promise<void> {
+  const location = required("REDIRECT_URL");
+  if (!/^https:\/\/[^\s"'<>]+$/.test(location)) throw new Error("REDIRECT_URL must be an https:// address");
+  await setup(false);
+  await releaseRedirect(location);
+  await dns();
+}
+
+async function setup(printDns = true): Promise<void> {
   const firebase = "https://firebase.googleapis.com/v1beta1";
   const existing = await call("GET", `${firebase}/projects/${project}`, undefined, [403, 404]);
   if (existing.status !== 200) {
@@ -169,7 +194,7 @@ async function setup(): Promise<void> {
     const body = redirectTo ? { redirectTarget: redirectTo } : {};
     await waitForOperation(await call("POST", `${hosting}/projects/${project}/sites/${site}/customDomains?customDomainId=${domain}`, body), hosting);
   }
-  await dns();
+  if (printDns) await dns();
 }
 
 async function dns(): Promise<void> {
@@ -190,7 +215,8 @@ const command = process.argv[2];
 if (command === "deploy") await deploy();
 else if (command === "setup") await setup();
 else if (command === "dns") await dns();
+else if (command === "redirect") await redirect();
 else {
-  console.error("usage: node deploy/gcp/firebase-hosting.ts setup | dns | deploy");
+  console.error("usage: node deploy/gcp/firebase-hosting.ts setup | dns | deploy | redirect");
   process.exit(2);
 }
