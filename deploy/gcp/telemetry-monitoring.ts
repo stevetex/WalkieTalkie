@@ -8,6 +8,9 @@
 //   node deploy/gcp/telemetry-monitoring.ts print        the definitions, as JSON
 //
 // PROJECT_ID and ALERT_EMAIL come from the environment (setup-telemetry.sh sources config.sh).
+// OPS_URL (the Over&Out Ops dashboard, setup-ops.sh), when set, links the two dashboards
+// (OPS_DASHBOARD_SPEC.md, "Linking with Cloud Monitoring"): a text widget across the top of this
+// one, and both links in every Over&Out alert policy's documentation, so alert emails carry them.
 //
 // Costs (read 2026-09-28): log-based metrics count against the free 150 MiB of chargeable
 // metrics a month; the dashboard is free; alerting is free until 1 September 2027, then
@@ -18,6 +21,8 @@ import { execFileSync } from "node:child_process";
 const project = process.env.PROJECT_ID || "walkie-talkie-relay";
 const alertEmail = process.env.ALERT_EMAIL || "";
 const command = process.argv[2];
+const opsUrl = process.env.OPS_URL || "";
+if (opsUrl && !/^https:\/\//.test(opsUrl)) throw new Error("OPS_URL must be an https:// address");
 
 // ---- Log-based metrics ----
 
@@ -110,6 +115,20 @@ const metrics: LogMetric[] = [
     labels: { platform: "jsonPayload.platform", build: "jsonPayload.build", user: "jsonPayload.userId" },
     value: `jsonPayload.intervals.${field}`,
   })),
+  // The Ops dashboard's Canary (server/src/canary.ts), every 15 minutes from the rolling job.
+  {
+    name: "oao_canary_first_frame_ms",
+    description: "The Canary: talk-start → the Test Bot's first frame over the live relay, when it passed. Milliseconds (oao.canary).",
+    filter: `${kind("oao.canary")} AND jsonPayload.ok=true`,
+    labels: {},
+    value: "jsonPayload.firstFrameMs",
+  },
+  {
+    name: "oao_canary_failures",
+    description: "Canary runs that failed, by the step and reason (oao.canary).",
+    filter: `${kind("oao.canary")} AND jsonPayload.ok=false`,
+    labels: { error: "jsonPayload.error" },
+  },
 ];
 
 function metricBody(m: LogMetric): object {
@@ -166,6 +185,22 @@ function latencyChart(title: string, metric: string) {
   return { title, xyChart: { dataSets: [dataSet(50), dataSet(95)], yAxis: { label: "ms", scale: "LINEAR" } } };
 }
 
+// The Canary's runs: each hour's p50 and p99.
+function canaryChart() {
+  const dataSet = (p: 50 | 99) => ({
+    plotType: "LINE",
+    targetAxis: "Y1",
+    legendTemplate: `p${p}`,
+    timeSeriesQuery: {
+      timeSeriesFilter: {
+        filter: userMetric("oao_canary_first_frame_ms"),
+        aggregation: { alignmentPeriod: "3600s", perSeriesAligner: "ALIGN_DELTA", crossSeriesReducer: `REDUCE_PERCENTILE_${p}` },
+      },
+    },
+  });
+  return { title: "Canary: talk-start → the Test Bot's first frame (hourly p50, p99)", xyChart: { dataSets: [dataSet(50), dataSet(99)], yAxis: { label: "ms", scale: "LINEAR" } } };
+}
+
 // One value a day per measure from the rollup; the mean of a single value is the value.
 function dailyChart(title: string) {
   return {
@@ -196,6 +231,8 @@ const charts = [
   latencyChart("Watch: tap → first audio (p50, p95)", "oao_tap_to_first_audio_ms"),
   latencyChart("iPhone: push sent → first audio (p50, p95)", "oao_push_to_first_audio_ms"),
   latencyChart("Talk → go-ahead (p50, p95)", "oao_talk_to_go_ahead_ms"),
+  canaryChart(),
+  countChart("Canary failures, by step (per hour)", userMetric("oao_canary_failures"), ["metric.label.error"], "3600s"),
   countChart("Devices' outcomes: answered, missed, declined (per day)", userMetric("oao_device_outcomes"), ["metric.label.outcome", "metric.label.platform"]),
   countChart("Silent sends: a nearly silent burst, likely a muted mic (conversations per day)", userMetric("oao_silent_sends"), ["metric.label.platform", "metric.label.build"]),
   countChart("Device events: PushToTalk leaves, crashes, unclean exits (per day)", userMetric("oao_device_events"), ["metric.label.name"]),
@@ -205,13 +242,26 @@ const charts = [
   countChart("Relay errors (per hour)", userMetric("oao_relay_errors"), ["metric.label.what"], "3600s"),
 ];
 
+// With OPS_URL, a row across the top that opens the product dashboard.
+const opsTile = opsUrl
+  ? [{ xPos: 0, yPos: 0, width: 12, height: 1, widget: { text: { content: `[Open Over&Out Ops](${opsUrl}): engagement, rings, speed against targets, the live conversation list and the reports. This dashboard stays the place for service graphs and alerts.`, format: "MARKDOWN" } } }]
+  : [];
+
 const dashboard = {
   displayName: "Over&Out Beta",
   mosaicLayout: {
     columns: 12,
-    tiles: charts.map((widget, i) => ({ xPos: (i % 2) * 6, yPos: Math.floor(i / 2) * 4, width: 6, height: 4, widget })),
+    tiles: [...opsTile, ...charts.map((widget, i) => ({ xPos: (i % 2) * 6, yPos: opsTile.length + Math.floor(i / 2) * 4, width: 6, height: 4, widget }))],
   },
 };
+
+// The two dashboards, for alert emails.
+const LINKS_HEADING = "\n\n**Dashboards:** ";
+function withLinks(doc: string, dashboardUrl: string | null): string {
+  const base = doc.split(LINKS_HEADING)[0];
+  const links = [opsUrl ? `[Over&Out Ops](${opsUrl})` : null, dashboardUrl ? `["Over&Out Beta" service graphs](${dashboardUrl})` : null].filter(Boolean);
+  return links.length ? `${base}${LINKS_HEADING}${links.join(" · ")}` : base;
+}
 
 // ---- Alert policies ----
 
@@ -272,7 +322,7 @@ const policies = [
   },
 ];
 
-function policyBody(p: (typeof policies)[number], channel: string): object {
+function policyBody(p: (typeof policies)[number], channel: string, dashboardUrl: string | null = null): object {
   const isLog = p.conditions.some((c) => "conditionMatchedLog" in c);
   return {
     displayName: p.displayName,
@@ -280,7 +330,7 @@ function policyBody(p: (typeof policies)[number], channel: string): object {
     conditions: p.conditions,
     alertStrategy: isLog ? { notificationRateLimit: { period: p.rateLimit ?? "300s" }, autoClose: "1800s" } : { autoClose: "1800s" },
     notificationChannels: [channel],
-    documentation: { content: p.doc, mimeType: "text/markdown" },
+    documentation: { content: withLinks(p.doc, dashboardUrl), mimeType: "text/markdown" },
   };
 }
 
@@ -312,15 +362,23 @@ async function applyMetrics(): Promise<void> {
   }
 }
 
-async function applyDashboard(validateOnly: boolean): Promise<void> {
+const dashboardUrl = (name: string) => `https://console.cloud.google.com/monitoring/dashboards/builder/${name.split("/").pop()}?project=${project}`;
+
+// The dashboard's console address (null when only validating).
+async function applyDashboard(validateOnly: boolean): Promise<string | null> {
   const found = ((await call("GET", monitoringV1)).dashboards ?? []).find((d: any) => d.displayName === dashboard.displayName);
   if (found && !validateOnly) {
     await call("PATCH", `https://monitoring.googleapis.com/v1/${found.name}`, { ...dashboard, name: found.name, etag: found.etag });
-    console.log(`Updated the dashboard: https://console.cloud.google.com/monitoring/dashboards/builder/${found.name.split("/").pop()}?project=${project}`);
-  } else {
-    const created = await call("POST", `${monitoringV1}${validateOnly ? "?validateOnly=true" : ""}`, dashboard);
-    console.log(validateOnly ? "The dashboard is valid." : `Created the dashboard: https://console.cloud.google.com/monitoring/dashboards/builder/${created.name.split("/").pop()}?project=${project}`);
+    console.log(`Updated the dashboard: ${dashboardUrl(found.name)}`);
+    return dashboardUrl(found.name);
   }
+  const created = await call("POST", `${monitoringV1}${validateOnly ? "?validateOnly=true" : ""}`, dashboard);
+  if (validateOnly) {
+    console.log("The dashboard is valid.");
+    return null;
+  }
+  console.log(`Created the dashboard: ${dashboardUrl(created.name)}`);
+  return dashboardUrl(created.name);
 }
 
 async function emailChannel(): Promise<string> {
@@ -331,15 +389,25 @@ async function emailChannel(): Promise<string> {
   return found.name;
 }
 
-async function applyPolicies(): Promise<void> {
+async function applyPolicies(dashboard: string | null): Promise<void> {
   const channel = await emailChannel();
   const existing = (await call("GET", `${monitoringV3}/alertPolicies?pageSize=200`)).alertPolicies ?? [];
   for (const p of policies) {
     const found = existing.find((e: any) => e.displayName === p.displayName);
-    const body = policyBody(p, channel);
+    const body = policyBody(p, channel, dashboard);
     if (found) await call("PATCH", `https://monitoring.googleapis.com/v3/${found.name}`, { ...body, name: found.name });
     else await call("POST", `${monitoringV3}/alertPolicies`, body);
     console.log(`${found ? "Updated" : "Created"} alert policy "${p.displayName}"`);
+  }
+  // The policies other scripts made (setup-uptime.sh's "Relay down", setup-api.sh's "user
+  // report"): only their documentation gets the links.
+  for (const e of existing) {
+    if (policies.some((p) => p.displayName === e.displayName)) continue;
+    if (!/^(Relay down: |Over&Out: )/.test(e.displayName ?? "")) continue;
+    const content = withLinks(e.documentation?.content ?? "", dashboard);
+    if (content === (e.documentation?.content ?? "")) continue;
+    await call("PATCH", `https://monitoring.googleapis.com/v3/${e.name}?updateMask=documentation`, { documentation: { content, mimeType: "text/markdown" } });
+    console.log(`Linked the dashboards in alert policy "${e.displayName}"`);
   }
 }
 
@@ -353,8 +421,7 @@ switch (command) {
   case "apply":
     // Metrics first: the dashboard and alerts refer to them.
     await applyMetrics();
-    await applyDashboard(false);
-    await applyPolicies();
+    await applyPolicies(await applyDashboard(false));
     break;
   default:
     console.error("usage: node deploy/gcp/telemetry-monitoring.ts apply | validate | print");

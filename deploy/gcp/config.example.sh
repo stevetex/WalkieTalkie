@@ -61,3 +61,21 @@ MINIMUM_BUILDS=""
 # The relay GET /v2/config names (deploy-api.sh). It must be under overandout.app: the apps
 # ignore any other host and use the one they were built with. Default relay-1.overandout.app.
 RELAY_PUBLIC_HOST=""
+
+# The Ops dashboard (OPS_DASHBOARD_SPEC.md; setup-ops.sh, setup-stats.sh). CANARY_USER_ID is the
+# Canary account (node server/tools/test-account.ts canary prints it): every 15 minutes it talks
+# to the Test Bot over the live relay, and it's left out of every usage number and live count.
+# RELAY_NODES: the relay nodes the dashboard and the rolling job read /admin/stats from,
+# comma-separated base URLs (default https://relay-1.overandout.app). OPS_URL: the dashboard's
+# address once setup-ops.sh has deployed it (its run.app URL), for the links from the
+# "Over&Out Beta" Monitoring dashboard and the alert emails (telemetry-monitoring.ts).
+CANARY_USER_ID=""
+RELAY_NODES=""
+OPS_URL=""
+# The dashboard's IAP OAuth client (setup-ops.sh): made in the console, under the "Over&Out"
+# consent screen (APIs & Services → Credentials → Web application).
+OPS_OAUTH_CLIENT_ID=""
+OPS_OAUTH_CLIENT_SECRET=""
+# The "Over&Out Beta" Monitoring dashboard, for the Ops header's "Service graphs" link
+# (setup-ops.sh; default: the project's dashboards list).
+MONITORING_DASHBOARD=""

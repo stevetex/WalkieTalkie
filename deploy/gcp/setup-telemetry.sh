@@ -22,4 +22,4 @@ for collection in diagnostics feedback; do
   fi
 done
 
-PROJECT_ID="$PROJECT_ID" ALERT_EMAIL="${ALERT_EMAIL:-}" node "$here/telemetry-monitoring.ts" apply
+PROJECT_ID="$PROJECT_ID" ALERT_EMAIL="${ALERT_EMAIL:-}" OPS_URL="${OPS_URL:-}" node "$here/telemetry-monitoring.ts" apply

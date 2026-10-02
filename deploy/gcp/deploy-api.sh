@@ -50,10 +50,17 @@ gc run deploy api --image="$image" --region="$REGION" \
   --min-instances=0 --max-instances=4 --cpu=1 --memory=512Mi --concurrency=80 --timeout=30s \
   --env-vars-file="$stage/env.yaml"
 
-# The daily usage rollup runs from the same image (setup-stats.sh), so it keeps up with the API.
-if gc run jobs describe stats --region="$REGION" >/dev/null 2>&1; then
-  gc run jobs update stats --image="$image" --region="$REGION" >/dev/null
-  echo "The stats job uses $rev too."
+# The usage jobs (setup-stats.sh) and the Ops dashboard (setup-ops.sh) run from the same image,
+# so they keep up with the API.
+for job in stats stats-rolling; do
+  if gc run jobs describe "$job" --region="$REGION" >/dev/null 2>&1; then
+    gc run jobs update "$job" --image="$image" --region="$REGION" >/dev/null
+    echo "The $job job uses $rev too."
+  fi
+done
+if gc run services describe ops --region="$REGION" >/dev/null 2>&1; then
+  gc run services update ops --image="$image" --region="$REGION" >/dev/null
+  echo "The ops service uses $rev too."
 fi
 
 url=$(gc run services describe api --region="$REGION" --format='value(status.url)')

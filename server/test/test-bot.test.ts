@@ -180,7 +180,9 @@ for (const transport of ["http", "ws"] as const) {
       assert.equal(record.to, botId);
       assert.equal(record.callerBursts, 3);
       assert.equal(record.calleeBursts, 3);
-      assert.deepEqual([...activeAccounts([{ ...record, timestamp: "" } as never])], [record.from]);
+      // Talking to the Test Bot isn't talking to a friend, unless the dashboard's switch asks.
+      assert.deepEqual([...activeAccounts([{ ...record, timestamp: "" } as never])], []);
+      assert.deepEqual([...activeAccounts([{ ...record, timestamp: "" } as never], { testBot: botId, includeTestBot: true })], [record.from]);
     });
   });
 }

@@ -205,6 +205,16 @@ export interface ConversationRecord extends TelemetryEntry {
   calleeBursts: number;
   callerTalkMs: number;
   calleeTalkMs: number;
+  // Back-and-forths (the Ops dashboard spec): changes of speaker (A then B = 1, A, B, A = 2),
+  // the gap from the end of one person's burst to the start of the other's reply (0 if the reply
+  // started first; at most 50), first talk-start to the conversation's end, and each side's
+  // client kind when it first talked or joined (the ring's target's, if they never did).
+  // Records from relays before these have none of them: unknown, not 0.
+  turns: number;
+  replyGapsMs: number[];
+  durationMs?: number;
+  fromClientKind?: string;
+  toClientKind?: string;
   intervals: Record<string, number>;
   events: Array<{ name: string; t: number; detail?: string }>;
 }
@@ -243,6 +253,15 @@ export function conversationRecord(conversationId: string, events: TimelineEntry
     side.bursts += 1;
     side.ms += Number(match[2]);
   }
+  const depth = backAndForths(sorted);
+  const kinds = new Map<string, string>();
+  for (const e of sorted.filter((e) => e.name === "memberKind")) {
+    const [user, kind] = e.detail?.split(" ") ?? [];
+    if (user && kind && !kinds.has(user)) kinds.set(user, kind);
+  }
+  const fromClientKind = from ? kinds.get(from) : undefined;
+  const toClientKind = (to ? kinds.get(to) : undefined) ?? rings[0]?.clientKind;
+  const ended = sorted.findLast((e) => e.name === "conversationEnded");
   const push = first("pushSent");
   between("talkToPushMs", talk, push);
   between("apnsAcceptMs", push, sorted.find((e) => e.name === "pushAccepted" && push && e.t >= push.t));
@@ -266,9 +285,43 @@ export function conversationRecord(conversationId: string, events: TimelineEntry
     calleeBursts: talked.callee.bursts,
     callerTalkMs: talked.caller.ms,
     calleeTalkMs: talked.callee.ms,
+    turns: depth.turns,
+    replyGapsMs: depth.replyGapsMs,
+    ...(talk && ended && ended.t >= talk.t ? { durationMs: Math.round(ended.t - talk.t) } : {}),
+    ...(fromClientKind ? { fromClientKind } : {}),
+    ...(toClientKind ? { toClientKind } : {}),
     intervals,
     events: sorted.map((e) => ({ name: e.name, t: e.t, ...(e.detail ? { detail: e.detail } : {}) })),
   };
+}
+
+// Changes of speaker, from the relay's talkStart ("<from> -> <to>") and burstEnded ("<from> <n>
+// ms, …") events in time order. Each reply's gap runs from the end of the other person's latest
+// burst to the reply's talk-start; a reply that starts before that burst ends counts 0.
+export function backAndForths(sorted: TimelineEntry[]): { turns: number; replyGapsMs: number[] } {
+  let turns = 0;
+  const replyGapsMs: number[] = [];
+  let lastSpeaker: string | null = null;
+  const lastStart = new Map<string, number>();
+  const lastEnd = new Map<string, number>();
+  for (const e of sorted) {
+    if (e.name === "burstEnded") {
+      const who = e.detail?.split(" ")[0];
+      if (who) lastEnd.set(who, e.t);
+    } else if (e.name === "talkStart") {
+      const who = e.detail?.split(" -> ")[0];
+      if (!who) continue;
+      if (lastSpeaker !== null && who !== lastSpeaker) {
+        turns++;
+        const end = lastEnd.get(lastSpeaker);
+        const ended = end !== undefined && end >= (lastStart.get(lastSpeaker) ?? 0);
+        if (replyGapsMs.length < 50) replyGapsMs.push(ended ? Math.max(0, Math.round(e.t - end)) : 0);
+      }
+      lastSpeaker = who;
+      lastStart.set(who, e.t);
+    }
+  }
+  return { turns, replyGapsMs };
 }
 
 // A ring's pushSent detail: "watch" or "watch, 2 devices" before Phase 0; since then one device,

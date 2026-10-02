@@ -12,6 +12,7 @@ import {
   type FirestoreData,
   type FirestoreDocument,
   type Query,
+  type QueryFilter,
   type TransactionGet,
   type Write,
 } from "./firestore.ts";
@@ -23,6 +24,8 @@ export interface Docs {
   query(collection: string, query: Query): Promise<FirestoreDocument[]>;
   // All or nothing; PreconditionFailed if an `exists` check fails.
   commit(writes: Write[]): Promise<void>;
+  // How many documents a collection has; with allDescendants, every collection with that ID.
+  count(collection: string, options?: { allDescendants?: boolean; where?: QueryFilter }): Promise<number>;
   // `fn` reads through `get` and returns writes, which commit only if none of the documents it
   // read changed meanwhile; if one did, `fn` runs again. For checks that a concurrent write
   // must not slip past (a block landing while an invite is accepted).
@@ -89,6 +92,29 @@ export class MemoryDocs implements Docs {
         .sort((a, b) => sign * (compare(a.data[orderBy.field], b.data[orderBy.field]) ?? 0));
     }
     return query.limit ? rows.slice(0, query.limit) : rows;
+  }
+
+  async count(collection: string, options: { allDescendants?: boolean; where?: QueryFilter } = {}): Promise<number> {
+    let rows: FirestoreDocument[];
+    if (options.allDescendants) {
+      const id = splitPath(collection).at(-1)!;
+      rows = [...this.docs].filter(([path]) => splitPath(path).at(-2) === id).map(([path, data]) => ({ id: splitPath(path).at(-1)!, data }));
+    } else {
+      rows = await this.list(collection);
+    }
+    if (!options.where) return rows.length;
+    const where = options.where;
+    return rows.filter((r) => {
+      const c = compare(r.data[where.field], where.value);
+      if (c === null) return false;
+      switch (where.op) {
+        case "EQUAL": return c === 0;
+        case "LESS_THAN": return c < 0;
+        case "LESS_THAN_OR_EQUAL": return c <= 0;
+        case "GREATER_THAN": return c > 0;
+        case "GREATER_THAN_OR_EQUAL": return c >= 0;
+      }
+    }).length;
   }
 
   // Optimistic: `fn` runs again if a document it read was written before it commits. The

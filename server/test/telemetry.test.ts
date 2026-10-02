@@ -8,6 +8,7 @@ import {
   CloudLoggingSink,
   MemorySink,
   TelemetryMetricsStore,
+  backAndForths,
   cleanEvents,
   conversationRecord,
   deviceSummary,
@@ -430,4 +431,35 @@ test("a ring's pushSent detail carries its ID, target and deadline", () => {
   // Relays before the deadline was logged, and before Phase 0.
   assert.equal(parsePushSent("watch; r_abc; watchos apns/alert").expiresAt, undefined);
   assert.deepEqual(parsePushSent("watch, 2 devices"), { platform: "watch", devices: 2 });
+});
+
+test("back-and-forths: changes of speaker, reply gaps, duration and each side's client kind", () => {
+  const talk = (who: string, to: string, t: number) => server("talkStart", t, `${who} -> ${to}`);
+  const end = (who: string, t: number, ms: number) => server("burstEnded", t, `${who} ${ms} ms, ${ms / 20} frames`);
+  // One way: two bursts from the caller, nobody answers.
+  const oneWay = conversationRecord("c1", [talk("u_a", "u_b", 0), end("u_a", 2000, 2000), talk("u_a", "u_b", 5000), end("u_a", 6000, 1000), server("conversationEnded", 60_000)]);
+  assert.deepEqual([oneWay.turns, oneWay.replyGapsMs, oneWay.durationMs], [0, [], 60_000]);
+  // Two ways: A, B, A. B answers 1.5 s after A's burst ends; A comes back 0.4 s after B's.
+  const twoWay = conversationRecord("c2", [
+    talk("u_a", "u_b", 1000),
+    server("memberKind", 1000, "u_a watchos"),
+    server("pushSent", 1100, "iphone; r_x; ios apns/pushtotalk; expires 36100"),
+    server("pushAccepted", 1200, "pushtotalk: status 200 in 80 ms"),
+    end("u_a", 3000, 2000),
+    server("receiverJoined", 3500, "1 buffered"),
+    server("memberKind", 3500, "u_b ios"),
+    talk("u_b", "u_a", 4500),
+    end("u_b", 6000, 1500),
+    talk("u_a", "u_b", 6400),
+    end("u_a", 7000, 600),
+    server("conversationEnded", 50_000),
+  ]);
+  assert.deepEqual([twoWay.turns, twoWay.replyGapsMs, twoWay.durationMs], [2, [1500, 400], 49_000]);
+  assert.deepEqual([twoWay.fromClientKind, twoWay.toClientKind], ["watchos", "ios"]);
+  // Interleaved: B starts before A's burst has ended (the relay denies the floor to a real
+  // overlap, but a reply can start the moment the floor frees): a gap of 0.
+  assert.deepEqual(backAndForths([talk("u_a", "u_b", 0), talk("u_b", "u_a", 900), end("u_a", 1000, 1000), end("u_b", 1500, 600)]), { turns: 1, replyGapsMs: [0] });
+  // The recipient never joined: their kind is the device rung.
+  const missed = conversationRecord("c3", [talk("u_a", "u_b", 0), server("memberKind", 0, "u_a ios"), server("pushSent", 10, "watch; r_y; watchos apns/alert"), server("ringTimedOut", 35_000)]);
+  assert.deepEqual([missed.fromClientKind, missed.toClientKind, missed.durationMs], ["ios", "watchos", undefined]);
 });

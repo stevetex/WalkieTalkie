@@ -185,3 +185,17 @@ For the Beta, the one charge is the static IP, about $3.65 a month. One e2-micro
 - The shared relay token (`SPIKE_TOKEN`) only reads the operator's diagnostics (`/admin/status`, `/admin/metrics`), which session tokens can't use. Every relay client is an account with a session token. To rotate it, see Everyday commands.
 - Nodes read the relay token, the APNs key and the session public keys from Secret Manager at startup. Only the `relay-node` service account can read them. Only the `account-api` service account can read the session signing key and the Sign in with Apple key.
 - The container runs as an unprivileged user with every capability dropped except binding ports 80 and 443.
+
+## The Over&Out Ops dashboard
+
+The product dashboard ([OPS_DASHBOARD_SPEC.md](../../OPS_DASHBOARD_SPEC.md)): a Cloud Run service `ops` behind Identity-Aware Proxy, the rolling job `stats-rolling` with the Canary, and nightly reports. In order, each with Steve's OK:
+
+1. Console: the "Over&Out" OAuth consent screen and an IAP web client with the redirect URI `https://iap.googleapis.com/v1/oauth/clientIds/<client ID>:handleRedirect` (`setup-ops.sh`'s header has the settings); put the client's ID and secret in `config.sh` (`OPS_OAUTH_CLIENT_ID`, `OPS_OAUTH_CLIENT_SECRET`).
+2. `node server/tools/test-account.ts canary` (with `TEST_BOT_USER_ID` set) makes the Canary; put its ID in `config.sh` as `CANARY_USER_ID`.
+3. `deploy/gcp/setup-ops.sh`: the `ops-viewer` account, the `ops-stats-token` secret, the service behind IAP. Put the URL it prints in `config.sh` as `OPS_URL`.
+4. `deploy/gcp/deploy-relay.sh` (about 2 minutes without the relay): the relay reads the token and leaves the Canary out of its live view.
+5. `deploy/gcp/setup-stats.sh`: the `stats-rolling` job and its Scheduler job (the third free one), the bots' IDs for both jobs, TTL policies on `statsLive` and reports' `history`.
+6. `deploy/gcp/ops-access.sh add <email>` (or `add group:<email>`) for each person.
+7. `deploy/gcp/setup-telemetry.sh` (or `node deploy/gcp/telemetry-monitoring.ts apply` with `OPS_URL`): the link row on "Over&Out Beta", both links in every alert email, the Canary's charts.
+
+`deploy-api.sh` keeps the `ops` service and both stats jobs on the API's image. Locally: `OPS_LOCAL=1 STATS_LOCAL_DIR=<DATA_DIR> RELAY_NODES=http://localhost:8080 OPS_STATS_TOKEN=<the relay's> node server/src/ops-main.ts`, after `rolling-main.ts` with the same `STATS_LOCAL_DIR`.
