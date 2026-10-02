@@ -26,7 +26,8 @@
 // whose token the v2 server has since registered elsewhere is removed, not converted.
 //
 // retireLegacyWatchSessions ends watch sessions that no phone made (they predate Phase 0's
-// parent records), once the testers' updated iPhones can make new ones.
+// parent records), once the testers' updated iPhones can make new ones. A bot's session (its
+// device rung by the test delivery) stays: it has no phone to ask.
 
 import { createHash } from "node:crypto";
 import { PreconditionFailed, type FirestoreData, type Write } from "./firestore.ts";
@@ -405,10 +406,16 @@ export async function retireLegacyWatchSessions(docs: Docs, before: number, dryR
       const watch = session.data.clientKind === "watchos" || (session.data.clientKind === undefined && session.data.platform === "watch");
       if (!watch || typeof session.data.parentDeviceId === "string" || millis(session.data.createdAt) >= before) continue;
       const deviceId = typeof session.data.deviceId === "string" ? session.data.deviceId : session.id;
+      const [device] = await docs.getAll([`users/${user.id}/devices/${deviceId}`]);
+      // A bot's "watch" (the Test Bot's account, rung over its relay connection) has no phone to
+      // ask: retiring it would leave the bot unreachable.
+      if (device && (storedDelivery(device)?.provider === "test" || /^(local|poll):/.test(String(device.pushToken ?? "")))) {
+        log(`  ${user.id}: keeping ${deviceId} (a bot's test delivery)`);
+        continue;
+      }
       log(`  ${user.id}: retiring watch session ${deviceId}`);
       retired++;
       if (dryRun) continue;
-      const [device] = await docs.getAll([`users/${user.id}/devices/${deviceId}`]);
       // The v2 pointer, and v1's if the cleanup hasn't run yet.
       const token = device && typeof device.pushToken === "string" ? device.pushToken : undefined;
       const pointers = [

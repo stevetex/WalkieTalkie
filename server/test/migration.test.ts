@@ -318,6 +318,8 @@ test("migration: the cleanup refuses until everything is v2, then removes exactl
 
 test("migration: after the cutoff, watch sessions no phone made are retired with their registrations", async () => {
   const docs = await seeded();
+  // The Test Bot's session, as tools/test-account.ts made it: a "watch" with no phone.
+  await docs.commit([{ set: `users/${BOT}/sessions/bot-1`, data: { sid: "sb", platform: "watch", createdAt: T, refreshedAt: T } }]);
   await migrateToV2(docs, { dryRun: false });
   const cutoff = T.getTime() + DAY;
   const accounts = new Accounts(docs, { now: () => T.getTime() + 2 * DAY });
@@ -338,6 +340,9 @@ test("migration: after the cutoff, watch sessions no phone made are retired with
   assert.equal((await one(docs, v2Pointer(apns("pushtotalk", "aa".repeat(32)))))?.deviceId, "phone-1");
   assert.equal(await accounts.sessionActive(STEVE, companion.sid, "watch-2"), true);
   assert.equal(await accounts.sessionActive(HELEN, late, "watch-3"), true);
+  // The bot keeps its session and its test delivery: it has no phone to ask for another.
+  assert.equal(await accounts.sessionActive(BOT, "sb", "bot-1"), true);
+  assert.equal((await accounts.devices(BOT)).some((d) => d.id === "bot-1"), true);
   assert.equal(await retireLegacyWatchSessions(docs, cutoff, false), 0);
-  assert.equal((await verifyV2(docs)).counts.watchSessionsWithoutParent, 1);
+  assert.equal((await verifyV2(docs)).counts.watchSessionsWithoutParent, 2);
 });
