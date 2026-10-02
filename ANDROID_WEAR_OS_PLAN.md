@@ -190,7 +190,7 @@ The identifiers/timestamps above are illustrative. Each new ring attempt gets a 
 
 ### Phase 0 status (2026-10-01)
 
-Built on branch `phase0-v2`; nothing deployed or migrated yet. The frozen contract is
+Done 2026-10-02: PR #39 merged, the cutover complete (production all v2, no v1 data), device gates passed (runs 109–115), baseline tagged `commercial-baseline-v2` (build 182, relay 641ba74, API b23a94d). The frozen contract is
 [contracts/README.md](contracts/README.md); the cutover is
 [deploy/gcp/PHASE0_ROLLOUT.md](deploy/gcp/PHASE0_ROLLOUT.md). With three testers, Steve chose
 (2026-10-01) to retire v1 at once rather than run a bridge: the service is v2 only, the tester
@@ -206,10 +206,10 @@ window. Rollback is the previous revisions and the snapshot.
 | P0.5 | Code done | Ring IDs and deadlines (required everywhere), one device per ring, answer claims, pending-ring lookup, ring-scoped prefetch, codec admission, provider-neutral delivery outcomes, FCM stub |
 | P0.6 | Code done | Kit, iPhone, watch and extension on v2 only; tolerant enums; update-required state; watch link with schema versions and request IDs |
 | P0.7 | Code done | Telemetry carries client kind, provider, mode and ring ID; simulated deliveries never count as delivered |
-| P0.8 | Prepared | `tools/migrate-v2.ts`: snapshot, plan, apply (additive, before and after the deploy), verify, cleanup (removes the v1 data after the deploy), retire, restore (`--exact` for the rollback); tested on v1-shaped records; production steps await Steve's OK |
+| P0.8 | Done | Production cut over 2026-10-01/02 with `tools/migrate-v2.ts`: snapshot, plan, apply (additive, before and after the deploy), verify, cleanup (removes the v1 data after the deploy), retire, restore (`--exact` for the rollback); tested on v1-shaped records; production steps await Steve's OK |
 
-Release gates still open: the production cutover, device runs on the v2 TestFlight build, and the
-baseline archive. Simulator runs on 2026-10-01 covered Apple↔Apple, Apple↔synthetic Android
+Release gates: the cutover, the device runs (build 171, runs 109–115) and the baseline tag are done;
+Helen's and Cooper's devices are still to update to build 182. Simulator runs on 2026-10-01 covered Apple↔Apple, Apple↔synthetic Android
 (Google dev account, FCM stub) in both directions, and the update-required screen.
 
 ### Work deliberately left out of Phase 0
