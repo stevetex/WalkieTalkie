@@ -22,6 +22,25 @@ Decided with Steve on 2026-10-01:
 
 Updated 2026-10-02 for Phase 0 of the [Android and Wear OS plan](ANDROID_WEAR_OS_PLAN.md), the v2 service contract deployed on 2026-10-01. Every device split now uses v2's client kind, form factor and push provider, so Android phones and Wear OS watches appear without dashboard changes. Operator routes moved to `/admin`, and the relay already knows each connection's device kind, so the session-token claim this spec first planned is dropped.
 
+## Implementation status (2026-10-02)
+
+Built on branch `ops-dashboard` as one pull request with a commit per milestone (A–E below), so it can still be split. Nothing is deployed or created on Google Cloud yet; "What needs Steve" is unchanged. This section is newer than the Claude Doc (rev 28).
+
+Checked: server `npm test` 178 pass (33 skip without the emulator); the Firestore emulator suite 33 pass (with `count()`); the perf suite against `main` (3 quick rounds each, then full): 0 failures, 0 warnings, scenario B's press → grant 4.09 → 4.07 ms, the 200-pair load clean, and scenario C checks each record's `turns`. Locally end to end (a relay with the API and the in-process Test Bot on port 8191): watch ↔ iPhone back-and-forths (turns 3, then 5), iPhone → synthetic Android over the FCM stub (simulated, never accepted), a watch ringing the Test Bot (shown, marked), the Canary (passes, about 0.91 s to the bot's first frame), `rolling-main.ts`, `rollup-main.ts` with all ten reports, and `ops-main.ts` in a browser at desktop and phone widths. The simulators weren't used: no app changes.
+
+Where the build differs from the text above:
+
+- **Active** is enforced in `activeAccounts`: talked, or listened (answered, live, or replied), with a friend. Conversations with the Test Bot or the Canary don't count unless the page's Test Bot switch is on (the Canary's never), even without the bots' IDs, since records the bot answered are marked. Daily DAU from now on is lower than before for the same day (opening the app no longer counts).
+- **Live list:** a conversation with the Test Bot is shown, marked "Test Bot", so the post-deploy check (ring the Test Bot, look at the live panel) works; the bot's and the Canary's connections, and the Canary's conversations, are left out as specified.
+- **Client kinds on the record:** the relay logs a `memberKind` event the first time each member talks or joins, which the record turns into `fromClientKind`/`toClientKind` (the ring's target's kind when the other side never joined).
+- **Tiers:** ring outcomes, push delivery, quality and safety counters come from the rolling job (15 minutes), with a near-live "last hour" line from Monitoring's `oao_conversations` and `oao_apns_failures`. The near-live tier is API latency, errors and instances, relay CPU, uptime checks, open incidents, Firestore and Logging usage.
+- **Ranges:** 7 and 30 days add each day's `conversationStats` (in `stats/{date}` from now on); medians over a range are each day's, weighted by its count ("by day").
+- **Regenerate** needs `roles/run.jobsExecutorWithOverrides` on the `stats` job (`run.invoker` can't pass arguments), and a custom request header against cross-site posts.
+- **Page CSP:** scripts and style sheets only from the service (fonts from Google); style attributes are allowed, for bar and meter widths.
+- **Accounts today** come from the rolling job (it already lists accounts for the provider split), not the daily snapshot plus sign-ups.
+- **Monitoring:** the Canary's `oao_canary_first_frame_ms` and `oao_canary_failures` metrics and two charts; links go into every `Over&Out:` and `Relay down:` policy's documentation.
+- **Not built:** the Spend panel (no billing budget), the TestFlight feedback counts in the cloud (no App Store Connect key there), the e2-micro ceiling (not measured). Each says so on the page.
+
 ## Architecture
 
 One new Cloud Run service, `ops`, gathers every number server-side and serves the page behind Google sign-in. It reads three things: the relay's live state, summaries the two stats jobs write to Firestore, and Cloud Monitoring's metrics.
