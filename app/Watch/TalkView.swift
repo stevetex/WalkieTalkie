@@ -76,6 +76,17 @@ struct TalkView: View {
                 // Centred under the back button.
                 .padding(.leading, 13)
                 .padding(.top, 2)
+
+            // The crown turns the volume; its level shows at bottom right, beside the name.
+            // Inset from the rounded corner, level with the name.
+            CrownVolume()
+                .frame(width: 26, height: 26)
+                .accessibilityLabel("Volume")
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+                .padding(.trailing, Self.compactScreen ? 12 : 16)
+                .padding(.bottom, 5)
+                // Down with the name, which runs to the bottom edge.
+                .ignoresSafeArea(edges: .bottom)
         }
         .padding(.horizontal, 4)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -121,6 +132,8 @@ struct TalkView: View {
         .font(.footnote.weight(.semibold))
         .foregroundStyle(Brand.ivory)
         .accessibilityElement(children: .combine)
+        // Clear of the volume at bottom right, on both sides so the name stays centred.
+        .padding(.horizontal, 30)
         .padding(.bottom, 10)
     }
 }
