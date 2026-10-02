@@ -13,6 +13,7 @@ import {
   deviceSummary,
   parseLevel,
   parsePushDetail,
+  parsePushSent,
 } from "../src/telemetry.ts";
 import type { TimelineEntry } from "../src/store.ts";
 import { startServer } from "../src/main.ts";
@@ -414,4 +415,19 @@ test("Phase 0: a stub provider's failures are oao.push entries, never oao.apns",
   assert.deepEqual(sink.of("oao.push").map((e) => [e.provider, e.status, e.simulated]), [["fcm", 404, true]]);
   assert.deepEqual(sink.of("oao.apns").map((e) => [e.pushType, e.status]), [["alert", 410]]);
   await store.flush();
+});
+
+test("a ring's pushSent detail carries its ID, target and deadline", () => {
+  assert.deepEqual(parsePushSent("watch; r_abc; watchos apns/alert; expires 1790000035000"), {
+    platform: "watch",
+    devices: 1,
+    ringId: "r_abc",
+    clientKind: "watchos",
+    provider: "apns",
+    mode: "alert",
+    expiresAt: 1790000035000,
+  });
+  // Relays before the deadline was logged, and before Phase 0.
+  assert.equal(parsePushSent("watch; r_abc; watchos apns/alert").expiresAt, undefined);
+  assert.deepEqual(parsePushSent("watch, 2 devices"), { platform: "watch", devices: 2 });
 });

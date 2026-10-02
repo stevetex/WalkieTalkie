@@ -10,7 +10,7 @@
 // FcmStub stands in for it on servers run for tests, and its rings are marked simulated so
 // telemetry never counts them as delivered pushes.
 
-import { prefetchAlert, pushToTalkRing, ringAlert, type PushResult, type Pusher } from "./apns.ts";
+import { missedAlert, prefetchAlert, pushToTalkRing, ringAlert, type PushResult, type Pusher } from "./apns.ts";
 import type { Delivery } from "./contract.ts";
 import type { RingPayload } from "./protocol.ts";
 
@@ -24,8 +24,9 @@ export interface DeliveryResult {
   simulated: boolean;
 }
 
-// What a ring is: the first push, or the watch's second, silent push that prefetches the audio.
-export type RingPush = "ring" | "prefetch";
+// What a ring is: the first push, the watch's second, silent push that prefetches the audio, or
+// the notice that replaces the ring's notification once it ran out unanswered.
+export type RingPush = "ring" | "prefetch" | "missed";
 
 export interface PushDelivery {
   // Never throws.
@@ -43,11 +44,13 @@ export class ApnsDelivery implements PushDelivery {
 
   async send(delivery: Delivery, ring: RingPayload, push: RingPush): Promise<DeliveryResult> {
     if (delivery.provider !== "apns") return unsupported(delivery);
-    const body = push === "prefetch" ? prefetchAlert(ring, ring.expiresAt) : delivery.mode === "pushtotalk" ? pushToTalkRing(ring) : ringAlert(ring, ring.expiresAt);
+    const body = push === "missed"
+      ? missedAlert(ring, Date.now())
+      : push === "prefetch" ? prefetchAlert(ring, ring.expiresAt) : delivery.mode === "pushtotalk" ? pushToTalkRing(ring) : ringAlert(ring, ring.expiresAt);
     const result = await this.pusher
       .sendAlert(delivery.token, delivery.environment, body)
       .catch((err: Error): PushResult => ({ ok: false, status: 0, reason: err.message, latencyMs: 0, dryRun: false }));
-    const kind = push === "prefetch" ? "prefetch" : delivery.mode;
+    const kind = push === "ring" ? delivery.mode : push;
     return {
       outcome: result.ok ? "accepted" : isUnreachable(result) ? "permanentlyRejected" : "unknownOrTransient",
       detail: `${kind}: status ${result.status}${result.reason ? ` ${result.reason}` : ""} in ${result.latencyMs.toFixed(0)} ms${result.dryRun ? " (dry run)" : ""}`,
@@ -80,7 +83,7 @@ export class FcmStub implements PushDelivery {
       : delivery.token.startsWith("flaky:")
         ? ["unknownOrTransient", 503]
         : ["accepted", 200];
-    return { outcome, detail: `fcm-${push === "prefetch" ? "prefetch" : "notification"}: status ${status} in 0 ms (simulated)`, simulated: true };
+    return { outcome, detail: `fcm-${push === "ring" ? "notification" : push}: status ${status} in 0 ms (simulated)`, simulated: true };
   }
 
   close(): void {}

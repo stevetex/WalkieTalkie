@@ -19,6 +19,7 @@ import {
   platformLabel,
   type CodecName,
   type ClientKind,
+  type Delivery,
   type FormFactor,
 } from "./contract.ts";
 import { FRAME_MS, isValidFrame, type ClientMessage, type RelayErrorCode, type RingPayload, type ServerMessage } from "./protocol.ts";
@@ -90,6 +91,9 @@ interface RingState {
   // ringing: no answer yet; answered: a device claimed it and has answerJoinTimeoutMs to join;
   // joined: the recipient joined; ended: it ran out, or couldn't ring anyone.
   state: "ringing" | "answered" | "joined" | "ended";
+  // The notification deliveries (a watch's alert, an FCM notification) this ring was shown
+  // through, so they can be told when it runs out unanswered.
+  notified: Delivery[];
 }
 
 interface Conversation {
@@ -696,7 +700,7 @@ export class Relay {
 
   private async ring(conversation: Conversation, from: string, to: string, burstId: string, codec: number): Promise<RingResult> {
     // Armed before the lookup, so a second Talk meanwhile doesn't ring again.
-    conversation.ring = { id: newRingId(), to, from, fromName: from, burstId, state: "ringing" };
+    conversation.ring = { id: newRingId(), to, from, fromName: from, burstId, state: "ringing", notified: [] };
     conversation.rolledOver = false;
     conversation.answer = null;
     conversation.ringExpiresAt = null;
@@ -803,8 +807,9 @@ export class Relay {
     this.armRingTimer(conversation, to, Math.max(0, conversation.ringExpiresAt - conversation.lastRingAt));
     const payload = this.envelope(conversation);
     const delivery = target.delivery;
-    // "watch; r_…; watchos apns/alert": the first part as before, for dashboards (telemetry.ts).
-    this.opts.metrics.server(conversation.id, "pushSent", conversation.lastRingAt, `${platformLabel(target.clientKind)}; ${payload.ringId}; ${target.clientKind} ${delivery.provider}/${delivery.mode}`);
+    // "watch; r_…; watchos apns/alert; expires <ms>": the first part as before, for dashboards
+    // (telemetry.ts).
+    this.opts.metrics.server(conversation.id, "pushSent", conversation.lastRingAt, `${platformLabel(target.clientKind)}; ${payload.ringId}; ${target.clientKind} ${delivery.provider}/${delivery.mode}; expires ${payload.expiresAt}`);
     if (delivery.provider === "relay" || delivery.provider === "test") {
       // Over the device's open relay stream (an iPhone app on screen), or any of the account's
       // (a test bot's).
@@ -822,6 +827,7 @@ export class Relay {
     }
     const result = await this.deliveries.send(delivery, payload, "ring");
     this.opts.metrics.server(conversation.id, result.outcome === "accepted" ? "pushAccepted" : "pushFailed", this.opts.now(), result.detail);
+    if (result.outcome === "accepted" && isNotificationDelivery(delivery) && conversation.ring?.id === payload.ringId) conversation.ring.notified.push(delivery);
     if (result.outcome !== "accepted") console.error(`[relay] push to ${to} failed: ${result.detail}`);
     if (result.outcome === "permanentlyRejected" && conversation.prefetch?.target.id === target.id) this.clearPrefetch(conversation);
     return result.outcome;
@@ -885,7 +891,21 @@ export class Relay {
       peer: to,
       droppedBursts: unheard.length,
     });
+    this.sendMissedNotices(conversation);
     this.prune(conversation);
+  }
+
+  // The ring's notifications still offer "Tap to listen" for a message the relay just dropped:
+  // each is replaced with "Missed message" (apns.ts missedAlert). Never waited for.
+  private sendMissedNotices(conversation: Conversation): void {
+    const ring = conversation.ring;
+    if (!ring?.notified.length || conversation.ringExpiresAt === null) return;
+    const payload = this.envelope(conversation);
+    for (const delivery of ring.notified.splice(0)) {
+      void this.deliveries.send(delivery, payload, "missed").then((result) => {
+        this.opts.metrics.server(conversation.id, result.outcome === "accepted" ? "missedNoticeAccepted" : "missedNoticeFailed", this.opts.now(), result.detail);
+      });
+    }
   }
 
   private recentlyAuthorized(conversation: Conversation): boolean {

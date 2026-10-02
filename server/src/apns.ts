@@ -112,6 +112,28 @@ export function prefetchAlert(ring: RingPayload, expiresAt: number): AlertPush {
   };
 }
 
+// The ring ran out unanswered: replaces the ring's notification (same collapse ID), so a watch
+// doesn't keep offering "Tap to listen" for a message the relay has dropped. No sound and
+// passive, so it doesn't ring again. It carries no ring ID, so the app doesn't take it for a
+// ring: tapped, it just opens the app. Kept a day for a watch that's offline now.
+export function missedAlert(ring: RingPayload, now: number): AlertPush {
+  return {
+    payload: {
+      aps: {
+        alert: { title: ring.fromName, body: "Missed message" },
+        "interruption-level": "passive",
+        "thread-id": ring.conversationId,
+      },
+      missed: 1,
+      conversationId: ring.conversationId,
+      from: ring.from,
+      fromName: ring.fromName,
+    },
+    collapseId: ring.conversationId,
+    expiresAt: now + 24 * 60 * 60 * 1000,
+  };
+}
+
 // The iPhone's ring: a PushToTalk push. The app reports the sender as the channel's active
 // speaker, the system activates its audio, and the app joins the conversation and plays it.
 // Expiration 0, as Apple recommends: a late wake for audio that's gone is worse than none.

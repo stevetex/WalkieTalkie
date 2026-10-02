@@ -176,6 +176,8 @@ export interface Ring {
   clientKind?: string;
   provider?: string;
   mode?: string;
+  // When the relay abandons it unanswered (server clock, ms).
+  expiresAt?: number;
   results: Array<{ kind: string; ok: boolean; status?: number; reason?: string; ms?: number; retried?: boolean; simulated?: boolean }>;
 }
 
@@ -270,14 +272,16 @@ export function conversationRecord(conversationId: string, events: TimelineEntry
 }
 
 // A ring's pushSent detail: "watch" or "watch, 2 devices" before Phase 0; since then one device,
-// "watch; r_…; watchos apns/alert".
+// "watch; r_…; watchos apns/alert", and from 2026-10-02 "…; expires <ms>" (the ring's deadline).
 export function parsePushSent(detail: string | undefined): Omit<Ring, "at" | "results"> {
-  const [first = "", ringId, target] = (detail ?? "").split(";").map((p) => p.trim());
+  const [first = "", ringId, target, expires] = (detail ?? "").split(";").map((p) => p.trim());
   const [platform, count] = first.split(", ");
   const ring: Omit<Ring, "at" | "results"> = { platform: platform || "unknown", devices: count ? parseInt(count, 10) || 1 : 1 };
   if (ringId?.startsWith("r_")) ring.ringId = ringId;
   const match = target?.match(/^(\w+) (\w+)\/(\w+)$/);
   if (match) Object.assign(ring, { clientKind: match[1], provider: match[2], mode: match[3] });
+  const expiresAt = Number(expires?.match(/^expires (\d+)$/)?.[1]);
+  if (expiresAt > 0) ring.expiresAt = expiresAt;
   return ring;
 }
 
