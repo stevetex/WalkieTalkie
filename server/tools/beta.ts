@@ -48,7 +48,7 @@ import { Accounts } from "../src/accounts.ts";
 import { MemoryDocs, type Docs } from "../src/docs.ts";
 import { Firestore, gcloudAccessToken } from "../src/firestore.ts";
 import { percentile, readEntries, type Entry } from "./telemetry-source.ts";
-import { ACTIVITY_KINDS, activity, usageSnapshot } from "../src/stats.ts";
+import { ACTIVITY_KINDS, activity, botsFromEnv, usageSnapshot } from "../src/stats.ts";
 
 const { positionals, values } = parseArgs({
   allowPositionals: true,
@@ -372,7 +372,7 @@ switch (command) {
     console.log(`  devices: ${line(usage.devices)}; iPhones with walkie-talkie on ${usage.iphones.walkieTalkie}, app-only ${usage.iphones.appOnly}`);
     console.log(`  Ring Me On: ${line(usage.ringOn)}`);
     console.log(`  last heard from someone: ${line(usage.lastHeard)}`);
-    const a = activity(entries);
+    const a = activity(entries, botsFromEnv(process.env));
     const conversations = Object.values(a.conversations).reduce((n, c) => n + c, 0);
     console.log(`\nSince ${since.toISOString().slice(0, 10)}: ${a.activeAccounts} active accounts, ${a.talkers} rang someone, ${a.openedApp} opened the app`);
     console.log(`  conversations ${conversations}: ${line(a.conversations)}; ${a.conversationsWithReplies} with a reply; ${a.talkMinutes} minutes of talk`);
@@ -382,7 +382,9 @@ switch (command) {
     break;
   }
   case "stats": {
-    const days = (await docs.list("stats")).map((d) => d.data as any).filter((d) => Date.parse(`${d.date}T00:00:00Z`) >= Date.now() - Number(values.days ?? 30) * 86_400_000);
+    // Locally the rollup writes beside the relay's data (src/job-env.ts).
+    const statsDocs = local ? new MemoryDocs(join(local, "ops-docs.json")) : docs;
+    const days = (await statsDocs.list("stats")).map((d) => d.data as any).filter((d) => Date.parse(`${d.date}T00:00:00Z`) >= Date.now() - Number(values.days ?? 30) * 86_400_000);
     days.sort((a, b) => String(a.date).localeCompare(String(b.date)));
     if (!days.length) console.log("No daily stats yet (the rollup runs at 00:30 UTC; deploy/gcp/setup-stats.sh sets it up).");
     else console.log("date         DAU  WAU  MAU  talkers  convs  replies  talk min  sign-ups  invites  accounts");

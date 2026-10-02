@@ -24,6 +24,14 @@
 //       Sets the bot's profile photo: a square JPEG under 100 KB, by default
 //       tools/test-bot-photo.jpg (the robot face emoji on indigo).
 //
+//   node tools/test-account.ts canary
+//       The Ops dashboard's Canary (src/canary.ts): an account with an iPhone session on the
+//       device "canary" and the Test Bot as its friend, and no device to ring. Prints its ID for
+//       CANARY_USER_ID in deploy/gcp/config.sh. Run once; again, it finds the same account and
+//       makes a fresh session. No token is saved: the rolling job signs a short one each run.
+//       Google Cloud: needs the Test Bot's account (TEST_BOT_USER_ID, or the bot's token file).
+//       Local: the bot made with "create" against the local API.
+//
 //   node tools/test-account.ts android <name>
 //       Local only (Phase 0's synthetic Android peer): signs <name> in with a dev Google identity
 //       on an "android" device and registers it for FCM rings, which the relay's FCM stub records
@@ -40,10 +48,12 @@ import { dirname, join } from "node:path";
 import { Accounts } from "../src/accounts.ts";
 import { Firestore, gcloudAccessToken } from "../src/firestore.ts";
 import { SessionSigner, parseSigningKey } from "../src/session.ts";
+import { CANARY_DEVICE } from "../src/canary.ts";
 
 // OAO_BOT_TOKEN_FILE keeps a local bot (simulator testing) apart from the Google Cloud one.
 export const BOT_TOKEN_FILE = process.env.OAO_BOT_TOKEN_FILE ?? join(import.meta.dirname, "..", "data", "bot-token.json");
 const BOT_APPLE_SUB = "test-bot.overandout";
+const CANARY_APPLE_SUB = "canary.overandout";
 const BOT_DEVICE = "test-bot";
 // Rings reach the bot over its relay connection: a test delivery, which only servers run for
 // tests let clients register (TEST_DELIVERY), so on Google Cloud it's written directly.
@@ -148,6 +158,29 @@ if (import.meta.main) {
     const json = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(`PUT /v2/me/photo: ${res.status} ${json.error ?? ""}`);
     console.log(`${session.name}'s photo is ${file} (version ${json.photoVersion}).`);
+  } else if (command === "canary") {
+    let canaryId: string;
+    if (local) {
+      const bot = loadBotSession();
+      const res = await api(base, null, "POST", "/v2/auth/apple", { identityToken: `dev:${CANARY_APPLE_SUB}`, nonce: "unused", name: "Canary", deviceId: CANARY_DEVICE, clientKind: "ios" });
+      canaryId = res.user.id;
+      const { friends } = await api(base, res.token, "GET", "/v2/friends");
+      if (!friends.some((f: { id: string }) => f.id === bot.userId)) {
+        const { code } = await api(base, bot.token, "POST", "/v2/invites");
+        await api(base, res.token, "POST", `/v2/invites/${code}/accept`);
+      }
+    } else {
+      const botId = process.env.TEST_BOT_USER_ID || (existsSync(BOT_TOKEN_FILE) ? loadBotSession().userId : "");
+      if (!botId) throw new Error("set TEST_BOT_USER_ID (the Test Bot's account) first");
+      const accounts = new Accounts(new Firestore({ projectId: project, accessToken: gcloudAccessToken() }));
+      const { user } = await accounts.signInWithApple(CANARY_APPLE_SUB, "Canary");
+      canaryId = user.id;
+      await accounts.createSession(user.id, CANARY_DEVICE, "ios");
+      if (!(await accounts.friends(user.id)).some((f) => f.id === botId)) {
+        await accounts.acceptInvite((await accounts.createInvite(botId)).code, user.id);
+      }
+    }
+    console.log(`The Canary is ${canaryId}, a friend of the Test Bot. Set CANARY_USER_ID="${canaryId}" in deploy/gcp/config.sh.`);
   } else if (command === "android") {
     if (!local || !arg) throw new Error("usage (local only): node tools/test-account.ts android <name>");
     const deviceId = `android-${arg.toLowerCase()}`;
@@ -164,7 +197,7 @@ if (import.meta.main) {
     save(session);
     console.log(`${session.name} is an Android account ${session.userId} (Google dev identity); its token is in ${BOT_TOKEN_FILE}.`);
   } else {
-    console.error("usage: node tools/test-account.ts create | accept <invite link or code> | invite | friends | photo [file.jpg] | android <name>");
+    console.error("usage: node tools/test-account.ts create | accept <invite link or code> | invite | friends | photo [file.jpg] | canary | android <name>");
     process.exit(2);
   }
 }
