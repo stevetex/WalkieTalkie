@@ -18,6 +18,7 @@
 
 import type { Docs } from "./docs.ts";
 import { jobContext } from "./job-env.ts";
+import { reportsFromEnv } from "./reports-main.ts";
 import type { LogEntry } from "./log-reader.ts";
 import { ACTIVITY_KINDS, botsFromEnv, dailyStats, providersOf, usageSnapshot, type Bots } from "./stats.ts";
 import { StdoutSink } from "./telemetry.ts";
@@ -46,4 +47,9 @@ if (import.meta.main) {
   const ctx = await jobContext(env);
   const stats = await rollup(date, ctx.docs, (since, until) => ctx.read(ACTIVITY_KINDS, since, until), undefined, botsFromEnv(env), ctx.out);
   console.log(`[stats] ${date}: DAU ${stats.dau}, WAU ${stats.wau}, MAU ${stats.mau}, ${stats.day.talkers} talkers, ${stats.usage.accounts} accounts`);
+  // The Ops dashboard's reports, right after (no Scheduler job of their own). A failed report
+  // doesn't fail the rollup, which has already been written.
+  if (env.OPS_REPORTS !== "0") {
+    for (const r of await reportsFromEnv(env, null, ctx)) console.log(`[reports] ${r.id}: ${r.ok ? `${Math.round(r.bytes! / 1024)} KB` : `failed: ${r.error}`}`);
+  }
 }

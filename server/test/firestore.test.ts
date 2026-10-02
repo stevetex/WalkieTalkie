@@ -105,3 +105,19 @@ test("a relay on Firestore rings, relays and records a conversation", { skip }, 
   const names = (await metrics.timeline(conversationId)).map((e) => e.name);
   for (const name of ["talkStart", "pushSent", "pushAccepted", "floorGrantSent", "receiverJoined"]) assert.ok(names.includes(name), name);
 });
+
+test("count(): a collection, a filter, and a collection group", { skip }, async () => {
+  const store = db();
+  await store.commit([
+    { set: "users/u_1", data: { n: 1 } },
+    { set: "users/u_2", data: { n: 2 } },
+    { set: "users/u_1/friends/u_2", data: { since: new Date() } },
+    { set: "users/u_2/friends/u_1", data: { since: new Date() } },
+    { set: "invites/a", data: { expireAt: new Date("2026-01-01T00:00:00Z") } },
+    { set: "invites/b", data: { expireAt: new Date("2027-01-01T00:00:00Z") } },
+  ]);
+  assert.equal(await store.count("users"), 2);
+  assert.equal(await store.count("friends", { allDescendants: true }), 2);
+  assert.equal(await store.count("users/u_1/friends"), 1);
+  assert.equal(await store.count("invites", { where: { field: "expireAt", op: "LESS_THAN", value: new Date("2026-10-01T00:00:00Z") } }), 1);
+});

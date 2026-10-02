@@ -154,6 +154,22 @@ export class Firestore {
     );
   }
 
+  // How many documents a collection has (Firestore's count(): about one read per 1,000), or,
+  // with allDescendants, every collection of that ID anywhere ("friends" under every user).
+  async count(collection: string, options: { allDescendants?: boolean; where?: QueryFilter } = {}): Promise<number> {
+    const segments = splitPath(collection);
+    if (segments.length % 2 !== 1) throw new Error(`invalid collection ${JSON.stringify(collection)}`);
+    const collectionId = segments.pop()!;
+    const structuredQuery: Record<string, unknown> = { from: [{ collectionId, ...(options.allDescendants ? { allDescendants: true } : {}) }] };
+    if (options.where) {
+      structuredQuery.where = { fieldFilter: { field: { fieldPath: options.where.field }, op: options.where.op, value: encodeValue(options.where.value) } };
+    }
+    const parent = segments.length ? `${this.documentsPath}/${segments.map(encodeURIComponent).join("/")}` : this.documentsPath;
+    const res = await this.request("POST", `${parent}:runAggregationQuery`, { structuredAggregationQuery: { structuredQuery, aggregations: [{ alias: "n", count: {} }] } });
+    const rows = (await res.json()) as Array<{ result?: { aggregateFields?: { n?: { integerValue?: string } } } }>;
+    return Number(rows.find((r) => r.result)?.result?.aggregateFields?.n?.integerValue ?? 0);
+  }
+
   // A read-write transaction: `fn` reads through `get` (Firestore locks what it reads) and
   // returns the writes, which commit only if nothing it read has changed. If a concurrent
   // write wins, `fn` runs again.
