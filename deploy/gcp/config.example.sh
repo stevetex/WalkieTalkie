@@ -76,3 +76,6 @@ OPS_URL=""
 # consent screen (APIs & Services → Credentials → Web application).
 OPS_OAUTH_CLIENT_ID=""
 OPS_OAUTH_CLIENT_SECRET=""
+# The "Over&Out Beta" Monitoring dashboard, for the Ops header's "Service graphs" link
+# (setup-ops.sh; default: the project's dashboards list).
+MONITORING_DASHBOARD=""
