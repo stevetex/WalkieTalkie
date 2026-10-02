@@ -3,7 +3,9 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { AccountError, Accounts } from "../src/accounts.ts";
+import { createHash } from "node:crypto";
+import { AccountError, Accounts, identityDocPath, tokenPointers, type DeviceRegistration } from "../src/accounts.ts";
+import { DEFAULT_CAPABILITIES } from "../src/contract.ts";
 import type { Docs } from "../src/docs.ts";
 
 // Docs that run `between` inside the next transaction, after its reads and before it commits.
@@ -47,6 +49,18 @@ export function accountsSuite(label: string, makeDocs: () => Docs, skip: string 
       () => "ok",
       (err) => (err instanceof AccountError ? err.code : Promise.reject(err)),
     );
+
+  // Registrations as the apps send them: notifications allowed, the default capabilities.
+  const v2 = (overrides: Partial<DeviceRegistration> & Pick<DeviceRegistration, "clientKind" | "delivery">): DeviceRegistration => ({
+    availability: { enabled: true, notifications: "authorized" },
+    capabilities: structuredClone(DEFAULT_CAPABILITIES),
+    ...overrides,
+  });
+  // A watch rung by an alert, an iPhone in its PushToTalk channel, and an iPhone rung only while
+  // the app is open.
+  const watchReg = (token: string) => v2({ clientKind: "watchos", delivery: { provider: "apns", mode: "alert", token, environment: "sandbox" } });
+  const phoneReg = (token: string) => v2({ clientKind: "ios", delivery: { provider: "apns", mode: "pushtotalk", token, environment: "sandbox" } });
+  const inAppPhone = () => v2({ clientKind: "ios", delivery: { provider: "relay", mode: "foreground" } });
 
   test(`${label}: signing in again finds the same account, and only the first name counts`, { skip }, async () => {
     const { accounts, alice } = await setup();
@@ -115,25 +129,25 @@ export function accountsSuite(label: string, makeDocs: () => Docs, skip: string 
     const { accounts, alice, bob } = await setup();
     assert.deepEqual(await accounts.ringLookup(alice.id, bob.id), { allowed: false });
     await befriend(accounts, alice.id, bob.id);
-    await accounts.registerDevice(bob.id, "watch-1", { platform: "watch", pushToken: "ab".repeat(32), apnsEnvironment: "sandbox" });
+    await accounts.registerDevice(bob.id, "watch-1", watchReg("ab".repeat(32)));
     const lookup = await accounts.ringLookup(alice.id, bob.id);
     assert.equal(lookup.allowed, true);
     assert.ok(lookup.allowed);
     assert.equal(lookup.fromName, "Alice Appleseed");
-    assert.deepEqual(lookup.devices.map((d) => [d.id, d.platform]), [["watch-1", "watch"]]);
+    assert.deepEqual(lookup.devices.map((d) => [d.id, d.clientKind, d.formFactor]), [["watch-1", "watchos", "watch"]]);
     assert.equal((await accounts.ringLookup(bob.id, alice.id)).allowed, true);
 
     // Bob's iPhone in its PushToTalk channel, and his choice of which device rings.
-    await accounts.registerDevice(bob.id, "phone-1", { platform: "iphone", pushToken: "cd".repeat(32), pushType: "pushtotalk", apnsEnvironment: "sandbox" });
-    assert.equal((await accounts.setRingOn(bob.id, "iphone")).ringOn, "iphone");
+    await accounts.registerDevice(bob.id, "phone-1", phoneReg("cd".repeat(32)));
+    assert.equal((await accounts.setPreferredFormFactor(bob.id, "phone")).preferredFormFactor, "phone");
     const chosen = await accounts.ringLookup(alice.id, bob.id);
     assert.ok(chosen.allowed);
-    assert.equal(chosen.ringOn, "iphone");
-    assert.deepEqual(chosen.devices.map((d) => [d.id, d.platform, d.pushType]).sort(), [["phone-1", "iphone", "pushtotalk"], ["watch-1", "watch", "alert"]]);
-    assert.equal((await accounts.setRingOn(bob.id, null)).ringOn, undefined);
+    assert.equal(chosen.preferredFormFactor, "phone");
+    assert.deepEqual(chosen.devices.map((d) => [d.id, d.clientKind, d.delivery.mode, d.receiveMode]).sort(), [["phone-1", "ios", "pushtotalk", "automatic"], ["watch-1", "watchos", "alert", "tap"]]);
+    assert.equal((await accounts.setPreferredFormFactor(bob.id, null)).preferredFormFactor, undefined);
     const byDefault = await accounts.ringLookup(alice.id, bob.id);
     assert.ok(byDefault.allowed);
-    assert.equal(byDefault.ringOn, undefined);
+    assert.equal(byDefault.preferredFormFactor, undefined);
     assert.equal(byDefault.rollOver, undefined);
 
     // His rollover: an unanswered watch rings the iPhone. Off removes it.
@@ -172,16 +186,16 @@ export function accountsSuite(label: string, makeDocs: () => Docs, skip: string 
 
   test(`${label}: sessions are one per device and end on sign-out`, { skip }, async () => {
     const { docs, accounts, alice } = await setup();
-    const first = await accounts.createSession(alice.id, "phone-1", "iphone");
-    const second = await accounts.createSession(alice.id, "phone-1", "iphone");
-    const watch = await accounts.createSession(alice.id, "watch-1", "watch");
+    const first = await accounts.createSession(alice.id, "phone-1", "ios");
+    const second = await accounts.createSession(alice.id, "phone-1", "ios");
+    const watch = await accounts.createSession(alice.id, "watch-1", "watchos");
     assert.equal(await accounts.touchSession(alice.id, first, "phone-1"), false);
     assert.equal(await accounts.touchSession(alice.id, second, "phone-1"), true);
     // A sid only works with its own device.
     assert.equal(await accounts.touchSession(alice.id, second, "watch-1"), false);
-    await accounts.registerDevice(alice.id, "watch-1", { platform: "watch", pushToken: "t", apnsEnvironment: "sandbox" });
+    await accounts.registerDevice(alice.id, "watch-1", watchReg("t"));
     // Signing out with a replaced token ends nothing.
-    const newer = await accounts.createSession(alice.id, "watch-1", "watch");
+    const newer = await accounts.createSession(alice.id, "watch-1", "watchos");
     await accounts.endSession(alice.id, watch, "watch-1");
     assert.equal(await accounts.touchSession(alice.id, newer, "watch-1"), true);
     assert.equal((await accounts.devices(alice.id)).length, 1);
@@ -194,24 +208,33 @@ export function accountsSuite(label: string, makeDocs: () => Docs, skip: string 
 
   test(`${label}: concurrent sessions for one device leave one`, { skip }, async () => {
     const { docs, accounts, alice } = await setup();
-    const sids = await Promise.all([1, 2, 3, 4].map(() => accounts.createSession(alice.id, "watch-1", "watch")));
+    const sids = await Promise.all([1, 2, 3, 4].map(() => accounts.createSession(alice.id, "watch-1", "watchos")));
     assert.equal((await docs.list(`users/${alice.id}/sessions`)).length, 1);
     const valid = await Promise.all(sids.map((sid) => accounts.touchSession(alice.id, sid, "watch-1")));
     assert.equal(valid.filter(Boolean).length, 1);
   });
 
-  test(`${label}: sessions stored by sid before the change still refresh, and move`, { skip }, async () => {
+  test(`${label}: a session without a client kind this server knows, or keyed by its sid, has ended`, { skip }, async () => {
     const { docs, accounts, alice } = await setup();
     const created = new Date(Date.UTC(2026, 8, 27));
-    await docs.commit([{ set: `users/${alice.id}/sessions/oldSid123`, data: { deviceId: "watch-1", platform: "watch", createdAt: created, refreshedAt: created } }]);
-    assert.equal(await accounts.touchSession(alice.id, "oldSid123", "phone-9"), false);
-    assert.equal(await accounts.touchSession(alice.id, "oldSid123", "watch-1"), true);
-    assert.deepEqual((await docs.list(`users/${alice.id}/sessions`)).map((s) => [s.id, s.data.sid]), [["watch-1", "oldSid123"]]);
-    assert.equal(await accounts.touchSession(alice.id, "oldSid123", "watch-1"), true);
-    // A legacy session also signs out.
-    await docs.commit([{ set: `users/${alice.id}/sessions/oldSid456`, data: { deviceId: "phone-2", platform: "iphone", createdAt: created, refreshedAt: created } }]);
-    await accounts.endSession(alice.id, "oldSid456", "phone-2");
+    await docs.commit([
+      // As v1 wrote them (migrate-v2.ts converts these): a platform and no client kind, and one
+      // still keyed by its sid.
+      { set: `users/${alice.id}/sessions/watch-1`, data: { sid: "oldSid123", platform: "watch", createdAt: created, refreshedAt: created } },
+      { set: `users/${alice.id}/sessions/oldSid456`, data: { deviceId: "phone-2", platform: "iphone", createdAt: created, refreshedAt: created } },
+      // A kind from a later service.
+      { set: `users/${alice.id}/sessions/glasses-1`, data: { sid: "newSid789", clientKind: "visionos", createdAt: created, refreshedAt: created, schemaVersion: 3 } },
+    ]);
+    assert.equal(await accounts.sessionActive(alice.id, "oldSid123", "watch-1"), false);
+    assert.equal(await accounts.touchSession(alice.id, "oldSid123", "watch-1"), false);
+    assert.equal(await accounts.sessionActive(alice.id, "oldSid456", "phone-2"), false);
     assert.equal(await accounts.touchSession(alice.id, "oldSid456", "phone-2"), false);
+    assert.equal(await accounts.activeSession(alice.id, "newSid789", "glasses-1"), null);
+    // Signing in again on the device replaces it.
+    const sid = await accounts.createSession(alice.id, "watch-1", "watchos");
+    assert.deepEqual(await accounts.activeSession(alice.id, sid, "watch-1"), { sid, clientKind: "watchos" });
+    // A phone session without a kind can't make a watch's.
+    assert.equal(await code(accounts.createCompanionSession(alice.id, { deviceId: "phone-2", sid: "oldSid456" }, "watch-2", "watchos", "r")), "session-ended");
   });
 
   test(`${label}: reports are kept with IDs only`, { skip }, async () => {
@@ -292,23 +315,23 @@ export function accountsSuite(label: string, makeDocs: () => Docs, skip: string 
   test(`${label}: with no choice made a watch takes the rings, and a choice stays`, { skip }, async () => {
     const { accounts, alice } = await setup();
     // One device, or more of one kind: nothing to choose.
-    await accounts.registerDevice(alice.id, "phone-1", { platform: "iphone", pushToken: "app:", apnsEnvironment: "sandbox" });
-    await accounts.registerDevice(alice.id, "phone-1", { platform: "iphone", pushToken: "ptt", pushType: "pushtotalk", apnsEnvironment: "sandbox" });
-    assert.equal((await accounts.user(alice.id))?.ringOn, undefined);
-    assert.deepEqual(await accounts.platforms(alice.id), ["iphone"]);
+    await accounts.registerDevice(alice.id, "phone-1", inAppPhone());
+    await accounts.registerDevice(alice.id, "phone-1", phoneReg("ptt"));
+    assert.equal((await accounts.user(alice.id))?.preferredFormFactor, undefined);
+    assert.deepEqual(await accounts.formFactors(alice.id), ["phone"]);
 
-    // A watch arrives: nothing is pinned, so the watch rings (the watch comes first).
-    await accounts.registerDevice(alice.id, "watch-1", { platform: "watch", pushToken: "t", apnsEnvironment: "sandbox" });
-    assert.equal((await accounts.user(alice.id))?.ringOn, undefined);
-    assert.deepEqual(await accounts.platforms(alice.id), ["watch", "iphone"]);
+    // A watch arrives: nothing is pinned, so the watch rings.
+    await accounts.registerDevice(alice.id, "watch-1", watchReg("t"));
+    assert.equal((await accounts.user(alice.id))?.preferredFormFactor, undefined);
+    assert.deepEqual(await accounts.formFactors(alice.id), ["phone", "watch"]);
 
     // A choice the user made stays, whatever registers later.
-    await accounts.setRingOn(alice.id, "iphone");
-    await accounts.registerDevice(alice.id, "watch-2", { platform: "watch", pushToken: "t2", apnsEnvironment: "sandbox" });
-    assert.equal((await accounts.user(alice.id))?.ringOn, "iphone");
-    await accounts.setRingOn(alice.id, "watch");
-    await accounts.registerDevice(alice.id, "phone-2", { platform: "iphone", pushToken: "app:", apnsEnvironment: "sandbox" });
-    assert.equal((await accounts.user(alice.id))?.ringOn, "watch");
+    await accounts.setPreferredFormFactor(alice.id, "phone");
+    await accounts.registerDevice(alice.id, "watch-2", watchReg("t2"));
+    assert.equal((await accounts.user(alice.id))?.preferredFormFactor, "phone");
+    await accounts.setPreferredFormFactor(alice.id, "watch");
+    await accounts.registerDevice(alice.id, "phone-2", inAppPhone());
+    assert.equal((await accounts.user(alice.id))?.preferredFormFactor, "watch");
   });
 
   test(`${label}: deleting an account removes it everywhere but reports`, { skip }, async () => {
@@ -318,19 +341,20 @@ export function accountsSuite(label: string, makeDocs: () => Docs, skip: string 
     const carol = (await accounts.signInWithApple("001.carol.1", "Carol")).user;
     await accounts.block(alice.id, carol.id);
     await accounts.block(carol.id, alice.id);
-    await accounts.createSession(alice.id, "phone-1", "iphone");
-    await accounts.registerDevice(alice.id, "watch-1", { platform: "watch", pushToken: "t", apnsEnvironment: "sandbox" });
+    await accounts.createSession(alice.id, "phone-1", "ios");
+    await accounts.registerDevice(alice.id, "watch-1", watchReg("t"));
     const pending = await accounts.createInvite(alice.id);
     const reportId = await accounts.report(bob.id, { userId: alice.id, reason: "spam" });
 
-    assert.deepEqual(await accounts.deleteAccount(alice.id), { appleSub: "001.alice.1" });
+    assert.deepEqual(await accounts.deleteAccount(alice.id), { identity: { provider: "apple", subject: "001.alice.1" } });
     assert.equal(await accounts.user(alice.id), undefined);
     assert.deepEqual(await accounts.friends(bob.id), []);
     assert.equal(await code(accounts.invite(pending.code, bob.id)), "invite-not-found");
     // Carol's block of Alice stays, but no longer names her.
     assert.deepEqual((await accounts.blocks(carol.id)).map((b) => b.name), [null]);
     for (const sub of ["friends", "blocks", "devices", "sessions"]) assert.deepEqual(await docs.list(`users/${alice.id}/${sub}`), []);
-    assert.deepEqual(await docs.getAll(["appleSubs/001.alice.1", `photos/${alice.id}`]), [undefined, undefined]);
+    assert.deepEqual(await docs.getAll([identityDocPath("apple", "001.alice.1"), `photos/${alice.id}`]), [undefined, undefined]);
+    assert.deepEqual(await docs.list("pushTokens"), []);
     assert.notEqual((await docs.getAll([`reports/${reportId}`]))[0], undefined);
     // The same Apple ID starts over with a new account.
     const again = await accounts.signInWithApple("001.alice.1", "Alice");
@@ -341,15 +365,15 @@ export function accountsSuite(label: string, makeDocs: () => Docs, skip: string 
 
   test(`${label}: a session ends when it's signed out, replaced or its account deleted`, { skip }, async () => {
     const { accounts, alice } = await setup();
-    const sid = await accounts.createSession(alice.id, "phone", "iphone");
+    const sid = await accounts.createSession(alice.id, "phone", "ios");
     assert.equal(await accounts.sessionActive(alice.id, sid, "phone"), true);
     assert.equal(await accounts.sessionActive(alice.id, sid, "watch"), false);
     assert.equal(await accounts.sessionActive(alice.id, "other", "phone"), false);
     await accounts.endSession(alice.id, sid, "phone");
     assert.equal(await accounts.sessionActive(alice.id, sid, "phone"), false);
 
-    const first = await accounts.createSession(alice.id, "phone", "iphone");
-    const second = await accounts.createSession(alice.id, "phone", "iphone");
+    const first = await accounts.createSession(alice.id, "phone", "ios");
+    const second = await accounts.createSession(alice.id, "phone", "ios");
     assert.equal(await accounts.sessionActive(alice.id, first, "phone"), false);
     assert.equal(await accounts.sessionActive(alice.id, second, "phone"), true);
     await accounts.deleteAccount(alice.id);
@@ -377,7 +401,7 @@ export function accountsSuite(label: string, makeDocs: () => Docs, skip: string 
 
   test(`${label}: an unregistered push token is removed, unless the device has a new one`, { skip }, async () => {
     const { accounts, alice } = await setup();
-    await accounts.registerDevice(alice.id, "watch", { platform: "watch", pushToken: "old", apnsEnvironment: "sandbox" });
+    await accounts.registerDevice(alice.id, "watch", watchReg("old"));
     assert.equal(await accounts.removeDevice(alice.id, "watch", "stale"), false);
     assert.equal((await accounts.devices(alice.id)).length, 1);
     assert.equal(await accounts.removeDevice(alice.id, "watch", "old"), true);
@@ -388,28 +412,34 @@ export function accountsSuite(label: string, makeDocs: () => Docs, skip: string 
   test(`${label}: a push token rings only the account and device that registered it last`, { skip }, async () => {
     const { docs, accounts, alice, bob } = await setup();
     const watchToken = "ab".repeat(32);
-    const tokens = async (userId: string) => (await accounts.devices(userId)).map((d) => `${d.id}=${d.pushToken}`);
+    const tokens = async (userId: string) => (await accounts.devices(userId)).map((d) => `${d.id}=${"token" in d.delivery ? d.delivery.token : `${d.delivery.provider}:`}`);
     // Alice's watch signs in as Bob without signing out: it no longer rings for Alice.
-    await accounts.registerDevice(alice.id, "watch-1", { platform: "watch", pushToken: watchToken, apnsEnvironment: "sandbox" });
-    await accounts.registerDevice(bob.id, "watch-1", { platform: "watch", pushToken: watchToken, apnsEnvironment: "sandbox" });
+    await accounts.registerDevice(alice.id, "watch-1", watchReg(watchToken));
+    await accounts.registerDevice(bob.id, "watch-1", watchReg(watchToken));
     assert.deepEqual(await tokens(alice.id), []);
     assert.deepEqual(await tokens(bob.id), [`watch-1=${watchToken}`]);
     // A reinstall gives Bob's watch a new device ID with the same token: the old ID goes.
-    await accounts.registerDevice(bob.id, "watch-2", { platform: "watch", pushToken: watchToken, apnsEnvironment: "sandbox" });
+    await accounts.registerDevice(bob.id, "watch-2", watchReg(watchToken));
     assert.deepEqual(await tokens(bob.id), [`watch-2=${watchToken}`]);
     // A new token frees the old one, so registering the old token elsewhere removes nothing.
-    await accounts.registerDevice(bob.id, "watch-2", { platform: "watch", pushToken: "cd".repeat(32), apnsEnvironment: "sandbox" });
-    await accounts.registerDevice(alice.id, "watch-9", { platform: "watch", pushToken: watchToken, apnsEnvironment: "sandbox" });
+    await accounts.registerDevice(bob.id, "watch-2", watchReg("cd".repeat(32)));
+    await accounts.registerDevice(alice.id, "watch-9", watchReg(watchToken));
     assert.deepEqual(await tokens(bob.id), [`watch-2=${"cd".repeat(32)}`]);
-    // Every iPhone out of its PushToTalk channel shares "app:", so it's never taken over.
-    await accounts.registerDevice(alice.id, "phone-1", { platform: "iphone", pushToken: "app:", apnsEnvironment: "sandbox" });
-    await accounts.registerDevice(bob.id, "phone-2", { platform: "iphone", pushToken: "app:", apnsEnvironment: "sandbox" });
-    assert.ok((await tokens(alice.id)).includes("phone-1=app:"));
+    // One pointer per token, keyed by its scope and token: none keyed by the token alone.
+    assert.deepEqual((await docs.list("pushTokens")).map((p) => `pushTokens/${p.id}`).sort(), [
+      ...tokenPointers(watchReg(watchToken).delivery),
+      ...tokenPointers(watchReg("cd".repeat(32)).delivery),
+    ].sort());
+    assert.deepEqual(await docs.getAll([`pushTokens/${createHash("sha256").update(watchToken).digest("base64url")}`]), [undefined]);
+    // iPhones rung only in the app carry no token, so one is never taken over.
+    await accounts.registerDevice(alice.id, "phone-1", inAppPhone());
+    await accounts.registerDevice(bob.id, "phone-2", inAppPhone());
+    assert.ok((await tokens(alice.id)).includes("phone-1=relay:"));
     // Signing out, a token APNs rejects, and deleting the account leave no pointers behind.
     await accounts.removeDevice(bob.id, "watch-2", "cd".repeat(32));
-    const sid = await accounts.createSession(alice.id, "watch-9", "watch");
+    const sid = await accounts.createSession(alice.id, "watch-9", "watchos");
     await accounts.endSession(alice.id, sid, "watch-9");
-    await accounts.registerDevice(bob.id, "watch-3", { platform: "watch", pushToken: "ef".repeat(32), apnsEnvironment: "sandbox" });
+    await accounts.registerDevice(bob.id, "watch-3", watchReg("ef".repeat(32)));
     await accounts.deleteAccount(bob.id);
     assert.deepEqual(await docs.list("pushTokens"), []);
   });
@@ -432,5 +462,174 @@ export function accountsSuite(label: string, makeDocs: () => Docs, skip: string 
     assert.deepEqual(await accounts.friends(alice.id), []);
     assert.deepEqual(await accounts.friends(bob.id), []);
     assert.deepEqual(await accounts.ringLookup(bob.id, alice.id), { allowed: false });
+  });
+
+  // ---- Phase 0: the v2 contract (contracts/README.md) ----
+
+  test(`${label}: Apple and Google identities are separate accounts, even with the same subject`, { skip }, async () => {
+    const { accounts, alice } = await setup();
+    assert.equal(alice.signInProvider, "apple");
+    const google = await accounts.signIn("google", "001.alice.1", "Alice on Android");
+    assert.equal(google.created, true);
+    assert.notEqual(google.user.id, alice.id);
+    assert.equal(google.user.signInProvider, "google");
+    assert.equal((await accounts.signIn("google", "001.alice.1")).user.id, google.user.id);
+    assert.equal((await accounts.signIn("apple", "001.alice.1")).user.id, alice.id);
+    assert.deepEqual(await accounts.identity(google.user.id), { provider: "google", subject: "001.alice.1" });
+    // Concurrent first sign-ins make one account.
+    const results = await Promise.all([1, 2, 3].map(() => accounts.signIn("google", "g.dana", "Dana")));
+    assert.equal(new Set(results.map((r) => r.user.id)).size, 1);
+    assert.equal(results.filter((r) => r.created).length, 1);
+  });
+
+  test(`${label}: sign-in finds an account through its identity index only, and writes nothing else`, { skip }, async () => {
+    const { docs, accounts } = await setup();
+    // An account the migration converted: the same ID, found through its identity index.
+    await docs.commit([
+      { set: identityDocPath("apple", "001.olde.1"), data: { userId: "u_oldAccount12345", provider: "apple", createdAt: new Date(1) } },
+      { set: "users/u_oldAccount12345", data: { name: "Olde", identity: { provider: "apple", subject: "001.olde.1" }, preferredFormFactor: "phone", createdAt: new Date(1), schemaVersion: 2 } },
+    ]);
+    const signedIn = await accounts.signIn("apple", "001.olde.1", "New Name");
+    assert.equal(signedIn.created, false);
+    assert.equal(signedIn.user.id, "u_oldAccount12345");
+    assert.equal(signedIn.user.name, "Olde");
+    assert.equal(signedIn.user.preferredFormFactor, "phone");
+    // A v1 Apple mapping alone finds nothing: that Apple ID gets a new account.
+    await docs.commit([{ set: "appleSubs/001.stray.1", data: { userId: "u_oldAccount12345" } }]);
+    const stray = await accounts.signIn("apple", "001.stray.1");
+    assert.equal(stray.created, true);
+    assert.notEqual(stray.user.id, "u_oldAccount12345");
+    // A new account has its identity index, and no v1 mapping or fields.
+    const fresh = (await accounts.signIn("apple", "001.fresh.1")).user;
+    const [index, legacy, user] = await docs.getAll([identityDocPath("apple", "001.fresh.1"), "appleSubs/001.fresh.1", `users/${fresh.id}`]);
+    assert.equal(index?.userId, fresh.id);
+    assert.equal(legacy, undefined);
+    assert.deepEqual([user?.appleSub, user?.ringOn, user?.schemaVersion], [undefined, undefined, 2]);
+  });
+
+  test(`${label}: a phone makes its watch's session, idempotently, and only for its own kind of watch`, { skip }, async () => {
+    const { accounts, alice } = await setup();
+    const phoneSid = await accounts.createSession(alice.id, "phone-1", "ios");
+    const parent = { deviceId: "phone-1", sid: phoneSid };
+    const first = await accounts.createCompanionSession(alice.id, parent, "watch-1", "watchos", "req-1");
+    assert.equal(first.clientKind, "watchos");
+    assert.equal((await accounts.createCompanionSession(alice.id, parent, "watch-1", "watchos", "req-1")).sid, first.sid);
+    const second = await accounts.createCompanionSession(alice.id, parent, "watch-1", "watchos", "req-2");
+    assert.notEqual(second.sid, first.sid);
+    assert.equal(await accounts.sessionActive(alice.id, first.sid, "watch-1"), false);
+    assert.deepEqual(await accounts.activeSession(alice.id, second.sid, "watch-1"), { sid: second.sid, clientKind: "watchos", parentDeviceId: "phone-1" });
+    assert.equal(await code(accounts.createCompanionSession(alice.id, parent, "wear-1", "wearos", "r")), "unsupported-client-kind");
+    assert.equal(await code(accounts.createCompanionSession(alice.id, parent, "phone-9", "ios", "r")), "unsupported-client-kind");
+    // A watch can't make sessions.
+    assert.equal(await code(accounts.createCompanionSession(alice.id, { deviceId: "watch-1", sid: second.sid }, "watch-2", "watchos", "r")), "unsupported-client-kind");
+    // Nor can a phone take over another phone's device ID.
+    await accounts.createSession(alice.id, "phone-2", "ios");
+    assert.equal(await code(accounts.createCompanionSession(alice.id, parent, "phone-2", "watchos", "r")), "device-conflict");
+    // A replaced phone session can't make one.
+    assert.equal(await code(accounts.createCompanionSession(alice.id, { deviceId: "phone-1", sid: "old" }, "watch-3", "watchos", "r")), "session-ended");
+  });
+
+  test(`${label}: signing out on the phone, or signing in there again, ends its watch's session and registration`, { skip }, async () => {
+    const { docs, accounts, alice } = await setup();
+    const phoneSid = await accounts.createSession(alice.id, "phone-1", "ios");
+    const watch = await accounts.createCompanionSession(alice.id, { deviceId: "phone-1", sid: phoneSid }, "watch-1", "watchos", "a");
+    await accounts.registerDevice(alice.id, "watch-1", v2({ clientKind: "watchos", delivery: { provider: "apns", mode: "alert", token: "ab".repeat(32), environment: "sandbox" } }));
+    // Another phone's watch is untouched.
+    const otherSid = await accounts.createSession(alice.id, "phone-2", "ios");
+    const otherWatch = await accounts.createCompanionSession(alice.id, { deviceId: "phone-2", sid: otherSid }, "watch-2", "watchos", "b");
+    await accounts.endSession(alice.id, phoneSid, "phone-1");
+    assert.equal(await accounts.sessionActive(alice.id, watch.sid, "watch-1"), false);
+    assert.deepEqual((await accounts.devices(alice.id)).map((d) => d.id), []);
+    assert.equal(await accounts.sessionActive(alice.id, otherWatch.sid, "watch-2"), true);
+    // The watch's push token pointers went with it.
+    assert.deepEqual(await docs.list("pushTokens"), []);
+    // A new sign-in on phone-2 is a new generation: its old watch session ends too.
+    await accounts.createSession(alice.id, "phone-2", "ios");
+    assert.equal(await accounts.sessionActive(alice.id, otherWatch.sid, "watch-2"), false);
+  });
+
+  test(`${label}: a watch session being made while its phone signs out doesn't survive`, { skip }, async () => {
+    const docs = interleaved(makeDocs());
+    const accounts = new Accounts(docs);
+    const alice = (await accounts.signIn("apple", "001.alice.1", "Alice")).user;
+    const phoneSid = await accounts.createSession(alice.id, "phone-1", "ios");
+    // The phone signs out between the companion's read of its session and the companion's
+    // commit. (Not awaited there: on Firestore the sign-out waits for the transaction's locks.)
+    let ending: Promise<void> = Promise.resolve();
+    docs.between = async () => {
+      ending = accounts.endSession(alice.id, phoneSid, "phone-1");
+    };
+    const made = await accounts.createCompanionSession(alice.id, { deviceId: "phone-1", sid: phoneSid }, "watch-1", "watchos", "a").catch(() => null);
+    await ending;
+    if (made) assert.equal(await accounts.sessionActive(alice.id, made.sid, "watch-1"), false);
+    assert.deepEqual(await docs.list(`users/${alice.id}/sessions`), []);
+  });
+
+  test(`${label}: v2 registrations keep their kind, delivery, capabilities and use order`, { skip }, async () => {
+    const { accounts, alice, bob, now } = await setup();
+    await befriend(accounts, alice.id, bob.id);
+    await accounts.createSession(bob.id, "watch-1", "watchos");
+    await accounts.createSession(bob.id, "phone-1", "ios");
+    const registered = await accounts.registerDevice(bob.id, "watch-1", v2({
+      clientKind: "watchos",
+      delivery: { provider: "apns", mode: "alert", token: "aa".repeat(32), environment: "production" },
+      availability: { enabled: true, notifications: "denied" },
+      capabilities: { relayProtocols: [2], audioFormats: [1], decode: ["opus16k", "pcm16le16k"], encode: ["pcm16le16k"], features: ["x"] },
+      build: "170",
+    }));
+    assert.equal(registered.formFactor, "watch");
+    assert.equal(registered.receiveMode, "tap");
+    assert.equal(registered.lastActiveAt, now.t);
+    // A token refresh later doesn't move it in the use order; using it does.
+    now.t += 60_000;
+    await accounts.registerDevice(bob.id, "watch-1", v2({ clientKind: "watchos", delivery: { provider: "apns", mode: "alert", token: "bb".repeat(32), environment: "production" } }));
+    let [watch] = await accounts.devices(bob.id);
+    assert.equal(watch.lastActiveAt, now.t - 60_000);
+    assert.equal(watch.availability.notifications, "authorized");
+    await accounts.markActive(bob.id, "watch-1", now.t);
+    [watch] = await accounts.devices(bob.id);
+    assert.equal(watch.lastActiveAt, now.t);
+    // A phone in PushToTalk plays at once; one without a session never rings.
+    await accounts.registerDevice(bob.id, "phone-1", v2({ clientKind: "ios", delivery: { provider: "apns", mode: "pushtotalk", token: "cc".repeat(32), environment: "production" } }));
+    await accounts.registerDevice(bob.id, "phone-9", v2({ clientKind: "ios", delivery: { provider: "relay", mode: "foreground" } }));
+    const lookup = await accounts.ringLookup(alice.id, bob.id);
+    assert.ok(lookup.allowed);
+    assert.deepEqual(lookup.devices.map((d) => [d.id, d.receiveMode, d.hasSession]), [["phone-1", "automatic", true], ["phone-9", "tap", false], ["watch-1", "tap", true]]);
+  });
+
+  test(`${label}: a push token is unique within its provider and scope, not by its text alone`, { skip }, async () => {
+    const { accounts, alice, bob } = await setup();
+    const token = "dd".repeat(32);
+    await accounts.registerDevice(alice.id, "watch-1", v2({ clientKind: "watchos", delivery: { provider: "apns", mode: "alert", token, environment: "sandbox" } }));
+    // The same text as another environment's token is a different registration.
+    await accounts.registerDevice(bob.id, "watch-1", v2({ clientKind: "watchos", delivery: { provider: "apns", mode: "alert", token, environment: "production" } }));
+    assert.equal((await accounts.devices(alice.id)).length, 1);
+    // The same scope takes it over.
+    await accounts.registerDevice(bob.id, "watch-2", v2({ clientKind: "watchos", delivery: { provider: "apns", mode: "alert", token, environment: "sandbox" } }));
+    assert.equal((await accounts.devices(alice.id)).length, 0);
+    // A provider's late rejection of an old token doesn't remove a newer one.
+    await accounts.registerDevice(bob.id, "watch-2", v2({ clientKind: "watchos", delivery: { provider: "apns", mode: "alert", token: "ee".repeat(32), environment: "sandbox" } }));
+    assert.equal(await accounts.removeDevice(bob.id, "watch-2", token), false);
+    assert.equal(await accounts.removeDevice(bob.id, "watch-2", "ee".repeat(32)), true);
+  });
+
+  test(`${label}: registrations without a client kind and delivery this server knows aren't read`, { skip }, async () => {
+    const { docs, accounts, alice, bob } = await setup();
+    await befriend(accounts, alice.id, bob.id);
+    await accounts.registerDevice(alice.id, "phone-3", inAppPhone());
+    await docs.commit([
+      // v1's iPhone in its PushToTalk channel, and its in-app registration (migrate-v2.ts
+      // converts these).
+      { set: `users/${alice.id}/devices/phone-1`, data: { platform: "iphone", pushToken: "ff".repeat(32), pushType: "pushtotalk", apnsEnvironment: "production", updatedAt: 5 } },
+      { set: `users/${alice.id}/devices/phone-2`, data: { platform: "iphone", pushToken: "app:", pushType: "alert", apnsEnvironment: "sandbox", updatedAt: 6 } },
+      // A later service's device kind and delivery: this server can't ring them.
+      { set: `users/${alice.id}/devices/glasses-1`, data: { clientKind: "visionos", formFactor: "glasses", delivery: { provider: "apns", mode: "alert", token: "x" }, schemaVersion: 3 } },
+      { set: `users/${alice.id}/devices/watch-1`, data: { clientKind: "watchos", delivery: { provider: "carrier-pigeon", mode: "coo" }, schemaVersion: 3 } },
+    ]);
+    assert.deepEqual((await accounts.devices(alice.id)).map((d) => [d.id, d.clientKind, d.delivery.provider, d.delivery.mode]), [["phone-3", "ios", "relay", "foreground"]]);
+    assert.deepEqual(await accounts.formFactors(alice.id), ["phone"]);
+    const lookup = await accounts.ringLookup(bob.id, alice.id);
+    assert.ok(lookup.allowed);
+    assert.deepEqual(lookup.devices.map((d) => d.id), ["phone-3"]);
   });
 }

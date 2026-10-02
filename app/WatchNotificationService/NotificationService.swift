@@ -15,6 +15,11 @@ import UserNotifications
 /// Kept free of OverAndOutKit so the extension stays small: it only moves bytes. The file
 /// layout is shared with Watch/Prefetch.swift, and the session (the account's token) is the
 /// one WatchAccount keeps in the Keychain under the app group (KeychainSessionStore).
+///
+/// The download names the ring (v2, contracts/README.md): GET /v2/rings/audio with the ring's
+/// ID and relay admission's headers, from the relay the app last approved (the app group's
+/// ServiceConfigStore.relayKey), else this build's own. The files are keyed by the ring, with its
+/// account and deadline, so the app plays them only for that ring.
 final class NotificationService: UNNotificationServiceExtension {
     /// The download's completion and `serviceExtensionTimeWillExpire` run on different threads
     /// and either can finish the request, so everything they share is behind one lock and the
@@ -45,6 +50,7 @@ final class NotificationService: UNNotificationServiceExtension {
                              withContentHandler contentHandler: @escaping (UNNotificationContent) -> Void) {
         let info = request.content.userInfo
         let conversationId = info["conversationId"] as? String ?? ""
+        let ringId = (info["ringId"] as? String).flatMap { $0.hasPrefix("r_") ? $0 : nil }
         let delivery = Delivery(handler: contentHandler, content: request.content)
         let receivedAt = Self.nowMs()
         state.withLock {
@@ -53,20 +59,21 @@ final class NotificationService: UNNotificationServiceExtension {
             $0.conversationId = conversationId
         }
         Self.diagnostics(["name": "nseStarted", "prefetch": info["prefetch"] != nil], requestId: requestId, conversationId: conversationId)
-        guard info["prefetch"] != nil, info["conversationId"] is String,
+        guard info["prefetch"] != nil, info["conversationId"] is String, let ringId,
               let group = Bundle.main.object(forInfoDictionaryKey: "OAOAppGroup") as? String,
               let container = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: group),
               let session = Self.session(accessGroup: group),
-              let url = Self.audioURL(userId: session.userId, conversationId: conversationId)
+              let url = Self.audioURL(group: group, conversationId: conversationId, ringId: ringId)
         else { return finish() }
 
         let directory = container.appendingPathComponent("prefetch", isDirectory: true)
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let files = (records: directory.appendingPathComponent("\(conversationId).records"),
-                     meta: directory.appendingPathComponent("\(conversationId).json"))
+        let files = (records: directory.appendingPathComponent("\(ringId).records"),
+                     meta: directory.appendingPathComponent("\(ringId).json"))
 
         var request = URLRequest(url: url, timeoutInterval: 20)
         request.setValue("Bearer \(session.token)", forHTTPHeaderField: "Authorization")
+        for (name, value) in Self.relayHeaders() { request.setValue(value, forHTTPHeaderField: name) }
         let state = state
         let requestId = requestId
         let task = URLSession.shared.dataTask(with: request) { data, response, error in
@@ -86,13 +93,16 @@ final class NotificationService: UNNotificationServiceExtension {
             }
             delivery?.deliver()
         }
-        let expiresAt = info["ringExpiresAt"] as? Double
+        let expiresAt = info["expiresAt"] as? Double
         let sentAt = info["pushSentAt"] as? Double
         state.withLock {
-            // Whose message this is, and when the relay drops it: the app plays it only for this
-            // account, and only before then (Watch/Prefetch.swift).
+            // Whose message this is, for which ring, and when the relay drops it: the app plays it
+            // only for this account and ring, and only before then (Watch/Prefetch.swift).
+            $0.meta["schemaVersion"] = 2
             $0.meta["userId"] = session.userId
-            if let expiresAt { $0.meta["ringExpiresAt"] = expiresAt }
+            $0.meta["conversationId"] = conversationId
+            $0.meta["ringId"] = ringId
+            if let expiresAt { $0.meta["expiresAt"] = expiresAt }
             if let sentAt { $0.meta["pushSentAt"] = sentAt }
             $0.files = files
             $0.meta["fetchStartedAt"] = Self.nowMs()
@@ -135,14 +145,34 @@ final class NotificationService: UNNotificationServiceExtension {
         return delivery
     }
 
-    private static func audioURL(userId: String, conversationId: String) -> URL? {
-        guard let host = Bundle.main.object(forInfoDictionaryKey: "OAOServerHost") as? String, !host.isEmpty else { return nil }
-        // A server on this Mac (for the simulator) is reached over plain HTTP.
-        let scheme = host.hasPrefix("localhost") || host.hasPrefix("127.0.0.1") ? "http" : "https"
-        var components = URLComponents(string: "\(scheme)://\(host)/v1/rings/audio")
-        components?.queryItems = [URLQueryItem(name: "userId", value: userId),
-                                  URLQueryItem(name: "conversationId", value: conversationId)]
+    private static func audioURL(group: String, conversationId: String, ringId: String) -> URL? {
+        // The relay the app approved from the service's config, else this build's own.
+        let approved = UserDefaults(suiteName: group)?.string(forKey: "oaoApprovedRelayBaseURL")
+        let base: String
+        if let approved, !approved.isEmpty {
+            base = approved
+        } else {
+            guard let host = Bundle.main.object(forInfoDictionaryKey: "OAOServerHost") as? String, !host.isEmpty else { return nil }
+            // A server on this Mac (for the simulator) is reached over plain HTTP.
+            base = "\(host.hasPrefix("localhost") || host.hasPrefix("127.0.0.1") ? "http" : "https")://\(host)"
+        }
+        var components = URLComponents(string: "\(base)/v2/rings/audio")
+        components?.queryItems = [URLQueryItem(name: "conversationId", value: conversationId),
+                                  URLQueryItem(name: "ringId", value: ringId)]
         return components?.url
+    }
+
+    /// Relay admission's headers, as the kit's ClientIdentity sends them for a watch.
+    private static func relayHeaders() -> [String: String] {
+        let info = Bundle.main.infoDictionary ?? [:]
+        return [
+            "X-OAO-Client-Kind": "watchos",
+            "X-OAO-Client-Version": info["CFBundleShortVersionString"] as? String ?? "0",
+            "X-OAO-Build": info["CFBundleVersion"] as? String ?? "0",
+            "X-OAO-Relay-Protocol": "2",
+            "X-OAO-Decode": "opus16k,pcm16le16k",
+            "X-OAO-Encode": "opus16k,pcm16le16k",
+        ]
     }
 
     private static func nowMs() -> Double { Date().timeIntervalSince1970 * 1000 }

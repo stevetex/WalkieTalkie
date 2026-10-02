@@ -1,6 +1,6 @@
 // swift-tools-version: 6.2
 // Code shared by the iPhone and watch apps: the relay transport, the voice codec and the
-// audio pipeline, ported from the spike (watch/WalkieSpike). macOS is listed only so
+// audio pipeline, ported from the spike (watch/WalkieSpike, since removed). macOS is listed only so
 // `swift test` can run the tests on a Mac.
 //
 // watchOS 10.2 and iOS 17 are the oldest versions Xcode 27's simulators run here, so the

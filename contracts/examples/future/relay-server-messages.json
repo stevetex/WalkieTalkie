@@ -1,0 +1,9 @@
+[
+  { "type": "hello-ack", "clientTime": 1790726400000, "serverTime": 1790726400042, "node": "relay-us-3", "features": ["reactions"] },
+  { "type": "reaction", "conversationId": "4f1c7f7e-9b1a-4f0b-9a55-1f6a0c3e2d11", "emoji": "👍" },
+  { "type": "peer-status", "conversationId": "4f1c7f7e-9b1a-4f0b-9a55-1f6a0c3e2d11", "peer": "u_googleGoogleGoo", "status": "listening" },
+  { "type": "burst-start", "conversationId": "4f1c7f7e-9b1a-4f0b-9a55-1f6a0c3e2d11", "burstId": "b1", "from": "u_googleGoogleGoo", "replay": false, "codec": "pcm16le16k", "senderClientKind": "wearos" },
+  { "type": "talk-refused", "burstId": "b2", "reason": "recipient-busy" },
+  { "type": "joined", "conversationId": "4f1c7f7e-9b1a-4f0b-9a55-1f6a0c3e2d11", "peer": "u_googleGoogleGoo", "replayBursts": 0, "ringId": "r_newerRingFormat", "peerClientKind": "android" },
+  { "type": "error", "code": "a-future-error", "message": "something new went wrong" }
+]

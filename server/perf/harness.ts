@@ -3,13 +3,15 @@
 
 import { fork, type ChildProcess } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { fileURLToPath } from "node:url";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { SpikeClient } from "../tools/client.ts";
 import { Codec, type ServerMessage } from "../src/protocol.ts";
 import { LatencyProxy } from "./latency-proxy.ts";
 import type { RelayStats } from "./relay-child.ts";
 
-export const TOKEN = "perf";
 // One way, the middle of the watch's measured 0.17–0.45 s round trips through its iPhone.
 export const ONE_WAY_MS = 150;
 // 24 kbps Opus in 20 ms frames.
@@ -89,6 +91,9 @@ export interface Relay {
   close(): Promise<void>;
 }
 
+// The operator's diagnostics token (SPIKE_TOKEN), for /admin/status.
+export const ADMIN_TOKEN = "perf";
+
 const childPath = fileURLToPath(new URL("./relay-child.ts", import.meta.url));
 const children = new Set<ChildProcess>();
 process.on("exit", () => {
@@ -105,13 +110,34 @@ process.on("unhandledRejection", (err) => {
   else throw err;
 });
 
-export function startRelay(relayDir: string, options: Record<string, unknown> = {}): Promise<Relay> {
-  const child: ChildProcess = fork(childPath, [JSON.stringify({ relayDir, options })], {
+// relayDir's src/main.ts, run as a local relay is (HANDOFF's Simulator section): the account API
+// in the same process on its JSON store, dev sign-ins, test deliveries, and dry-run pushes (no
+// APNs key). Only these variables, so nothing from this shell (an APNs key, Firestore) leaks in.
+// `env`: more settings for the relay (scenario F shortens the ring timeout).
+export function startRelay(relayDir: string, env: Record<string, string> = {}): Promise<Relay> {
+  const dataDir = mkdtempSync(join(tmpdir(), "oao-perf-"));
+  const child: ChildProcess = fork(join(relayDir, "src", "main.ts"), [], {
+    cwd: relayDir,
+    env: {
+      PATH: process.env.PATH,
+      PORT: "0",
+      HOST: "127.0.0.1",
+      STORE: "json",
+      DATA_DIR: dataDir,
+      SERVE_API: "1",
+      DEV_APPLE_SIGNIN: "1",
+      TEST_DELIVERY: "1",
+      SPIKE_TOKEN: ADMIN_TOKEN,
+      ...env,
+    },
     stdio: ["ignore", "ignore", "inherit", "ipc"],
-    execArgv: [...process.execArgv, "--expose-gc"],
+    execArgv: [...process.execArgv, "--expose-gc", "--import", pathToFileURL(childPath).href],
   });
   children.add(child);
-  child.once("exit", () => children.delete(child));
+  child.once("exit", () => {
+    children.delete(child);
+    rmSync(dataDir, { recursive: true, force: true });
+  });
   const request = <T>(message: string, key: string): Promise<T> =>
     new Promise((resolve) => {
       const onMessage = (m: Record<string, unknown>) => {
@@ -124,11 +150,12 @@ export function startRelay(relayDir: string, options: Record<string, unknown> = 
     });
   return new Promise((resolve, reject) => {
     child.once("error", reject);
-    child.once("exit", (code) => reject(new Error(`relay exited with ${code} before listening`)));
+    const early = (code: number | null) => reject(new Error(`relay exited with ${code} before listening`));
+    child.once("exit", early);
     const onPort = (m: Record<string, unknown>) => {
       if (typeof m.port !== "number") return;
       child.off("message", onPort);
-      child.removeAllListeners("exit");
+      child.off("exit", early);
       const port = m.port;
       resolve({
         port,
@@ -139,7 +166,7 @@ export function startRelay(relayDir: string, options: Record<string, unknown> = 
           new Promise<void>((done) => {
             child.once("exit", () => done());
             child.send("close");
-            setTimeout(() => child.kill(), 3000).unref();
+            setTimeout(() => child.kill("SIGKILL"), 5000).unref();
           }),
       });
     };
@@ -147,41 +174,103 @@ export function startRelay(relayDir: string, options: Record<string, unknown> = 
   });
 }
 
-// ---- Bots ----
+// ---- People ----
+
+export type ClientKind = "ios" | "watchos";
+
+// A synthetic person: an account signed in on one device, registered to be rung.
+export interface Person {
+  id: string;
+  name: string;
+  token: string;
+  kind: ClientKind;
+}
+
+// How a person's device is rung: over its open relay connection (a bot, like the Test Bot), or
+// by a push the relay's dry-run pusher accepts (a device that isn't connected yet; the watch's
+// alert, the iPhone's PushToTalk).
+export type Ringing = "connection" | "push";
 
 let nextId = 0;
-// Distinct user IDs per iteration, so nothing carries over between them.
+// Distinct names per iteration, so nothing carries over between them.
 export function ids(prefix: string): { a: string; b: string } {
   const n = nextId++;
   return { a: `${prefix}-a${n}`, b: `${prefix}-b${n}` };
 }
 
-// Registers a bot directly with the relay (not through a proxy: setup isn't measured).
-// "poll:" = not connected, so a Talk rings it; "local:" = rung over its open connection.
-export async function register(relay: Relay, userId: string, pushToken: string): Promise<void> {
-  const res = await fetch(`${relay.url}/v1/devices`, {
-    method: "POST",
-    headers: { "content-type": "application/json", authorization: `Bearer ${TOKEN}` },
-    body: JSON.stringify({ userId, name: userId, pushToken, apnsEnvironment: "sandbox" }),
+// Session tokens by account, so the fetch hook below can tell whose POST it is.
+const owners = new Map<string, string>();
+
+async function api(relay: Relay, method: string, path: string, token: string | null, body?: unknown): Promise<any> {
+  const res = await fetch(new URL(path, relay.url), {
+    method,
+    headers: { "content-type": "application/json", ...(token ? { authorization: `Bearer ${token}` } : {}) },
+    body: body === undefined ? undefined : JSON.stringify(body),
   });
-  if (!res.ok) throw new Error(`registering ${userId}: HTTP ${res.status}`);
+  const json = await res.json();
+  if (!res.ok) throw new Error(`${method} ${path}: HTTP ${res.status} ${json.error ?? ""}`);
+  return json;
 }
 
-export function bot(server: string, userId: string, transport: "ws" | "http" = "ws"): SpikeClient {
-  return new SpikeClient({ server, userId, token: TOKEN, transport });
+// Signs `name` in with a dev Apple identity on one device of `kind` and registers it. Directly
+// with the relay (not through a proxy): setup isn't measured.
+export async function signIn(relay: Relay, name: string, kind: ClientKind, ringing: Ringing): Promise<Person> {
+  const signedIn = await api(relay, "POST", "/v2/auth/apple", null, { identityToken: `dev:${name}`, nonce: "perf", name, deviceId: `${name}-${kind}`, clientKind: kind });
+  const token = signedIn.token as string;
+  const delivery = ringing === "connection"
+    ? { provider: "test", mode: "connection" }
+    : { provider: "apns", mode: kind === "ios" ? "pushtotalk" : "alert", token: createHash("sha256").update(name).digest("hex"), environment: "sandbox" };
+  await api(relay, "PUT", "/v2/me/device", token, { clientKind: kind, delivery, availability: { enabled: true, notifications: "authorized" } });
+  owners.set(token, signedIn.user.id);
+  return { id: signedIn.user.id, name, token, kind };
+}
+
+// Friends, through an invite: rings need friendship.
+export async function befriend(relay: Relay, a: Person, b: Person): Promise<void> {
+  const invite = await api(relay, "POST", "/v2/invites", a.token);
+  await api(relay, "POST", `/v2/invites/${invite.code}/accept`, b.token);
+}
+
+// Two friends: `a` talks first and is rung over its connection; `b` isn't connected yet, so a
+// Talk to b rings it with a push. Each device is the kind its transport stands for: the watch on
+// the HTTP stream, the iPhone on the WebSocket.
+export async function pair(relay: Relay, prefix: string, transports: { a: "ws" | "http"; b: "ws" | "http" } = { a: "ws", b: "ws" }): Promise<{ a: Person; b: Person }> {
+  const names = ids(prefix);
+  const a = await signIn(relay, names.a, kindFor(transports.a), "connection");
+  const b = await signIn(relay, names.b, kindFor(transports.b), "push");
+  await befriend(relay, a, b);
+  return { a, b };
+}
+
+export function kindFor(transport: "ws" | "http"): ClientKind {
+  return transport === "http" ? "watchos" : "ios";
+}
+
+export function bot(server: string, person: Person, transport: "ws" | "http" = "ws"): SpikeClient {
+  return new SpikeClient({ server, userId: person.id, token: person.token, clientKind: person.kind, transport });
+}
+
+// The ring waiting for this person in this conversation, as its push carries it. Asked of the
+// relay directly, before the answer is timed: the device has it from the push.
+export async function ringFor(relay: Relay, person: Person, conversationId: string): Promise<{ ringId: string; expiresAt: number }> {
+  const { rings } = (await bot(relay.url, person).api("GET", "/v2/rings/pending")) as { rings: Array<{ ringId: string; conversationId: string; expiresAt: number }> };
+  const ring = rings.find((r) => r.conversationId === conversationId);
+  if (!ring) throw new Error(`no ring for ${person.name} in ${conversationId}`);
+  return ring;
 }
 
 export function proxy(relay: Relay, delayMs: number, kbps?: number): Promise<LatencyProxy> {
   return LatencyProxy.start({ target: relay.port, delayMs, ...(kbps ? { kbps } : {}) });
 }
 
-// POSTs to /v1/relay/send by user, for the HTTP transport's batching.
+// POSTs to /v2/relay/send by account, for the HTTP transport's batching.
 export const sendPosts = new Map<string, number>();
 const realFetch = globalThis.fetch;
 globalThis.fetch = (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
   const url = input instanceof URL ? input : new URL(typeof input === "string" ? input : input.url);
-  if (url.pathname === "/v1/relay/send") {
-    const user = url.searchParams.get("userId") ?? "";
+  if (url.pathname === "/v2/relay/send") {
+    const token = new Headers(init?.headers).get("authorization")?.replace(/^Bearer /, "") ?? "";
+    const user = owners.get(token) ?? "";
     sendPosts.set(user, (sendPosts.get(user) ?? 0) + 1);
   }
   return realFetch(input, init);
@@ -222,7 +311,7 @@ export interface Talk {
 // A Talk: talk-start, wait for the go-ahead, the frames (every 20 ms if realtime), talk-end.
 export async function talk(client: SpikeClient, to: string, sound: Audio, realtime: boolean, pressedAt = performance.now()): Promise<Talk> {
   const burstId = randomUUID();
-  client.send({ type: "talk-start", to, burstId });
+  client.send({ type: "talk-start", to, burstId, codec: sound.codec === Codec.opus16k ? "opus16k" : "pcm16le16k" });
   const decision = await client.waitForMatch(
     (m) => (m.type === "floor-granted" || m.type === "floor-denied" || m.type === "talk-refused") && m.burstId === burstId,
     "floor decision",
@@ -274,7 +363,7 @@ export class Recorder {
         if (burst) burst.endAt = at;
         if (this.current?.burstId === message.burstId) this.current = null;
       } else if (message.type === "error") {
-        this.problems.push(`relay error: ${message.message}`);
+        this.problems.push(`relay error ${message.code}: ${message.message}`);
       }
       this.wake();
     };
@@ -360,19 +449,18 @@ export async function liveConversation(
   servers: { a: string; b: string },
   transports: { a: "ws" | "http"; b: "ws" | "http" } = { a: "ws", b: "ws" },
 ): Promise<{ a: SpikeClient; b: SpikeClient; aHeard: Recorder; bHeard: Recorder; names: { a: string; b: string } }> {
-  const names = ids(prefix);
-  await register(relay, names.a, `local:${names.a}`);
-  await register(relay, names.b, `poll:${names.b}`);
-  const a = bot(servers.a, names.a, transports.a);
-  const b = bot(servers.b, names.b, transports.b);
+  const people = await pair(relay, prefix, transports);
+  const a = bot(servers.a, people.a, transports.a);
+  const b = bot(servers.b, people.b, transports.b);
   const aHeard = new Recorder(a);
   const bHeard = new Recorder(b);
   await a.connect();
-  const first = await talk(a, names.b, opus(5), false);
+  const first = await talk(a, people.b.id, opus(5), false);
+  const { ringId } = await ringFor(relay, people.b, first.conversationId);
   await b.connect();
-  b.send({ type: "join", conversationId: first.conversationId });
+  b.send({ type: "join", conversationId: first.conversationId, ringId });
   await bHeard.ended(first.burstId);
-  return { a, b, aHeard, bHeard, names };
+  return { a, b, aHeard, bHeard, names: { a: people.a.id, b: people.b.id } };
 }
 
 export interface Context {

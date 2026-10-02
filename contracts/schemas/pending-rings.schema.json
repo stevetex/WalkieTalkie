@@ -1,0 +1,8 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "pending-rings.schema.json",
+  "title": "GET /v2/rings/pending",
+  "type": "object",
+  "required": ["rings"],
+  "properties": { "rings": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/ringEnvelope" } } }
+}

@@ -58,7 +58,9 @@ final class TalkController: ObservableObject {
 
     let ptt: PushToTalkChannel
     private let client: AccountClient
-    private let relayBaseURL: URL?
+    /// The relay: the service's approved one (GET /v2/config), else this build's own.
+    private let config: ServiceConfigStore
+    private var relayBaseURL: URL? { config.relayBaseURL }
     private let relay = RelayConnection()
     private let audio = AudioPipeline()
 
@@ -69,6 +71,8 @@ final class TalkController: ObservableObject {
         var peerName: String
         var timeline: Timeline
         var joined = false
+        /// Receiving: the ring answered (v2), which the join names.
+        var ringId: String?
     }
 
     private var conversation: Conversation?
@@ -96,16 +100,14 @@ final class TalkController: ObservableObject {
 
     private var usesPushToTalk: Bool { ptt.isJoined }
 
-    init(client: AccountClient, relayHost: String, ptt: PushToTalkChannel) {
+    init(client: AccountClient, config: ServiceConfigStore, ptt: PushToTalkChannel) {
         self.client = client
+        self.config = config
         self.ptt = ptt
-        relayBaseURL = AccountClient.baseURL(host: relayHost)
         // Timelines left unsent when iOS ended a background launch go at the next flush.
-        if let relayBaseURL {
-            Telemetry.shared.sendTimeline = { [client] body in
-                guard let token = client.session?.token else { throw URLError(.userAuthenticationRequired) }
-                try await Self.post(relayBaseURL, "/v1/metrics", body: body, token: token)
-            }
+        Telemetry.shared.sendTimeline = { [client, config] body in
+            guard let token = client.session?.token, let base = config.relayBaseURL else { throw URLError(.userAuthenticationRequired) }
+            try await RelayAPI(baseURL: base, token: token).uploadTimeline(body)
         }
 
         relay.onReady = { [unowned self] offset in relayReady(clockOffsetMs: offset) }
@@ -115,6 +117,18 @@ final class TalkController: ObservableObject {
             if conversation?.timeline.has("firstFrameReceived") == false { conversation?.timeline.mark("firstFrameReceived") }
             speakerIdle = false
             audio.enqueue(frame)
+        }
+        relay.onRefused = { [unowned self] refusal in
+            log("Relay refused: \(refusal.code)")
+            if refusal.requiresUpgrade {
+                NotificationCenter.default.post(name: ServiceContract.upgradeRequiredNotification, object: nil)
+                finish(status: "Update Over&Out to keep talking")
+            } else if refusal.endsSession {
+                // The account API confirms it and signs this iPhone out.
+                let client = client
+                Task { _ = try? await client.me() }
+                finish(status: "You're signed out")
+            }
         }
         relay.onClose = { [unowned self] reason in
             idleStream = false
@@ -324,7 +338,7 @@ final class TalkController: ObservableObject {
         if let receivedAt { timeline.mark("pttPushReceived", at: receivedAt) }
         timeline.mark("answerTapped", at: receivedAt ?? Clock.nowMs(), detail: via)
         conversation = Conversation(outgoing: false, conversationId: ring.conversationId,
-                                    peerId: ring.from, peerName: ring.fromName, timeline: timeline)
+                                    peerId: ring.from, peerName: ring.fromName, timeline: timeline, ringId: ring.ringId)
         phase = .connecting
         if unavailablePeer == ring.from { unavailablePeer = nil }
         peerId = ring.from
@@ -341,12 +355,12 @@ final class TalkController: ObservableObject {
         if idleStream, relay.isReady {
             idleStream = false
             conversation?.timeline.mark("joinSent", detail: "over the open stream")
-            relay.send(["type": "join", "conversationId": ring.conversationId])
+            relay.send(["type": "join", "conversationId": ring.conversationId, "ringId": ring.ringId])
             relayReady(clockOffsetMs: relay.clockOffsetMs)
         } else {
             idleStream = false
             conversation?.timeline.mark("joinSent", detail: "with the stream")
-            connectRelay(join: ring.conversationId)
+            connectRelay(join: ring.conversationId, ring: ring.ringId)
         }
         resetIdleTimer()
     }
@@ -378,7 +392,8 @@ final class TalkController: ObservableObject {
 
     // MARK: Relay
 
-    private func connectRelay(join: String? = nil, resume: RelayResume? = nil) {
+    /// `ring`: the ring a first join answers. A rejoin after a drop names none.
+    private func connectRelay(join: String? = nil, ring: String? = nil, resume: RelayResume? = nil) {
         guard let baseURL = relayBaseURL else { return finish(status: "No server configured") }
         let conversationId = conversation?.conversationId
         withToken { [weak self] session in
@@ -388,7 +403,7 @@ final class TalkController: ObservableObject {
                 return finish(status: "You're signed out")
             }
             log(join.map { "Connecting to the relay, joining \($0)" } ?? "Connecting to the relay")
-            relay.connect(baseURL: baseURL, token: session.token, userId: session.userId, join: join, resume: resume)
+            relay.connect(baseURL: baseURL, token: session.token, userId: session.userId, join: join, ring: ring, resume: resume)
         }
     }
 
@@ -465,9 +480,10 @@ final class TalkController: ObservableObject {
 
     private func refineClockOffset() {
         guard conversation != nil, let baseURL = relayBaseURL, let token = client.session?.token else { return }
+        let api = RelayAPI(baseURL: baseURL, token: token)
         Task {
             for _ in 0..<3 {
-                guard let sample = try? await Self.timeSample(baseURL, token: token), conversation != nil else { return }
+                guard let sample = try? await api.timeSample(), conversation != nil else { return }
                 if sample.roundTripMs < bestClockRoundTripMs {
                     bestClockRoundTripMs = sample.roundTripMs
                     clockOffsetMs = sample.offsetMs
@@ -481,10 +497,8 @@ final class TalkController: ObservableObject {
         let name = conversation?.peerName ?? "Your friend"
         switch message.type {
         case "ring":
-            guard let conversationId = message.conversationId, let from = message.from else { return }
-            let ring = Ring(conversationId: conversationId, from: from, fromName: message.fromName ?? from,
-                            burstId: message.burstId, pushSentAt: message.pushSentAt)
-            guard conversation?.conversationId != conversationId else { return }
+            guard let ring = Ring(message: message) else { return }
+            guard conversation?.conversationId != ring.conversationId else { return }
             incomingRing = ring
             UINotificationFeedbackGenerator().notificationOccurred(.warning)
             incomingRingTimer?.invalidate()
@@ -554,14 +568,29 @@ final class TalkController: ObservableObject {
             statusLine = "\(name) didn't answer"
             unavailablePeer = conversation?.peerId
             conversation?.timeline.mark("ringTimedOut", detail: "\(message.droppedBursts ?? 0) bursts dropped")
+        case "session-ended":
+            // Signed out elsewhere, or the account was deleted: the API confirms it.
+            let client = client
+            Task { _ = try? await client.me() }
+            finish(status: "You're signed out")
         case "error":
-            log("Relay error: \(message.message ?? "unknown")")
-            if message.message == "unknown conversation", conversation?.outgoing == false, conversation?.joined == false {
+            log("Relay error: \(message.code ?? message.message ?? "unknown")")
+            let receiving = conversation?.outgoing == false && conversation?.joined == false
+            switch message.code {
+            case "ring-expired" where receiving:
+                // A late push or tap: that ring is over, and nothing of it plays.
+                audio.discardPlayback()
+                finish(status: "This conversation has expired")
+            case "ring-answered-elsewhere" where receiving:
+                finish(status: "Answered on your watch")
+            case "unknown-conversation" where receiving:
                 finish(status: "Missed \(name)")
-            } else if message.message == "unknown conversation", reconnecting != nil {
+            case "unknown-conversation" where reconnecting != nil:
                 // Back after a drop, but the relay has ended the conversation meanwhile.
                 reconnecting = nil
                 finish(status: "Lost the connection to \(name)")
+            default:
+                break
             }
         default:
             break
@@ -575,7 +604,7 @@ final class TalkController: ObservableObject {
         let id = UUID().uuidString
         burstId = id
         sentFirstFrame = false
-        relay.send(["type": "talk-start", "to": current.peerId, "burstId": id])
+        relay.send(["type": "talk-start", "to": current.peerId, "burstId": id, "codec": audio.codecName])
         conversation?.timeline.mark("captureStarted", once: false)
         audio.beginCapture()
         // PushToTalk plays the system's own sound; in the app, a tap says "go ahead".
@@ -797,29 +826,6 @@ final class TalkController: ObservableObject {
         body["device"] = Telemetry.shared.device
         await Telemetry.shared.uploadTimeline(body, conversationId: conversationId)
         await Telemetry.shared.flush()
-    }
-
-    private static func timeSample(_ baseURL: URL, token: String) async throws -> (offsetMs: Double, roundTripMs: Double) {
-        var request = URLRequest(url: baseURL.appendingPathComponent("v1/time"))
-        request.timeoutInterval = 10
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        let sentAt = Clock.nowMs()
-        let (data, _) = try await URLSession.shared.data(for: request)
-        let receivedAt = Clock.nowMs()
-        let serverTime = (try JSONSerialization.jsonObject(with: data) as? [String: Any])?["serverTime"] as? Double ?? 0
-        return (serverTime - (sentAt + receivedAt) / 2, receivedAt - sentAt)
-    }
-
-    private static func post(_ baseURL: URL, _ path: String, body: [String: Any], token: String) async throws {
-        var request = URLRequest(url: baseURL.appendingPathComponent(path))
-        request.httpMethod = "POST"
-        request.timeoutInterval = 15
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
-        let (_, response) = try await URLSession.shared.data(for: request)
-        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-        if !(200..<300).contains(status) { throw URLError(.badServerResponse) }
     }
 
     /// In Console.app: the iPhone, subsystem com.cypressoakstudios.overandout.

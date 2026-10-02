@@ -1,0 +1,4 @@
+[
+  { "error": "a-future-error", "message": "Something new went wrong.", "retryAfterMs": 5000 },
+  { "error": "ring-answered-elsewhere", "message": "Answered on another device.", "device": { "formFactor": "watch" } }
+]

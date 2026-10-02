@@ -1,0 +1,6 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "error.schema.json",
+  "title": "An error response (any status 400 and up)",
+  "$ref": "common.schema.json#/$defs/error"
+}

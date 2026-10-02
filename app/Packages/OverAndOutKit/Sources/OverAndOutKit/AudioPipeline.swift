@@ -42,6 +42,9 @@ public final class AudioPipeline {
         codec == .opus16k ? "Opus 24 kbps" : "PCM 256 kbps (no Opus encoder)"
     }
 
+    /// What this device sends, as talk-start names it.
+    public var codecName: String { codec.name }
+
     public enum PipelineError: LocalizedError {
         case noInput
         public var errorDescription: String? { "No microphone input available (playback only)" }

@@ -1,0 +1,7 @@
+{
+  "clientKind": "ios",
+  "delivery": { "provider": "relay", "mode": "foreground" },
+  "availability": { "enabled": true, "notifications": "denied" },
+  "clientVersion": "1.0",
+  "build": "170"
+}

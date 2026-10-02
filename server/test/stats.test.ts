@@ -3,7 +3,8 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { Accounts } from "../src/accounts.ts";
+import { Accounts, type DeviceRegistration } from "../src/accounts.ts";
+import { DEFAULT_CAPABILITIES, type ClientKind, type Delivery } from "../src/contract.ts";
 import { MemoryDocs } from "../src/docs.ts";
 import { activity, dailyStats, usageSnapshot } from "../src/stats.ts";
 import { rollup } from "../src/rollup-main.ts";
@@ -11,6 +12,13 @@ import { MemorySink } from "../src/telemetry.ts";
 import type { LogEntry } from "../src/log-reader.ts";
 
 const DAY = 86_400_000;
+
+const device = (clientKind: ClientKind, delivery: Delivery): DeviceRegistration => ({
+  clientKind,
+  delivery,
+  availability: { enabled: true, notifications: "authorized" },
+  capabilities: structuredClone(DEFAULT_CAPABILITIES),
+});
 
 async function sampleAccounts(now: number) {
   const docs = new MemoryDocs();
@@ -26,11 +34,12 @@ async function sampleAccounts(now: number) {
   clock.t = now - DAY / 2;
   await accounts.setAvatar(alice.id, "honey");
   await accounts.setFavorite(bob.id, alice.id, true);
-  await accounts.setRingOn(bob.id, "iphone");
-  await accounts.registerDevice(alice.id, "a-watch", { platform: "watch", pushToken: "w1", apnsEnvironment: "production" });
-  await accounts.registerDevice(bob.id, "b-phone", { platform: "iphone", pushToken: "p1", pushType: "pushtotalk", apnsEnvironment: "production" });
-  await accounts.registerDevice(bob.id, "b-watch", { platform: "watch", pushToken: "w2", apnsEnvironment: "production" });
-  await accounts.registerDevice(carol.id, "c-phone", { platform: "iphone", pushToken: "app:", apnsEnvironment: "production" });
+  await accounts.setPreferredFormFactor(bob.id, "phone");
+  await accounts.registerDevice(alice.id, "a-watch", device("watchos", { provider: "apns", mode: "alert", token: "w1", environment: "production" }));
+  await accounts.registerDevice(bob.id, "b-phone", device("ios", { provider: "apns", mode: "pushtotalk", token: "p1", environment: "production" }));
+  await accounts.registerDevice(bob.id, "b-watch", device("watchos", { provider: "apns", mode: "alert", token: "w2", environment: "production" }));
+  // An iPhone rung only while the app is open.
+  await accounts.registerDevice(carol.id, "c-phone", device("ios", { provider: "relay", mode: "foreground" }));
   await accounts.recordMessage(alice.id, bob.id, now - DAY / 4);
   return { docs, alice, bob, carol };
 }

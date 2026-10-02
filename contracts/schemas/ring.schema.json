@@ -1,0 +1,6 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "ring.schema.json",
+  "title": "A ring envelope (in-app event, APNs and FCM payloads)",
+  "$ref": "common.schema.json#/$defs/ringEnvelope"
+}

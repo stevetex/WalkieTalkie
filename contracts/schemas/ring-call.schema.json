@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "ring-call.schema.json",
+  "title": "POST /v2/rings/answer and /v2/rings/decline (request)",
+  "type": "object",
+  "required": ["conversationId", "ringId"],
+  "properties": {
+    "conversationId": { "$ref": "common.schema.json#/$defs/id" },
+    "ringId": { "$ref": "common.schema.json#/$defs/ringId" }
+  }
+}

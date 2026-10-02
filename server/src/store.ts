@@ -1,28 +1,12 @@
-// Device registry and timing metrics. Relay nodes keep nothing durable themselves (option E),
-// so in production both live in Firestore. Local runs and tests use the JSON stores, which
-// persist to plain files under the data directory (or nowhere, with no data directory).
+// Timing metrics. Relay nodes keep nothing durable themselves (option E). Local runs and tests
+// use the JSON store, which persists to a plain file under the data directory (or nowhere, with
+// no data directory).
 
-import { mkdirSync, readFileSync, writeFileSync, appendFileSync, existsSync } from "node:fs";
+import { mkdirSync, readFileSync, appendFileSync, existsSync } from "node:fs";
 import { hostname } from "node:os";
 import { join } from "node:path";
-import type { ApnsEnvironment } from "./apns.ts";
 import type { Firestore } from "./firestore.ts";
 import type { MetricEvent, MetricsUpload } from "./protocol.ts";
-
-export interface Device {
-  userId: string;
-  name: string;
-  // An APNs device token, or a "local:" / "poll:" pseudo-token (see relay.ts).
-  pushToken: string;
-  apnsEnvironment: ApnsEnvironment;
-  updatedAt: number;
-}
-
-export interface DeviceStore {
-  get(userId: string): Promise<Device | undefined>;
-  list(): Promise<Device[]>;
-  upsert(device: Device): Promise<void>;
-}
 
 export interface TimelineEntry {
   source: "server" | "sender" | "receiver";
@@ -47,39 +31,6 @@ export interface MetricsStore {
   timeline(conversationId: string): Promise<TimelineEntry[]>;
   // Writes anything still buffered (on shutdown).
   flush(): Promise<void>;
-}
-
-export class JsonDeviceStore implements DeviceStore {
-  private devices = new Map<string, Device>();
-  private file: string | null;
-
-  constructor(dataDir: string | null) {
-    this.file = dataDir ? join(dataDir, "devices.json") : null;
-    if (this.file && existsSync(this.file)) {
-      for (const d of readDevicesFile(this.file)) this.devices.set(d.userId, d);
-    }
-  }
-
-  async get(userId: string): Promise<Device | undefined> {
-    return this.devices.get(userId);
-  }
-
-  async list(): Promise<Device[]> {
-    return [...this.devices.values()];
-  }
-
-  async upsert(device: Device): Promise<void> {
-    this.devices.set(device.userId, device);
-    if (this.file) writeFileSync(this.file, JSON.stringify([...this.devices.values()], null, 2));
-  }
-}
-
-// Files written before the switch to alert pushes call the token voipToken.
-export function readDevicesFile(file: string): Device[] {
-  return (JSON.parse(readFileSync(file, "utf8")) as Array<Device & { voipToken?: string }>).map(({ voipToken, ...d }) => ({
-    ...d,
-    pushToken: d.pushToken ?? voipToken ?? "",
-  }));
 }
 
 export class JsonMetricsStore implements MetricsStore {
@@ -123,37 +74,6 @@ export class JsonMetricsStore implements MetricsStore {
   }
 }
 
-// devices/{userId}
-export class FirestoreDeviceStore implements DeviceStore {
-  private db: Firestore;
-
-  constructor(db: Firestore) {
-    this.db = db;
-  }
-
-  async get(userId: string): Promise<Device | undefined> {
-    const data = await this.db.get("devices", userId);
-    return data ? toDevice(data) : undefined;
-  }
-
-  async list(): Promise<Device[]> {
-    return (await this.db.list("devices")).map((d) => toDevice(d.data));
-  }
-
-  async upsert(device: Device): Promise<void> {
-    await this.db.set("devices", device.userId, { ...device });
-  }
-}
-
-function toDevice(data: Record<string, unknown>): Device {
-  return {
-    userId: String(data.userId),
-    name: String(data.name),
-    pushToken: String(data.pushToken),
-    apnsEnvironment: data.apnsEnvironment === "production" ? "production" : "sandbox",
-    updatedAt: Number(data.updatedAt),
-  };
-}
 
 export interface FirestoreMetricsOptions {
   // A conversation's buffered server events are written once no new event has arrived

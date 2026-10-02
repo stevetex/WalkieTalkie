@@ -1,4 +1,4 @@
-// Copies a JSON-store data directory (devices.json and metrics.jsonl) into Firestore.
+// Copies a JSON-store data directory's metrics.jsonl into Firestore.
 // Used once, to move the hand-built VM's data to option E's Firestore database.
 //
 //   node tools/import-data.ts <data dir> [--project walkie-talkie-relay]
@@ -11,7 +11,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
 import { Firestore, gcloudAccessToken } from "../src/firestore.ts";
-import { FirestoreDeviceStore, readDevicesFile, type TimelineEntry } from "../src/store.ts";
+import type { TimelineEntry } from "../src/store.ts";
 
 const { positionals, values } = parseArgs({
   allowPositionals: true,
@@ -29,15 +29,6 @@ const db = new Firestore({
   emulatorHost,
   accessToken: gcloudAccessToken(),
 });
-
-const devicesFile = join(dir, "devices.json");
-if (existsSync(devicesFile)) {
-  const devices = new FirestoreDeviceStore(db);
-  for (const device of readDevicesFile(devicesFile)) {
-    await devices.upsert(device);
-    console.log(`device ${device.userId} (${device.name})`);
-  }
-}
 
 const metricsFile = join(dir, "metrics.jsonl");
 if (existsSync(metricsFile)) {

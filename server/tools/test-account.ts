@@ -1,13 +1,12 @@
 // The Test Bot as a real account (design decision 2026-09-27), so one set of devices can
 // test invites, friend checks, blocks and reports. Its session token is saved to
-// data/bot-token.json (gitignored, readable only by you) and never printed; bot.ts --account
-// uses it.
+// data/bot-token.json (gitignored, readable only by you) and never printed; bot.ts uses it.
 //
 //   node tools/test-account.ts create [--name "Test Bot"]
 //       Creates (or finds) the bot's account and a session for its "device", and registers
 //       that device so rings reach the bot over its relay connection.
 //       Local (OAO_API is http://localhost…): signs in through the local API, which must run
-//       with DEV_APPLE_SIGNIN=1 (see HANDOFF.md, Simulator).
+//       with DEV_APPLE_SIGNIN=1 TEST_DELIVERY=1 (see HANDOFF.md, Simulator).
 //       Google Cloud: writes the account to Firestore and signs the token with the key in
 //       Secret Manager, with your gcloud credentials. No test entry point in the API.
 //
@@ -25,6 +24,12 @@
 //       Sets the bot's profile photo: a square JPEG under 100 KB, by default
 //       tools/test-bot-photo.jpg (the robot face emoji on indigo).
 //
+//   node tools/test-account.ts android <name>
+//       Local only (Phase 0's synthetic Android peer): signs <name> in with a dev Google identity
+//       on an "android" device and registers it for FCM rings, which the relay's FCM stub records
+//       instead of sending. Needs a local relay run with SERVE_API=1 DEV_GOOGLE_SIGNIN=1
+//       FCM_STUB=1. Saves its session to OAO_BOT_TOKEN_FILE for bot.ts --client-kind android.
+//
 // OAO_API is the account API (default https://overandout.app); GCP_PROJECT the Google Cloud
 // project (default walkie-talkie-relay).
 
@@ -40,6 +45,14 @@ import { SessionSigner, parseSigningKey } from "../src/session.ts";
 export const BOT_TOKEN_FILE = process.env.OAO_BOT_TOKEN_FILE ?? join(import.meta.dirname, "..", "data", "bot-token.json");
 const BOT_APPLE_SUB = "test-bot.overandout";
 const BOT_DEVICE = "test-bot";
+// Rings reach the bot over its relay connection: a test delivery, which only servers run for
+// tests let clients register (TEST_DELIVERY), so on Google Cloud it's written directly.
+const BOT_REGISTRATION = {
+  clientKind: "watchos" as const,
+  delivery: { provider: "test" as const, mode: "connection" as const },
+  availability: { enabled: true, notifications: "authorized" as const },
+  capabilities: { relayProtocols: [2], audioFormats: [1], decode: ["opus16k" as const, "pcm16le16k" as const], encode: ["opus16k" as const], features: [] },
+};
 
 export interface BotSession {
   api: string;
@@ -84,14 +97,15 @@ if (import.meta.main) {
   if (command === "create") {
     let session: BotSession;
     if (local) {
-      const res = await api(base, null, "POST", "/v1/auth/apple", {
+      const res = await api(base, null, "POST", "/v2/auth/apple", {
         identityToken: `dev:${BOT_APPLE_SUB}`,
         nonce: "unused",
         name: values.name,
         deviceId: BOT_DEVICE,
-        platform: "watch",
+        clientKind: "watchos",
       });
       session = { api: base, userId: res.user.id, name: res.user.name, token: res.token, expiresAt: res.expiresAt };
+      await api(base, session.token, "PUT", "/v2/me/device", BOT_REGISTRATION);
     } else {
       // Straight to Firestore and Secret Manager, as the signed-in gcloud user.
       const accounts = new Accounts(new Firestore({ projectId: project, accessToken: gcloudAccessToken() }));
@@ -101,42 +115,56 @@ if (import.meta.main) {
       });
       const signer = new SessionSigner(parseSigningKey(key));
       const { user } = await accounts.signInWithApple(BOT_APPLE_SUB, values.name);
-      const sid = await accounts.createSession(user.id, BOT_DEVICE, "watch");
+      const sid = await accounts.createSession(user.id, BOT_DEVICE, "watchos");
       const { token, expiresAt } = signer.issue({ sub: user.id, sid, dev: BOT_DEVICE });
       session = { api: base, userId: user.id, name: user.name, token, expiresAt };
+      await accounts.registerDevice(user.id, BOT_DEVICE, BOT_REGISTRATION);
     }
-    // Rings reach the bot over its relay connection ("local:" pseudo-token, see relay.ts).
-    await api(base, session.token, "PUT", "/v1/me/device", { platform: "watch", pushToken: `local:${session.userId}` });
     save(session);
     console.log(`Test Bot is ${session.userId} ("${session.name}"); its token is in ${BOT_TOKEN_FILE}.`);
   } else if (command === "accept") {
     if (!arg) throw new Error("usage: node tools/test-account.ts accept <invite link or code>");
     const session = loadBotSession();
     const code = arg.split("/").filter(Boolean).at(-1)!;
-    const { friend } = await api(session.api, session.token, "POST", `/v1/invites/${code}/accept`);
+    const { friend } = await api(session.api, session.token, "POST", `/v2/invites/${code}/accept`);
     console.log(`${session.name} and ${friend.name} (${friend.id}) are friends.`);
   } else if (command === "invite") {
     const session = loadBotSession();
-    const { url, expiresAt } = await api(session.api, session.token, "POST", "/v1/invites");
+    const { url, expiresAt } = await api(session.api, session.token, "POST", "/v2/invites");
     console.log(`${url}  (from ${session.name}, single use, expires ${new Date(expiresAt).toISOString()})`);
   } else if (command === "friends") {
     const session = loadBotSession();
-    const { friends } = await api(session.api, session.token, "GET", "/v1/friends");
+    const { friends } = await api(session.api, session.token, "GET", "/v2/friends");
     for (const f of friends) console.log(`${f.id}  ${f.name}`);
     if (!friends.length) console.log("No friends yet. Send the bot an invite from the iPhone app, then run: accept <link>");
   } else if (command === "photo") {
     const session = loadBotSession();
     const file = arg ?? new URL("test-bot-photo.jpg", import.meta.url).pathname;
-    const res = await fetch(new URL("/v1/me/photo", session.api), {
+    const res = await fetch(new URL("/v2/me/photo", session.api), {
       method: "PUT",
       headers: { "content-type": "image/jpeg", authorization: `Bearer ${session.token}` },
       body: readFileSync(file),
     });
     const json = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(`PUT /v1/me/photo: ${res.status} ${json.error ?? ""}`);
+    if (!res.ok) throw new Error(`PUT /v2/me/photo: ${res.status} ${json.error ?? ""}`);
     console.log(`${session.name}'s photo is ${file} (version ${json.photoVersion}).`);
+  } else if (command === "android") {
+    if (!local || !arg) throw new Error("usage (local only): node tools/test-account.ts android <name>");
+    const deviceId = `android-${arg.toLowerCase()}`;
+    const res = await api(base, null, "POST", "/v2/auth/google", { identityToken: `dev:${arg.toLowerCase()}`, nonce: "unused", name: arg, deviceId, clientKind: "android" });
+    const session: BotSession = { api: base, userId: res.user.id, name: res.user.name, token: res.token, expiresAt: res.expiresAt };
+    await api(base, session.token, "PUT", "/v2/me/device", {
+      clientKind: "android",
+      delivery: { provider: "fcm", mode: "notification", token: `fcm-${deviceId}` },
+      availability: { enabled: true, notifications: "authorized" },
+      capabilities: { relayProtocols: [2], audioFormats: [1], decode: ["opus16k", "pcm16le16k"], encode: ["opus16k", "pcm16le16k"] },
+      clientVersion: "synthetic",
+      build: "1",
+    });
+    save(session);
+    console.log(`${session.name} is an Android account ${session.userId} (Google dev identity); its token is in ${BOT_TOKEN_FILE}.`);
   } else {
-    console.error("usage: node tools/test-account.ts create | accept <invite link or code> | invite | friends | photo [file.jpg]");
+    console.error("usage: node tools/test-account.ts create | accept <invite link or code> | invite | friends | photo [file.jpg] | android <name>");
     process.exit(2);
   }
 }

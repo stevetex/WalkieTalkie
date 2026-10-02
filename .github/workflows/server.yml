@@ -8,9 +8,9 @@ name: Server
 
 on:
   push:
-    paths: ["server/**", ".github/workflows/server.yml"]
+    paths: ["server/**", "contracts/**", ".github/workflows/server.yml"]
   pull_request:
-    paths: ["server/**", ".github/workflows/server.yml"]
+    paths: ["server/**", "contracts/**", ".github/workflows/server.yml"]
   schedule:
     # Weekly, so the history artifact never expires in a quiet spell and runner changes show.
     - cron: "17 6 * * 1"
@@ -77,6 +77,12 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           git worktree add --detach "$RUNNER_TEMP/base" "$BASE_SHA"
+          # The suite speaks the service contract (contracts/README.md); a base from before it
+          # (relay protocol 2 on /v2/relay) can't be measured with it, so only the full suite runs.
+          if ! grep -q '"/v2/relay"' "$RUNNER_TEMP/base/server/src/main.ts"; then
+            echo "The base relay doesn't serve /v2/relay: no base comparison for this pull request."
+            exit 0
+          fi
           for round in 1 2 3 4 5; do
             node perf/run.ts --label base --relay-dir "$RUNNER_TEMP/base/server" --out "perf-out/base/round-$round.json" > /dev/null
             node perf/run.ts --label head --out "perf-out/head/round-$round.json" > /dev/null
@@ -102,7 +108,7 @@ jobs:
           IS_PR: ${{ github.event_name == 'pull_request' }}
         run: |
           args=(--full perf-out/full.json --summary "$GITHUB_STEP_SUMMARY")
-          if [ "$IS_PR" = true ]; then args+=(--head-dir perf-out/head --base-dir perf-out/base); fi
+          if [ "$IS_PR" = true ] && [ -d perf-out/base ]; then args+=(--head-dir perf-out/head --base-dir perf-out/base); fi
           if [ "$ON_MAIN" = true ]; then args+=(--history perf-out/history/perf-history.jsonl --append-history perf-out/perf-history.jsonl); fi
           node perf/compare.ts "${args[@]}"
 

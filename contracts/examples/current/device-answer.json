@@ -1,0 +1,11 @@
+{
+  "device": {
+    "id": "6c8f7e2a-1b3d-4e5f-9a7b-0c1d2e3f4a5b",
+    "clientKind": "ios",
+    "formFactor": "phone",
+    "delivery": { "provider": "apns", "mode": "pushtotalk", "environment": "production" },
+    "receiveMode": "automatic",
+    "availability": { "enabled": true, "notifications": "authorized" },
+    "capabilities": { "relayProtocols": [2], "audioFormats": [1], "decode": ["opus16k", "pcm16le16k"], "encode": ["opus16k"], "features": [] }
+  }
+}

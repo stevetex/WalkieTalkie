@@ -5,7 +5,7 @@
 // show up as time (the Opus bot cut a device's replay from 1.44 s to 0.89 s).
 
 import { Codec } from "../../src/protocol.ts";
-import { ONE_WAY_MS, Recorder, audio, bot, checkBurst, ids, proxy, register, sleep, startRelay, talk, type Context, type Relay } from "../harness.ts";
+import { ONE_WAY_MS, Recorder, audio, bot, checkBurst, pair, proxy, ringFor, sleep, startRelay, talk, type Context, type Relay } from "../harness.ts";
 
 export const name = "G. Opus vs PCM";
 
@@ -30,20 +30,19 @@ export async function run(ctx: Context): Promise<void> {
 }
 
 async function replay(ctx: Context, relay: Relay, codec: number, delayMs: number, kbps: number | undefined, key: string) {
-  const names = ids("g");
-  await register(relay, names.a, `local:${names.a}`);
-  await register(relay, names.b, `poll:${names.b}`);
-  const alice = bot(relay.url, names.a);
+  const people = await pair(relay, "g", { a: "ws", b: "http" });
+  const alice = bot(relay.url, people.a);
   const link = await proxy(relay, delayMs, kbps);
-  const bob = bot(link.url, names.b, "http");
+  const bob = bot(link.url, people.b, "http");
   const heard = new Recorder(bob);
   try {
     await alice.connect();
     const sound = audio(codec, FRAMES, 7);
-    const sent = await talk(alice, names.b, sound, false);
+    const sent = await talk(alice, people.b.id, sound, false);
+    const { ringId } = await ringFor(relay, people.b, sent.conversationId);
     await sleep(50);
     const joinAt = performance.now();
-    await bob.connect(sent.conversationId);
+    await bob.connect(sent.conversationId, undefined, ringId);
     const burst = await heard.ended(sent.burstId, 30_000);
     ctx.results.fail(`${key}.integrity_failures`, [...checkBurst(sound, burst, { replay: true }), ...heard.problems]);
     return { bytes: link.counters.bytesDown, ms: (burst.endAt ?? NaN) - joinAt };

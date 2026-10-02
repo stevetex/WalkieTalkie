@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Deploys the account API (server/src/api-main.ts) to Cloud Run as the service "api", from
-# the committed code. It scales to zero; overandout.app/v1/* reaches it through Firebase
-# Hosting (deploy-web.sh). Run setup-api.sh once first.
+# the committed code. It scales to zero; overandout.app/v2/* reaches it through Firebase Hosting
+# (deploy-web.sh). Run setup-api.sh once first.
 #
 #   deploy/gcp/deploy-api.sh [commit]     (default: HEAD)
 set -euo pipefail
@@ -25,6 +25,9 @@ trap 'rm -rf "$stage"' EXIT
   echo "SESSION_PUBLIC_KEYS_SECRET: session-public-keys"
   echo "APPLE_AUDIENCES: \"${APPLE_AUDIENCES:-com.cypressoakstudios.overandout}\""
   echo "INVITE_BASE_URL: https://overandout.app/i/"
+  # GET /v2/config's relay, and the contract's compatibility setting (contracts/README.md).
+  echo "RELAY_BASE_URL: https://${DOMAIN:-relay-1.overandout.app}"
+  if [ -n "${MINIMUM_BUILDS:-}" ]; then echo "MINIMUM_BUILDS: '${MINIMUM_BUILDS}'"; fi
   # The Test Bot's standing invite (server/src/accounts.ts): befriends the bot, and only the bot.
   if [ -n "${TEST_BOT_INVITE:-}" ]; then
     echo "TEST_BOT_USER_ID: \"$TEST_BOT_USER_ID\""
@@ -53,9 +56,16 @@ if gc run jobs describe stats --region="$REGION" >/dev/null 2>&1; then
 fi
 
 url=$(gc run services describe api --region="$REGION" --format='value(status.url)')
-if curl -fsS --max-time 20 "$url/v1/health" | grep -q "\"revision\":\"$rev\""; then
+if curl -fsS --max-time 20 "$url/v2/health" | grep -q "\"revision\":\"$rev\""; then
   echo "$url serves $rev"
 else
   echo "$url isn't serving $rev" >&2
+  exit 1
+fi
+# The contract answers: its public config names relay protocol 2.
+if curl -fsS --max-time 20 "$url/v2/config" | grep -q '"protocols":\[2\]'; then
+  echo "$url serves /v2/config"
+else
+  echo "$url doesn't serve /v2/config" >&2
   exit 1
 fi

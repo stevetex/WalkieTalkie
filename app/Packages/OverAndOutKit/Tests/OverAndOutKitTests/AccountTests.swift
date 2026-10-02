@@ -79,7 +79,8 @@ struct AccountTests {
     func client(_ store: SessionStoring) -> AccountClient {
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [StubProtocol.self]
-        return AccountClient(baseURL: base, store: store, urlSession: URLSession(configuration: config))
+        return AccountClient(baseURL: base, store: store, urlSession: URLSession(configuration: config),
+                             identity: ClientIdentity(kind: .ios, version: "1.0", build: "170"))
     }
 
     /// Whole milliseconds, as the server and the Keychain encoding keep them.
@@ -88,18 +89,18 @@ struct AccountTests {
         return AccountSession(token: "old", expiresAt: Date(timeIntervalSince1970: ms / 1000), userId: "u_a", name: "Alice", deviceId: "phone")
     }
 
-    @Test func ringOnIsSetAndClearedAndPushTypeIsSent() async throws {
+    @Test func theRingPreferenceIsSetAndClearedAndTheRegistrationIsV2() async throws {
         let store = MemorySessionStore()
         store.save(session(expiresIn: 3600))
         StubProtocol.reset([
-            .init(status: 200, json: #"{"id":"u_a","name":"Alice","ringOn":"iphone"}"#),
+            .init(status: 200, json: #"{"id":"u_a","name":"Alice","preferredFormFactor":"phone"}"#),
             .init(status: 200, json: #"{"id":"u_a","name":"Alice"}"#),
             .init(status: 200, json: "{}"),
         ])
         let c = client(store)
-        #expect(try await c.setRingOn(.iphone).ringOn == .iphone)
-        #expect(try await c.setRingOn(nil).ringOn == nil)
-        try await c.registerDevice(platform: .iphone, pushToken: "abc", pushType: "pushtotalk", apnsEnvironment: "sandbox")
+        #expect(try await c.setPreferredFormFactor(.phone).preferredFormFactor == .phone)
+        #expect(try await c.setPreferredFormFactor(nil).preferredFormFactor == nil)
+        try await c.registerDevice(DeviceRegistration(delivery: .pushToTalk(token: "abc", environment: "sandbox"), notifications: .authorized))
         let bodies = StubProtocol.requests.map { request -> [String: Any] in
             let data = request.httpBodyStream.map { stream -> Data in
                 stream.open()
@@ -115,10 +116,18 @@ struct AccountTests {
             } ?? request.httpBody ?? Data()
             return (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
         }
-        #expect(bodies[0]["ringOn"] as? String == "iphone")
-        #expect(bodies[1]["ringOn"] is NSNull)
-        #expect(bodies[2]["pushType"] as? String == "pushtotalk")
+        #expect(bodies[0]["preferredFormFactor"] as? String == "phone")
+        #expect(bodies[1]["preferredFormFactor"] is NSNull)
+        #expect(bodies[2]["clientKind"] as? String == "ios")
+        #expect(bodies[2]["delivery"] as? [String: String] == ["provider": "apns", "mode": "pushtotalk", "token": "abc", "environment": "sandbox"])
+        #expect((bodies[2]["availability"] as? [String: Any])?["notifications"] as? String == "authorized")
         #expect(StubProtocol.requests[2].httpMethod == "PUT")
+        #expect(StubProtocol.requests[2].url?.path == "/v2/me/device")
+        // Every call says which build is calling.
+        for request in StubProtocol.requests {
+            #expect(request.value(forHTTPHeaderField: "X-OAO-Client-Kind") == "ios")
+            #expect(request.value(forHTTPHeaderField: "X-OAO-Build") == "170")
+        }
     }
 
     @Test func photosUploadAsJPEGAndFriendsCarryTheirVersion() async throws {
@@ -134,24 +143,26 @@ struct AccountTests {
         #expect(try await c.setPhoto(jpeg: jpeg) == 1_790_000_000_000)
         let upload = StubProtocol.requests[0]
         #expect(upload.httpMethod == "PUT")
-        #expect(upload.url?.path == "/v1/me/photo")
+        #expect(upload.url?.path == "/v2/me/photo")
         #expect(upload.value(forHTTPHeaderField: "Content-Type") == "image/jpeg")
         #expect(upload.bodyStreamData() == jpeg)
         let friends = try await c.friends()
         #expect(friends.map(\.photoVersion) == [1_790_000_000_001, nil])
         #expect(try await c.photo(userId: "u_b") == Data("jpeg bytes".utf8))
-        #expect(StubProtocol.requests[2].url?.path == "/v1/users/u_b/photo")
+        #expect(StubProtocol.requests[2].url?.path == "/v2/users/u_b/photo")
     }
 
     @Test func signInStoresTheSession() async throws {
         let store = MemorySessionStore()
         StubProtocol.reset([.init(status: 200, json: #"{"token":"t1","expiresAt":1792000000000,"user":{"id":"u_a","name":"Alice"},"created":true}"#)])
-        let result = try await client(store).signInWithApple(identityToken: "id", nonce: "n", name: "Alice", deviceId: "phone", platform: .iphone)
+        let result = try await client(store).signInWithApple(identityToken: "id", nonce: "n", name: "Alice", deviceId: "phone")
         #expect(result.created)
         #expect(store.load()?.token == "t1")
         #expect(store.load()?.expiresAt == Date(timeIntervalSince1970: 1_792_000_000))
         let body = try JSONSerialization.jsonObject(with: StubProtocol.requests[0].bodyStreamData()) as? [String: Any]
-        #expect(body?["platform"] as? String == "iphone")
+        #expect(body?["clientKind"] as? String == "ios")
+        #expect(StubProtocol.requests[0].url?.path == "/v2/auth/apple")
+        #expect(store.load()?.clientKind == "ios")
         #expect(StubProtocol.requests[0].value(forHTTPHeaderField: "Authorization") == nil)
     }
 
@@ -165,7 +176,7 @@ struct AccountTests {
         let friends = try await client(store).friends()
         #expect(friends.map(\.name) == ["Bob"])
         #expect(store.load()?.token == "new")
-        #expect(StubProtocol.requests.map { $0.url!.path } == ["/v1/friends", "/v1/auth/refresh", "/v1/friends"])
+        #expect(StubProtocol.requests.map { $0.url!.path } == ["/v2/friends", "/v2/auth/refresh", "/v2/friends"])
         #expect(StubProtocol.requests[2].value(forHTTPHeaderField: "Authorization") == "Bearer new")
     }
 
@@ -238,7 +249,7 @@ struct AccountTests {
         StubProtocol.releaseHeld()
         _ = try? await refreshing.value
         #expect(store.load() == nil)
-        #expect(StubProtocol.requests.map { $0.url!.path } == ["/v1/auth/refresh", "/v1/auth/signout"])
+        #expect(StubProtocol.requests.map { $0.url!.path } == ["/v2/auth/refresh", "/v2/auth/signout"])
     }
 
     @Test func aResponseForTheOldSessionLeavesAnotherAccountsSessionAlone() async throws {

@@ -4,7 +4,7 @@ Three pieces, all in the project `walkie-talkie-relay`:
 
 - **Relay nodes** carry the audio (below).
 - **The account API** (`server/src/api.ts`) is the Cloud Run service `api`: Sign in with Apple, sessions, friends, invites, blocks, reports and account deletion. See "The account API and overandout.app".
-- **overandout.app** is on Firebase Hosting: invite links, the apple-app-site-association file, the home, privacy and support pages, and `/v1/*` forwarded to the API.
+- **overandout.app** is on Firebase Hosting: invite links, the apple-app-site-association file, the home, privacy and support pages, and `/v2/*` forwarded to the API.
 
 The relay runs on **relay nodes** (option E in the feasibility doc): small VMs in a managed instance group on Container-Optimized OS (COS), each running one container. Server data (devices and metrics timelines) lives in Firestore, so a node holds nothing that matters. Restarts, OS updates (a deploy or the monthly node replacement) and replacing a failed node are automatic.
 
@@ -98,7 +98,7 @@ After a replacement, `gcloud compute ssh` refuses the node's new host key; see E
 ## The account API and overandout.app
 
 ```
-iPhone, watch ──HTTPS──▶ overandout.app (Firebase Hosting) ──/v1/*──▶ Cloud Run "api" ──▶ Firestore
+iPhone, watch ──HTTPS──▶ overandout.app (Firebase Hosting) ──/v2/*──▶ Cloud Run "api" ──▶ Firestore
                           /i/<code>, apple-app-site-association,       scales to zero      users, friends, invites,
                           home, privacy, support (web/public)                             blocks, reports, sessions
 ```
@@ -137,7 +137,7 @@ The site's apple-app-site-association gets the team ID from `APPLE_TEAM_ID` (or 
 cd server && node tools/test-account.ts create
 ```
 
-Then invite the bot from the iPhone app, copy the link, and run `node tools/test-account.ts accept <link>`. `node tools/bot.ts send --account` rings its first friend; `listen --account` waits to be rung. Its token is saved in `server/data/bot-token.json` (gitignored), never printed.
+Then invite the bot from the iPhone app, copy the link, and run `node tools/test-account.ts accept <link>`. `node tools/bot.ts send` rings its first friend; `listen` waits to be rung. Its token is saved in `server/data/bot-token.json` (gitignored), never printed.
 
 ## Everyday commands
 
@@ -154,10 +154,10 @@ Use these flags on every command below:
 | Revision a node serves | `curl https://relay-1.overandout.app/healthz` |
 | Restart a node's container | `gcloud compute ssh relay-1 -- sudo systemctl restart relay` |
 | Recreate a node | `gcloud compute instance-groups managed recreate-instances relay --instances=relay-1` |
-| Relay state | `curl -H "Authorization: Bearer $SPIKE_TOKEN" https://relay-1.overandout.app/v1/status` |
+| Relay state | `curl -H "Authorization: Bearer $SPIKE_TOKEN" https://relay-1.overandout.app/admin/status` |
 | Rotate the relay token | new value in `config.sh` (`openssl rand -hex 24`), then `grep -o 'SPIKE_TOKEN="[^"]*"' deploy/gcp/config.sh \| cut -d'"' -f2 \| tr -d '\n' \| gcloud secrets versions add relay-token --data-file=-`, redeploy the relay, and destroy the old version (Secret Manager bills versions beyond 6) |
 | API logs | `gcloud logging read 'resource.labels.service_name="api"' --limit=50` |
-| API revision | `curl https://overandout.app/v1/health` |
+| API revision | `curl https://overandout.app/v2/health` |
 
 Logs also go to Cloud Logging, in Logs Explorer under the VM instance.
 
@@ -182,6 +182,6 @@ For the Beta, the one charge is the static IP, about $3.65 a month. One e2-micro
 ## Security notes
 
 - Apps connect with their account's session token. An account can only ring its friends; the relay refuses other rings (`talk-refused`).
-- The shared relay token (`SPIKE_TOKEN`) only reads the diagnostics endpoints (timelines, `/v1/status`, the legacy device list), which session tokens can't use. Relay clients without an account (old builds, `bot.ts` without `--account`) work only on a relay started with `SHARED_TOKEN_CLIENTS=1`, which nodes never set. To rotate it, see Everyday commands.
+- The shared relay token (`SPIKE_TOKEN`) only reads the operator's diagnostics (`/admin/status`, `/admin/metrics`), which session tokens can't use. Every relay client is an account with a session token. To rotate it, see Everyday commands.
 - Nodes read the relay token, the APNs key and the session public keys from Secret Manager at startup. Only the `relay-node` service account can read them. Only the `account-api` service account can read the session signing key and the Sign in with Apple key.
 - The container runs as an unprivileged user with every capability dropped except binding ports 80 and 443.

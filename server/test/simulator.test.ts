@@ -4,7 +4,7 @@ import { DryRunPusher, ringAlert } from "../src/apns.ts";
 import { SimulatorPusher, parseSimulatorToken, type Exec } from "../src/simulator.ts";
 
 const udid = "5DE92663-5226-41E6-9799-2C68705F50F7";
-const push = ringAlert({ conversationId: "c1", from: "alice", fromName: "Alice", burstId: "b1", pushSentAt: 1 }, 35_001);
+const push = ringAlert({ schemaVersion: 2, ringId: "r_1", conversationId: "c1", from: "alice", fromName: "Alice", burstId: "b1", pushSentAt: 1, expiresAt: 35_001 }, 35_001);
 
 test("simulator tokens name the device and the app", () => {
   assert.deepEqual(parseSimulatorToken(`simulator:${udid}:com.example.app.watchkitapp`), {

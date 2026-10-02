@@ -92,9 +92,11 @@ final class ConversationController: NSObject, ObservableObject {
     @Published var quitWhenBackgrounded = false
     #endif
     @Published private(set) var registrationStatus = "Not registered yet"
-    /// The APNs token (or a pseudo-token), registered under the account whenever there's a
+    /// The APNs token (nil without one), registered under the account whenever there's a
     /// session.
-    private var pushToken: (token: String, note: String?)?
+    private var pushToken: (token: String?, note: String?)?
+    /// Whether notifications are allowed: a watch rung by alerts can't be rung without them.
+    private var notifications: DeviceRegistration.Notifications = .unknown
     @Published private(set) var logLines: [String] = []
 
     var codecDescription: String { audio.codecDescription }
@@ -110,6 +112,8 @@ final class ConversationController: NSObject, ObservableObject {
         var joined = false
         /// The relay stream opened (hello-ack) at least once.
         var relayOpened = false
+        /// Receiving: the ring answered (v2), which the first join names.
+        var ringId: String?
         let id = UUID()
     }
 
@@ -143,7 +147,7 @@ final class ConversationController: NSObject, ObservableObject {
     private var speakerIdle = true
     /// Server clock minus watch clock. The relay's hello-ack gives a first estimate, but the
     /// watch's first request is slowed by its network starting up, so it's refined with a
-    /// few quick /v1/time samples once the network is up (smallest round trip wins).
+    /// few quick /v2/time samples once the network is up (smallest round trip wins).
     private var clockOffsetMs: Double = 0
     private var bestClockRoundTripMs = Double.infinity
     /// Uplink POSTs logged since the current burst started (only the first few are kept).
@@ -208,6 +212,16 @@ final class ConversationController: NSObject, ObservableObject {
             conversation?.timeline.mark("relayClosed", detail: String(reason.prefix(80)), once: false)
             Telemetry.shared.event("relayDropped", ["reason": String(reason.prefix(80)), "conversationId": current.conversationId ?? ""])
             reconnectAfterDrop()
+        }
+        relay.onRefused = { [unowned self] refusal in
+            log("Relay refused: \(refusal.code)")
+            conversation?.timeline.mark("relayRefused", detail: refusal.code, once: false)
+            if refusal.requiresUpgrade {
+                NotificationCenter.default.post(name: ServiceContract.upgradeRequiredNotification, object: nil)
+            } else if refusal.endsSession {
+                // The account API confirms it, and the watch signs out.
+                account.refresh()
+            }
         }
         relay.onTaskMetrics = { [unowned self] kind, metrics in
             guard let network = Self.describe(metrics) else { return }
@@ -304,6 +318,7 @@ final class ConversationController: NSObject, ObservableObject {
     private func registerForRings() {
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { granted, _ in
             DispatchQueue.main.async {
+                self.notifications = granted ? .authorized : .denied
                 if !granted { self.log("Notifications aren't allowed, so rings can't reach this watch") }
                 #if targetEnvironment(simulator)
                 let udid = ProcessInfo.processInfo.environment["SIMULATOR_UDID"] ?? ""
@@ -320,13 +335,14 @@ final class ConversationController: NSObject, ObservableObject {
     }
 
     /// No push entitlement (a Personal Team build) or no network. The watch can still start
-    /// conversations; it just can't be rung. A "poll:" token keeps it in the user list.
+    /// conversations; it can be rung only while its relay stream is open (a Talk screen).
     func didFailToRegisterForRemoteNotifications(_ error: Error) {
         log("Push registration failed: \(error.localizedDescription)")
-        registerDevice(pushToken: "poll:\(account.deviceId)", note: "can't be rung (no push)")
+        registerDevice(pushToken: nil, note: "rung only in the app (no push)")
     }
 
-    private func registerDevice(pushToken: String, note: String? = nil) {
+    /// `pushToken` nil: no push token, so only the open stream can ring it.
+    private func registerDevice(pushToken: String?, note: String? = nil) {
         self.pushToken = (pushToken, note)
         registerPushToken()
     }
@@ -338,9 +354,11 @@ final class ConversationController: NSObject, ObservableObject {
             registrationStatus = "Waiting to sign in"
             return
         }
+        let delivery: DeviceRegistration.Delivery = token.map { .alert(token: $0, environment: AppSettings.apnsEnvironment) } ?? .foreground
+        let registration = DeviceRegistration(delivery: delivery, notifications: notifications)
         Task { @MainActor in
             do {
-                try await account.registerDevice(pushToken: token, apnsEnvironment: AppSettings.apnsEnvironment)
+                try await account.registerDevice(registration)
                 registrationStatus = "Registered" + (note.map { ", \($0)" } ?? "")
             } catch {
                 registrationStatus = "Registration failed: \(error.localizedDescription)"
@@ -404,28 +422,25 @@ final class ConversationController: NSObject, ObservableObject {
         closePreconnect()
         if let friendId = preparingFor { prepare(for: friendId) }
         guard let ring else { return }
-        if byPerson { reportDecline(ring.conversationId) }
+        if byPerson { reportDecline(ring) }
         var timeline = Timeline(role: .receiver)
         if let sentAt = ring.pushSentAt { timeline.mark("pushSentAtServer", detail: String(Int(sentAt))) }
         timeline.mark("ringDeclined", detail: "in app")
         uploadTimeline(timeline, conversationId: ring.conversationId, clockOffsetMs: clockOffsetMs)
     }
 
-    /// POST /v1/rings/decline, so a rollover (the recipient's Roll Over to iPhone) doesn't ring
+    /// POST /v2/rings/decline, so a rollover (the recipient's Roll Over to iPhone) doesn't ring
     /// the iPhone. Fire and forget: if it doesn't arrive, the iPhone rings, as without it.
-    private func reportDecline(_ conversationId: String) {
+    private func reportDecline(_ ring: Ring) {
         guard let baseURL = settings.baseURL else { return }
         account.withToken { session in
             guard let session else { return }
-            var request = URLRequest(url: baseURL.appendingPathComponent("v1/rings/decline"), timeoutInterval: 20)
-            request.httpMethod = "POST"
-            request.setValue("Bearer \(session.token)", forHTTPHeaderField: "Authorization")
-            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.httpBody = try? JSONSerialization.data(withJSONObject: ["conversationId": conversationId])
-            URLSession.shared.dataTask(with: request) { _, response, error in
-                let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-                Telemetry.shared.event("declineReported", ["status": status, "failed": error != nil])
-            }.resume()
+            let api = RelayAPI(baseURL: baseURL, token: session.token)
+            Task {
+                var status = 200
+                do { try await api.decline(ring) } catch { status = (error as? AccountAPIError)?.status ?? 0 }
+                Telemetry.shared.event("declineReported", ["status": status, "failed": status == 0])
+            }
         }
     }
 
@@ -470,19 +485,19 @@ final class ConversationController: NSObject, ObservableObject {
         timeline.mark("answerTapped", at: openedAt, detail: via)
         timeline.mark("network", detail: networkDescription)
         conversation = Conversation(outgoing: false, conversationId: ring.conversationId,
-                                    peerId: ring.from, peerName: ring.fromName, timeline: timeline)
+                                    peerId: ring.from, peerName: ring.fromName, timeline: timeline, ringId: ring.ringId)
         phase = .connecting
         peerName = ring.fromName
         peerId = ring.from
         outcomes[ring.from] = nil
         rejoinedOnFreshStream = false
-        playPrefetched(ring.conversationId)
-        reportAnswer(ring.conversationId)
+        playPrefetched(ring)
+        reportAnswer(ring)
         if preconnect != nil, relay.isReady || relay.isConnecting {
-            joinOverPreconnectedStream(ring.conversationId)
+            joinOverPreconnectedStream(ring)
         } else {
             conversation?.timeline.mark("joinSent", detail: "with the stream")
-            connectRelay(join: ring.conversationId)
+            connectRelay(join: ring.conversationId, ring: ring.ringId)
         }
         preconnect = nil
         activateOwnAudio()
@@ -495,8 +510,8 @@ final class ConversationController: NSObject, ObservableObject {
     /// Prototype: plays what the notification service extension downloaded when the
     /// relay's prefetch push arrived, before the relay stream is even open. The join still
     /// replays everything; relay.onFrame skips the frames played here.
-    private func playPrefetched(_ conversationId: String) {
-        guard let prefetched = Prefetched.take(conversationId: conversationId, userId: account.session?.userId) else { return }
+    private func playPrefetched(_ ring: Ring) {
+        guard let prefetched = Prefetched.take(ring: ring, userId: account.session?.userId) else { return }
         let meta = prefetched.meta
         if let t = meta["receivedAt"] as? Double { conversation?.timeline.mark("nseReceived", at: t) }
         if let t = meta["fetchStartedAt"] as? Double { conversation?.timeline.mark("nseFetchStarted", at: t) }
@@ -526,12 +541,7 @@ final class ConversationController: NSObject, ObservableObject {
         guard let baseURL = settings.baseURL else { return }
         account.withToken { session in
             guard let session,
-                  var components = URLComponents(url: baseURL.appendingPathComponent("v1/rings/audio"), resolvingAgainstBaseURL: false) else { return }
-            components.queryItems = [URLQueryItem(name: "userId", value: session.userId),
-                                     URLQueryItem(name: "conversationId", value: ring.conversationId)]
-            guard let url = components.url else { return }
-            var request = URLRequest(url: url, timeoutInterval: 20)
-            request.setValue("Bearer \(session.token)", forHTTPHeaderField: "Authorization")
+                  let request = RelayAPI(baseURL: baseURL, token: session.token).audioRequest(for: ring) else { return }
             let startedAt = Clock.nowMs()
             URLSession.shared.dataTask(with: request) { data, response, error in
                 let status = (response as? HTTPURLResponse)?.statusCode ?? 0
@@ -540,7 +550,7 @@ final class ConversationController: NSObject, ObservableObject {
                 if let sentAt = ring.pushSentAt { meta["pushSentAt"] = sentAt }
                 if let error { meta["error"] = String(error.localizedDescription.prefix(80)) }
                 if status == 200, let data { meta["bytes"] = data.count }
-                Prefetched.save(conversationId: ring.conversationId, records: status == 200 ? data : nil, meta: meta)
+                Prefetched.save(ring: ring, records: status == 200 ? data : nil, meta: meta)
                 Telemetry.shared.event("prefetchInApp", ["status": status, "bytes": data?.count ?? 0])
             }.resume()
         }
@@ -551,26 +561,28 @@ final class ConversationController: NSObject, ObservableObject {
     /// that long after a tap that woke a frozen app (run 103: the stream took 14 s to open,
     /// and the rest of the message was gone by then). A separate request, so it doesn't
     /// wait behind the stream.
-    private func reportAnswer(_ conversationId: String) {
+    /// It names the ring (v2): an expired ring, or one answered on the iPhone first, is
+    /// refused, and the join that follows says so too.
+    private func reportAnswer(_ ring: Ring) {
         guard let baseURL = settings.baseURL else { return }
+        let conversationId = ring.conversationId
         account.withToken { [weak self] session in
             guard let session else { return }
-            var request = URLRequest(url: baseURL.appendingPathComponent("v1/rings/answer"), timeoutInterval: 20)
-            request.httpMethod = "POST"
-            request.setValue("Bearer \(session.token)", forHTTPHeaderField: "Authorization")
-            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.httpBody = try? JSONSerialization.data(withJSONObject: ["conversationId": conversationId])
+            let api = RelayAPI(baseURL: baseURL, token: session.token)
             let sentAt = Clock.nowMs()
-            URLSession.shared.dataTask(with: request) { _, response, error in
-                let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-                let detail = error.map { "error: \($0.localizedDescription.prefix(60))" } ?? "HTTP \(status)"
-                let doneAt = Clock.nowMs()
-                DispatchQueue.main.async {
-                    guard let self, self.conversation?.conversationId == conversationId else { return }
-                    self.conversation?.timeline.mark("answerReportSent", at: sentAt)
-                    self.conversation?.timeline.mark("answerReported", at: doneAt, detail: detail)
+            Task { @MainActor [weak self] in
+                var detail = "HTTP 200"
+                do {
+                    try await api.answer(ring)
+                } catch let error as AccountAPIError {
+                    detail = "HTTP \(error.status) \(error.code)"
+                } catch {
+                    detail = "error: \(error.localizedDescription.prefix(60))"
                 }
-            }.resume()
+                guard let self, self.conversation?.conversationId == conversationId else { return }
+                self.conversation?.timeline.mark("answerReportSent", at: sentAt)
+                self.conversation?.timeline.mark("answerReported", detail: detail)
+            }
         }
     }
 
@@ -593,9 +605,10 @@ final class ConversationController: NSObject, ObservableObject {
     /// Answer sends only "join" over the stream the in-app ring opened. It's queued until
     /// the stream's hello-ack if it's still opening. A stream that went stale without saying
     /// so is replaced by a fresh one that joins in its request.
-    private func joinOverPreconnectedStream(_ conversationId: String) {
+    private func joinOverPreconnectedStream(_ ring: Ring) {
+        let conversationId = ring.conversationId
         conversation?.timeline.mark("joinSent", detail: relay.isReady ? "over the open stream" : "queued on the opening stream")
-        relay.send(["type": "join", "conversationId": conversationId])
+        relay.send(["type": "join", "conversationId": conversationId, "ringId": ring.ringId])
         if relay.isReady { relayReady(clockOffsetMs: relay.clockOffsetMs) }
         DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in
             guard let self, conversation?.conversationId == conversationId, conversation?.joined == false else { return }
@@ -612,7 +625,7 @@ final class ConversationController: NSObject, ObservableObject {
         rejoinedOnFreshStream = true
         log("Rejoining on a fresh stream (\(why))")
         conversation?.timeline.mark("joinSent", detail: "fresh stream", once: false)
-        connectRelay(join: conversationId)
+        connectRelay(join: conversationId, ring: conversation?.ringId)
     }
 
     /// The stream dropped mid-conversation (run 106: the network went away for 20 s). Try for
@@ -700,7 +713,8 @@ final class ConversationController: NSObject, ObservableObject {
 
     // MARK: Relay
 
-    private func connectRelay(join: String? = nil, resume: RelayResume? = nil) {
+    /// `ring`: the ring a first join answers. A rejoin after a drop names none.
+    private func connectRelay(join: String? = nil, ring: String? = nil, resume: RelayResume? = nil) {
         guard let baseURL = settings.baseURL else {
             log("The server isn't configured in this build")
             return finish(outcome: .couldNotConnect)
@@ -714,7 +728,7 @@ final class ConversationController: NSObject, ObservableObject {
                 // The app shows its sign-in prompt.
                 return finish()
             }
-            relay.connect(baseURL: baseURL, token: session.token, userId: session.userId, join: join, resume: resume)
+            relay.connect(baseURL: baseURL, token: session.token, userId: session.userId, join: join, ring: ring, resume: resume)
         }
     }
 
@@ -842,17 +856,29 @@ final class ConversationController: NSObject, ObservableObject {
             WKInterfaceDevice.current().play(.failure)
             if let id = conversation?.peerId { outcomes[id] = OutcomeNote(outcome: .didNotAnswer, at: Date()) }
             conversation?.timeline.mark("ringTimedOut", detail: "\(message.droppedBursts ?? 0) bursts dropped")
+        case "session-ended":
+            // Signed out on the iPhone, or the account was deleted: the API confirms it.
+            finish()
+            account.refresh()
         case "error":
-            log("Relay error: \(message.message ?? "unknown")")
-            if message.message == "unknown conversation", conversation?.outgoing == false, conversation?.joined == false {
-                // Answered after the relay gave up on the ring: the message is gone.
+            log("Relay error: \(message.code ?? message.message ?? "unknown")")
+            let receiving = conversation?.outgoing == false && conversation?.joined == false
+            switch message.code {
+            case "ring-expired" where receiving, "unknown-conversation" where receiving:
+                // Answered after the relay gave up on the ring (or a newer one replaced it): the
+                // message is gone, and nothing downloaded for it plays.
+                audio.discardPlayback()
                 WKInterfaceDevice.current().play(.failure)
                 finish(outcome: .missed)
-            } else if message.message == "unknown conversation", reconnecting != nil {
+            case "ring-answered-elsewhere" where receiving:
+                finish(outcome: .continuedOnPhone)
+            case "unknown-conversation" where reconnecting != nil:
                 // Back after a drop, but the relay has ended the conversation meanwhile.
                 reconnecting = nil
                 WKInterfaceDevice.current().play(.failure)
                 finish(outcome: .couldNotConnect)
+            default:
+                break
             }
         default:
             break
@@ -868,7 +894,7 @@ final class ConversationController: NSObject, ObservableObject {
         burstId = id
         sentFirstFrame = false
         postsThisBurst = 0
-        relay.send(["type": "talk-start", "to": current.peerId, "burstId": id])
+        relay.send(["type": "talk-start", "to": current.peerId, "burstId": id, "codec": audio.codecName])
         conversation?.timeline.mark("captureStarted", once: false)
         audio.beginCapture()
         // Signal "go ahead" only once the mic is live: anything said before this isn't captured.

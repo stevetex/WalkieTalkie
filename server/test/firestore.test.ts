@@ -9,11 +9,9 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { Firestore } from "../src/firestore.ts";
-import { FirestoreDeviceStore, FirestoreMetricsStore } from "../src/store.ts";
-import { startServer } from "../src/main.ts";
-import { DryRunPusher } from "../src/apns.ts";
-import { SpikeClient } from "../tools/client.ts";
+import { FirestoreMetricsStore } from "../src/store.ts";
 import { accountsSuite } from "./accounts-suite.ts";
+import { friends, pcm, withServer } from "./harness.ts";
 
 const emulatorHost = process.env.FIRESTORE_EMULATOR_HOST;
 const skip = emulatorHost ? false : "FIRESTORE_EMULATOR_HOST not set";
@@ -24,18 +22,6 @@ function db(): Firestore {
 }
 
 accountsSuite("firestore", () => db(), skip);
-
-test("devices round-trip through Firestore", { skip }, async () => {
-  const devices = new FirestoreDeviceStore(db());
-  assert.equal(await devices.get("nobody"), undefined);
-  const device = { userId: "watch-0d34", name: "Steve's Watch", pushToken: "ab".repeat(32), apnsEnvironment: "sandbox" as const, updatedAt: 1_790_000_000_123 };
-  await devices.upsert(device);
-  await devices.upsert({ userId: "bot", name: "Test Bot", pushToken: "local:bot", apnsEnvironment: "production", updatedAt: 2 });
-  assert.deepEqual(await devices.get("watch-0d34"), device);
-  await devices.upsert({ ...device, name: "Renamed" });
-  assert.equal((await devices.get("watch-0d34"))?.name, "Renamed");
-  assert.deepEqual((await devices.list()).map((d) => d.userId).sort(), ["bot", "watch-0d34"]);
-});
 
 test("values keep their types", { skip }, async () => {
   const store = db();
@@ -96,38 +82,26 @@ test("server events are buffered and written as one document per conversation", 
 });
 
 test("a relay on Firestore rings, relays and records a conversation", { skip }, async () => {
-  const firestore = db();
-  const metrics = new FirestoreMetricsStore(firestore, { quietMs: 60_000 });
-  const s = await startServer({
-    port: 0,
-    dataDir: null,
-    devices: new FirestoreDeviceStore(firestore),
-    metrics,
-    token: "secret",
-    sharedTokenClients: true,
-    pusher: new DryRunPusher(),
-  });
-  try {
-    const client = (userId: string) => new SpikeClient({ server: `http://localhost:${s.port}`, userId, token: "secret" });
-    const alice = client("alice");
-    const bob = client("bob");
-    await alice.register("Alice");
-    await bob.register("Bob");
-    await alice.connect();
-    await bob.connect();
-    const { conversationId, pushed } = await alice.talk("bob", Buffer.alloc(640 * 5), { realtime: false });
-    assert.equal(pushed, true);
-    const ring = await bob.waitFor("ring");
+  const metrics = new FirestoreMetricsStore(db(), { quietMs: 60_000 });
+  let conversationId = "";
+  await withServer(async (h) => {
+    // Bob's watch is rung by an alert (the dry-run pusher), then answers.
+    const [alice, bob] = await friends(h, "Alice", ["Bob", { ringing: { apns: "alert", token: "abcdef0123456789" } }]);
+    const a = alice.client();
+    await a.connect();
+    const talk = await a.talk(bob.id, pcm(5), { realtime: false });
+    conversationId = talk.conversationId;
+    assert.equal(talk.pushed, true);
+    const ring = h.pusher.sent[0].payload as { fromName: string; ringId: string };
     assert.equal(ring.fromName, "Alice");
-    bob.send({ type: "join", conversationId });
-    await bob.waitFor("burst-end");
-    alice.close();
-    bob.close();
-    await s.close();
-    // close() flushed the buffered server events.
-    const names = (await metrics.timeline(conversationId)).map((e) => e.name);
-    for (const name of ["talkStart", "pushSent", "pushAccepted", "floorGrantSent", "receiverJoined"]) assert.ok(names.includes(name), name);
-  } finally {
-    await s.close().catch(() => {});
-  }
+    const b = bob.client();
+    await b.connect();
+    b.send({ type: "join", conversationId, ringId: ring.ringId });
+    await b.waitFor("burst-end");
+    a.close();
+    b.close();
+  }, { metrics });
+  // Closing the server flushed the buffered server events.
+  const names = (await metrics.timeline(conversationId)).map((e) => e.name);
+  for (const name of ["talkStart", "pushSent", "pushAccepted", "floorGrantSent", "receiverJoined"]) assert.ok(names.includes(name), name);
 });

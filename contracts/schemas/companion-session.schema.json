@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "companion-session.schema.json",
+  "title": "POST /v2/auth/device (request)",
+  "type": "object",
+  "required": ["deviceId", "clientKind", "requestId"],
+  "properties": {
+    "deviceId": { "$ref": "common.schema.json#/$defs/id" },
+    "clientKind": { "enum": ["watchos", "wearos"] },
+    "requestId": { "$ref": "common.schema.json#/$defs/id" }
+  }
+}

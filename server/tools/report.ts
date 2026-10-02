@@ -4,7 +4,8 @@
 //   node tools/report.ts <id>         a specific conversation
 //   node tools/report.ts --all        every conversation, plus medians
 //
-// Server and token come from SPIKE_SERVER (default http://localhost:8080) and SPIKE_TOKEN.
+// The relay and its diagnostics token come from SPIKE_SERVER (default http://localhost:8080)
+// and SPIKE_TOKEN.
 // A relay node keeps a conversation's events (its own and the devices' uploads) for about 10
 // minutes after it ends; older ones are in Cloud Logging: node tools/beta.ts conversation <id>.
 
@@ -22,7 +23,7 @@ async function get(path: string): Promise<any> {
 }
 
 const arg = process.argv[2];
-const list = ((await get("/v1/metrics")) as Array<{ conversationId: string; startedAt: number | null }>).sort(
+const list = ((await get("/admin/metrics")) as Array<{ conversationId: string; startedAt: number | null }>).sort(
   (a, b) => (a.startedAt ?? 0) - (b.startedAt ?? 0),
 );
 if (list.length === 0) {
@@ -33,7 +34,7 @@ if (list.length === 0) {
 const ids = arg === "--all" ? list.map((c) => c.conversationId) : [arg ?? list[list.length - 1].conversationId];
 const byLabel = new Map<string, number[]>();
 for (const id of ids) {
-  const { timeline, attempts } = (await get(`/v1/metrics/${id}`)) as { timeline: TimelineEntry[]; attempts: RingAttempt[] };
+  const { timeline, attempts } = (await get(`/admin/metrics/${id}`)) as { timeline: TimelineEntry[]; attempts: RingAttempt[] };
   console.log(formatTimeline(id, timeline));
   for (const attempt of attempts) {
     for (const i of attempt.intervals) byLabel.set(i.label, [...(byLabel.get(i.label) ?? []), i.ms]);

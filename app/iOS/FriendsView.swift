@@ -13,6 +13,7 @@ struct FriendsView: View {
     var body: some View {
         List {
             Group {
+                if model.upgradeRequired { updateRequired }
                 walkieTalkieStatus
                 if model.friends.isEmpty {
                     Section {
@@ -84,6 +85,21 @@ struct FriendsView: View {
         }
     }
 
+    /// The service no longer supports this build (client-upgrade-required, or GET /v2/config's
+    /// minimum): friends can't be rung or heard until it's updated. Signing in stays.
+    private var updateRequired: some View {
+        Section {
+            VStack(alignment: .leading, spacing: 10) {
+                Label("Update Over&Out", systemImage: "arrow.down.app")
+                    .font(.headline)
+                Text(model.config.upgradeMessage ?? "This version can't talk to friends any more. Update Over&Out from TestFlight or the App Store.")
+                    .font(.callout)
+                    .foregroundStyle(Brand.secondary)
+            }
+            .padding(.vertical, 6)
+        }
+    }
+
     /// Walkie-talkie off though not turned off in Settings (the system's Leave button, run 54),
     /// or on without permission to say when that happens.
     @ViewBuilder
@@ -93,7 +109,7 @@ struct FriendsView: View {
                 VStack(alignment: .leading, spacing: 10) {
                     Label("Walkie-talkie is off", systemImage: "iphone.slash")
                         .font(.headline)
-                    Text(model.platforms.contains(.watch)
+                    Text(model.formFactors.contains(.watch)
                          ? "Friends' messages ring your Apple Watch instead of playing on this iPhone."
                          : "Friends' messages won't play on this iPhone until you turn it on.")
                         .font(.callout)

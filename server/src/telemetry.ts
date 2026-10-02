@@ -10,7 +10,7 @@
 //                     device sent them (once both have uploaded their per-burst levels)
 //   oao.timeline      a device's whole timeline, only for accounts in FULL_TIMELINE_USERS
 //   oao.apns          a push APNs refused, or that went out only on a retry
-//   oao.event         a device event outside conversations (the API's POST /v1/events)
+//   oao.event         a device event outside conversations (the API's POST /v2/events)
 //   oao.api           an API request that ended in a 4xx or 5xx
 //   oao.registration  a push registration
 //   oao.feedback      a problem report from the app (its note stays in Firestore)
@@ -22,6 +22,7 @@ import { hostname } from "node:os";
 import { join } from "node:path";
 import type { MetricEvent, MetricsUpload } from "./protocol.ts";
 import type { ConversationSummary, MetricsStore, TimelineEntry } from "./store.ts";
+import { isClientKind, platformLabel } from "./contract.ts";
 
 export interface TelemetryEntry {
   kind: string;
@@ -166,9 +167,16 @@ export type ConversationOutcome = "answered" | "missed" | "refused" | "unavailab
 
 export interface Ring {
   at: number;
+  // "watch" or "iphone" as before Phase 0 (Android kinds by their own names).
   platform: string;
   devices: number;
-  results: Array<{ kind: string; ok: boolean; status?: number; reason?: string; ms?: number; retried?: boolean }>;
+  // Phase 0 relays: the ring's ID (a rollover or fallback keeps it), the device's client kind,
+  // and the delivery's provider and mode.
+  ringId?: string;
+  clientKind?: string;
+  provider?: string;
+  mode?: string;
+  results: Array<{ kind: string; ok: boolean; status?: number; reason?: string; ms?: number; retried?: boolean; simulated?: boolean }>;
 }
 
 export interface ConversationRecord extends TelemetryEntry {
@@ -183,6 +191,11 @@ export interface ConversationRecord extends TelemetryEntry {
   testBot?: boolean;
   // The first ring's device kind, for log-based metric labels (which can't index arrays).
   ringPlatform?: string;
+  // Phase 0: the first ring's client kind and provider, and whether any ring was only simulated
+  // (the FCM stub, or a dry run), so it's never counted as a delivered push.
+  ringClientKind?: string;
+  ringProvider?: string;
+  simulatedDelivery?: boolean;
   rings: Ring[];
   bursts: number;
   // Usage (the spec's usage analytics): bursts and talk time from each side; the callee's are replies.
@@ -203,14 +216,11 @@ export function conversationRecord(conversationId: string, events: TimelineEntry
   const [from, to] = talk?.detail?.split(" -> ") ?? [];
   const rings: Ring[] = [];
   for (const e of sorted) {
-    if (e.name === "pushSent") {
-      const [platform, count] = (e.detail ?? "").split(", ");
-      rings.push({ at: e.t, platform: platform || "unknown", devices: count ? parseInt(count, 10) || 1 : 1, results: [] });
-    } else if ((e.name === "pushAccepted" || e.name === "pushFailed") && rings.length) {
+    if (e.name === "pushSent") rings.push({ at: e.t, ...parsePushSent(e.detail), results: [] }); else if ((e.name === "pushAccepted" || e.name === "pushFailed") && rings.length) {
       rings.at(-1)!.results.push({ ok: e.name === "pushAccepted", ...parsePushDetail(e.detail) });
     }
   }
-  const delivered = rings.some((r) => r.results.some((x) => x.ok));
+  const delivered = rings.some((r) => r.results.some((x) => x.ok && !x.simulated));
   let outcome: ConversationOutcome;
   if (has("ringRefused") || has("conversationRevoked")) outcome = "refused";
   else if (has("receiverJoined") && rings.length) outcome = "answered";
@@ -245,6 +255,9 @@ export function conversationRecord(conversationId: string, events: TimelineEntry
     moved: has("movedDevice"),
     ...(has("testBotAnswered") ? { testBot: true } : {}),
     ...(rings.length ? { ringPlatform: rings[0].platform } : {}),
+    ...(rings[0]?.clientKind ? { ringClientKind: rings[0].clientKind } : {}),
+    ...(rings[0]?.provider ? { ringProvider: rings[0].provider } : {}),
+    ...(rings.some((r) => r.results.some((x) => x.simulated)) ? { simulatedDelivery: true } : {}),
     rings,
     bursts: sorted.filter((e) => e.name === "talkStart").length,
     callerBursts: talked.caller.bursts,
@@ -256,9 +269,22 @@ export function conversationRecord(conversationId: string, events: TimelineEntry
   };
 }
 
+// A ring's pushSent detail: "watch" or "watch, 2 devices" before Phase 0; since then one device,
+// "watch; r_…; watchos apns/alert".
+export function parsePushSent(detail: string | undefined): Omit<Ring, "at" | "results"> {
+  const [first = "", ringId, target] = (detail ?? "").split(";").map((p) => p.trim());
+  const [platform, count] = first.split(", ");
+  const ring: Omit<Ring, "at" | "results"> = { platform: platform || "unknown", devices: count ? parseInt(count, 10) || 1 : 1 };
+  if (ringId?.startsWith("r_")) ring.ringId = ringId;
+  const match = target?.match(/^(\w+) (\w+)\/(\w+)$/);
+  if (match) Object.assign(ring, { clientKind: match[1], provider: match[2], mode: match[3] });
+  return ring;
+}
+
 // "alert: status 410 Unregistered in 52 ms", "pushtotalk: status 200 retried after ECONNRESET
-// in 80 ms (dry run)", "in-app ring", "device lookup: …".
-export function parsePushDetail(detail: string | undefined): { kind: string; status?: number; reason?: string; ms?: number; retried?: boolean } {
+// in 80 ms (dry run)", "fcm-notification: status 200 in 0 ms (simulated)", "in-app ring",
+// "device lookup: …".
+export function parsePushDetail(detail: string | undefined): { kind: string; status?: number; reason?: string; ms?: number; retried?: boolean; simulated?: boolean } {
   const match = detail?.match(/^([\w-]+): status (\d+)(?: (.*?))? in (\d+) ms/);
   if (!match) return { kind: detail?.split(":")[0] || "unknown" };
   const reason = match[3] || undefined;
@@ -268,6 +294,7 @@ export function parsePushDetail(detail: string | undefined): { kind: string; sta
     ...(reason ? { reason } : {}),
     ms: Number(match[4]),
     ...(reason?.startsWith("retried after") ? { retried: true } : {}),
+    ...(detail?.endsWith("(simulated)") ? { simulated: true } : {}),
   };
 }
 
@@ -275,6 +302,8 @@ export function parsePushDetail(detail: string | undefined): { kind: string; sta
 
 export interface DeviceInfo {
   platform?: string;
+  // v2 clients: ios, watchos, android or wearos.
+  clientKind?: string;
   model?: string;
   os?: string;
   build?: string;
@@ -287,6 +316,8 @@ export interface DeviceSummary extends TelemetryEntry {
   deviceId?: string;
   role: string;
   platform: string;
+  // Phase 0 clients say their kind (ios, watchos, android, wearos).
+  clientKind?: string;
   outcome: string;
   via?: string;
   route?: string;
@@ -340,7 +371,7 @@ export function deviceSummary(upload: MetricsUpload & { device?: DeviceInfo; dev
   const events = (upload.events as MetricEvent[]).map((e) => ({ ...e, t: e.t + (upload.clockOffsetMs || 0) })).sort((a, b) => a.t - b.t);
   const at = (name: string) => events.find((e) => e.name === name);
   const t = (name: string) => at(name)?.t;
-  const platform = upload.device?.platform ?? inferPlatform(events);
+  const platform = upload.device?.platform ?? (isClientKind(upload.device?.clientKind) ? platformLabel(upload.device.clientKind) : inferPlatform(events));
   const answer = at("answerTapped");
   const via = answer?.detail;
   // The relay's push time: from the ring's payload (on the device's timeline) or the relay's events.
@@ -399,6 +430,7 @@ export function deviceSummary(upload: MetricsUpload & { device?: DeviceInfo; dev
     ...(upload.deviceId ? { deviceId: upload.deviceId } : {}),
     role: upload.role,
     platform,
+    ...(upload.device?.clientKind ? { clientKind: upload.device.clientKind } : {}),
     ...(upload.device?.model ? { model: upload.device.model } : {}),
     ...(upload.device?.os ? { os: upload.device.os } : {}),
     ...(upload.device?.build ? { build: upload.device.build } : {}),
@@ -458,7 +490,7 @@ export interface TelemetryStoreOptions {
   recentMs?: number;
   // Accounts whose devices' whole timelines are logged too (FULL_TIMELINE_USERS).
   fullTimelineUsers?: Iterable<string>;
-  // Also keeps everything here (local runs: the JSON store, for GET /v1/metrics).
+  // Also keeps everything here (local runs: the JSON store, for GET /admin/metrics).
   inner?: MetricsStore;
   node?: string;
   now?: () => number;
@@ -471,7 +503,7 @@ export class TelemetryMetricsStore implements MetricsStore {
   private fullUsers: Set<string>;
   private buffered = new Map<string, { events: TimelineEntry[]; timer: NodeJS.Timeout }>();
   private recent = new Map<string, { events: TimelineEntry[]; at: number }>();
-  // Devices' uploaded events, kept as long as `recent` for GET /v1/metrics/<id> (tools/report.ts
+  // Devices' uploaded events, kept as long as `recent` for GET /admin/metrics/<id> (tools/report.ts
   // and the bot during a measurement run), never written anywhere.
   private uploaded = new Map<string, { events: TimelineEntry[]; at: number }>();
   // Each device's levels by conversation and user, until the other side's arrive (oao.levels).
@@ -497,7 +529,10 @@ export class TelemetryMetricsStore implements MetricsStore {
     if (name === "pushFailed" || name === "prefetchPushFailed" || (name === "pushAccepted" && detail?.includes("retried after"))) {
       const { kind: pushType, ...push } = parsePushDetail(detail);
       if (pushType === "in-app ring" || pushType === "local ring") return;
-      this.sink.write({ kind: "oao.apns", conversationId, event: name, pushType, node: this.opts.node, ...push, ...(push.status === undefined && detail ? { detail } : {}) }, name === "pushAccepted" ? "INFO" : "WARNING");
+      // APNs' entries keep their kind (alerts count them); another provider's, or a stand-in's,
+      // are oao.push, so they're never mistaken for APNs.
+      const kind = pushType.startsWith("fcm") || push.simulated ? "oao.push" : "oao.apns";
+      this.sink.write({ kind, conversationId, event: name, pushType, node: this.opts.node, ...(kind === "oao.push" ? { provider: pushType.split("-")[0] } : {}), ...push, ...(push.status === undefined && detail ? { detail } : {}) }, name === "pushAccepted" ? "INFO" : "WARNING");
     }
   }
 
@@ -575,7 +610,7 @@ export class TelemetryMetricsStore implements MetricsStore {
   }
 }
 
-// ---- Device events (POST /v1/events) ----
+// ---- Device events (POST /v2/events) ----
 
 const EVENT_NAME = /^[A-Za-z][A-Za-z0-9]{0,39}$/;
 const MAX_EVENTS = 50;

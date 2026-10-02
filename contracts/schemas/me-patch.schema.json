@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "me-patch.schema.json",
+  "title": "PATCH /v2/me (request)",
+  "type": "object",
+  "minProperties": 1,
+  "properties": {
+    "name": { "type": "string", "minLength": 1, "maxLength": 200 },
+    "avatar": { "oneOf": [{ "$ref": "common.schema.json#/$defs/avatar" }, { "type": "null" }] },
+    "preferredFormFactor": { "oneOf": [{ "$ref": "common.schema.json#/$defs/formFactor" }, { "type": "null" }] },
+    "rollOver": { "type": "boolean" }
+  },
+  "additionalProperties": false
+}

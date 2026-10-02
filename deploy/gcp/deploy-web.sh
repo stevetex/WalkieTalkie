@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # overandout.app on Firebase Hosting: the apple-app-site-association file, the invite
 # fallback page, and the home, privacy and support pages from web/public, with
-# overandout.app/v1/* going to the account API on Cloud Run.
+# overandout.app/v2/* going to the account API on Cloud Run.
 #
 #   deploy/gcp/deploy-web.sh setup    once: adds Firebase to the project, creates the site
 #                                     and the custom domain, and prints GoDaddy's DNS records

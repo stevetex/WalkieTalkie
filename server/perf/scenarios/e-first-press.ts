@@ -2,7 +2,7 @@
 // conversation, with no connection yet (the connection opens after the press) or with one the
 // Talk screen already opened. Over the WebSocket and the watch's HTTP stream.
 
-import { ONE_WAY_MS, bot, ids, opus, proxy, register, startRelay, talk, type Context } from "../harness.ts";
+import { ONE_WAY_MS, bot, opus, pair, proxy, startRelay, talk, type Context } from "../harness.ts";
 
 export const name = "E. First press";
 
@@ -27,16 +27,15 @@ export async function run(ctx: Context): Promise<void> {
 }
 
 async function press(ctx: Context, relay: Awaited<ReturnType<typeof startRelay>>, transport: "ws" | "http", warm: boolean, delayMs: number, key: string): Promise<number> {
-  const names = ids("e");
-  await register(relay, names.a, `local:${names.a}`);
-  await register(relay, names.b, `poll:${names.b}`);
+  // A friend whose watch isn't connected: the press rings it.
+  const people = await pair(relay, "e", { a: transport, b: "http" });
   const link = await proxy(relay, delayMs);
-  const alice = bot(link.url, names.a, transport);
+  const alice = bot(link.url, people.a, transport);
   try {
     if (warm) await alice.connect();
     const pressedAt = performance.now();
     if (!warm) await alice.connect();
-    const sent = await talk(alice, names.b, opus(5), false, pressedAt);
+    const sent = await talk(alice, people.b.id, opus(5), false, pressedAt);
     ctx.results.fail(`${key}.integrity_failures`, sent.pushed ? [] : ["the first press didn't ring"]);
     return sent.grantedAt - pressedAt;
   } finally {

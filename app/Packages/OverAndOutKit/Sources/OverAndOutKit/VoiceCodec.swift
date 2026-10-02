@@ -16,6 +16,14 @@ public enum VoiceFrame {
     public enum Codec: UInt8, Sendable {
         case opus16k = 1
         case pcm16le16k = 2
+
+        /// The codec's name in the contract (talk-start's codec, the admission headers).
+        public var name: String {
+            switch self {
+            case .opus16k: "opus16k"
+            case .pcm16le16k: "pcm16le16k"
+            }
+        }
     }
 
     public static let pcmFormat = AVAudioFormat(

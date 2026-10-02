@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "watch-link.schema.json",
+  "title": "iPhone ⇄ watch WatchConnectivity payloads (session data shown as JSON)",
+  "type": "object",
+  "properties": {
+    "schemaVersion": { "type": "integer", "minimum": 2 },
+    "request": { "const": "session" },
+    "deviceId": { "$ref": "common.schema.json#/$defs/id" },
+    "requestId": { "$ref": "common.schema.json#/$defs/id" },
+    "needsSession": { "type": "boolean" },
+    "signedIn": { "type": "boolean" },
+    "signedOut": { "type": "boolean" },
+    "session": {
+      "type": "object",
+      "required": ["token", "expiresAt", "userId", "name", "deviceId"],
+      "properties": {
+        "token": { "type": "string" },
+        "expiresAt": { "$ref": "common.schema.json#/$defs/millis" },
+        "userId": { "$ref": "common.schema.json#/$defs/userId" },
+        "name": { "type": "string" },
+        "deviceId": { "$ref": "common.schema.json#/$defs/id" },
+        "clientKind": { "$ref": "common.schema.json#/$defs/openClientKind" },
+        "parentDeviceId": { "$ref": "common.schema.json#/$defs/id" }
+      }
+    }
+  }
+}

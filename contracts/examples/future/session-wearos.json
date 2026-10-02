@@ -1,0 +1,8 @@
+{
+  "token": "eyJhbGciOiJFZERTQSJ9.e30.c2ln",
+  "expiresAt": 1793318400000,
+  "deviceId": "wear-1",
+  "clientKind": "wearos",
+  "parentDeviceId": "pixel-1",
+  "generation": 4
+}
