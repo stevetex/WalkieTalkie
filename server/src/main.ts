@@ -15,6 +15,13 @@
 //                     service account (local runs against the real database)
 //   SPIKE_TOKEN       the operator's diagnostics token, for /admin/status and /admin/metrics
 //                     (tools/report.ts, beta.ts). Unset = no auth for those (local only)
+//   OPS_STATS_TOKEN   the Ops dashboard's token: it opens /admin/stats (totals and anonymous rows)
+//                     and nothing else, and SPIKE_TOKEN doesn't open that. OPS_STATS_TOKEN_SECRET
+//                     names a Secret Manager secret instead. Unset: /admin/stats is open only on
+//                     a relay without SPIKE_TOKEN (local)
+//   CANARY_USER_ID    the Canary account (rolling-main.ts): /admin/stats leaves out its connections
+//                     and conversations, as it does the Test Bot's connections
+//   NODE_NAME         this node's name in /admin/stats (default: the host name)
 //   SESSION_PUBLIC_KEYS  JSON {kid: PEM} of Ed25519 keys that sign session tokens (see
 //                     session.ts). SESSION_PUBLIC_KEYS_SECRET names a Secret Manager secret instead
 //   SERVE_API         1 = also serve the account API (api.ts) on this port, for local runs.
@@ -80,6 +87,12 @@ export interface ServerOptions {
   metrics?: MetricsStore;
   // The operator's diagnostics token (/admin/…); null = no auth for those (local only).
   adminToken: string | null;
+  // The Ops dashboard's token, for /admin/stats only.
+  opsStatsToken?: string | null;
+  // Left out of /admin/stats (RelayOptions).
+  canaryUserId?: string;
+  // This node in /admin/stats.
+  node?: string;
   // Verifies account session tokens.
   sessions: SessionVerifier;
   // Friend checks for rings, and the stored sessions the relay checks.
@@ -159,7 +172,10 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
     ...(options.authTtlMs !== undefined ? { authTtlMs: options.authTtlMs } : {}),
     ...(options.maxBurstMs ? { maxBurstMs: options.maxBurstMs } : {}),
     ...(options.maxBufferedBytes ? { maxBufferedBytes: options.maxBufferedBytes } : {}),
+    ...(options.testBot ? { testBotUserId: options.testBot.userId } : {}),
+    ...(options.canaryUserId ? { canaryUserId: options.canaryUserId } : {}),
   });
+  const startedAt = Date.now();
   const testBot = options.testBot ? new TestBot(relay, metrics, options.testBot) : null;
   testBot?.start();
   const minimumBuilds = options.minimumBuilds ?? {};
@@ -348,6 +364,16 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
     send(res, 200, { ok: true });
   };
 
+  // The Ops dashboard's live view: its own token only (never the diagnostics token, which also
+  // opens /admin/status and its account IDs, and never a session token).
+  const opsStats = (req: IncomingMessage, res: ServerResponse): void => {
+    if (req.method !== "GET") return send(res, 404, { error: "not-found", message: `no route for ${req.method} /admin/stats` });
+    const token = options.opsStatsToken ?? null;
+    if (token ? bearer(req) !== token : options.adminToken !== null) return send(res, 401, { error: "unauthorized", message: "unauthorized" });
+    res.setHeader("cache-control", "no-store");
+    send(res, 200, { node: options.node ?? hostname(), revision: process.env.REVISION ?? "local", startedAt, now: Date.now(), ...relay.stats() });
+  };
+
   // The operator's diagnostics, with the diagnostics token (never a session token).
   const admin = async (req: IncomingMessage, res: ServerResponse, url: URL): Promise<void> => {
     if (options.adminToken && bearer(req) !== options.adminToken) return send(res, 401, { error: "unauthorized", message: "unauthorized" });
@@ -366,6 +392,7 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
     try {
       if (req.method === "GET" && url.pathname === "/healthz") return send(res, 200, { ok: true, revision: process.env.REVISION ?? "local" });
       if (options.api && (await options.api(req, res, url))) return;
+      if (url.pathname === "/admin/stats") return opsStats(req, res);
       if (url.pathname.startsWith("/admin/")) return await admin(req, res, url);
       const path = url.pathname.match(/^\/v2(\/.*)$/)?.[1];
       if (!path) return send(res, 404, { error: "not-found", message: `no route for ${req.method} ${url.pathname}` });
@@ -537,6 +564,7 @@ if (import.meta.main) {
   const simulatorPush = env.SIMULATOR_PUSH === "1";
   const pusher = simulatorPush ? new SimulatorPusher(apnsPusher) : apnsPusher;
   const adminToken = env.SPIKE_TOKEN || null;
+  const opsStatsToken = env.OPS_STATS_TOKEN || null;
   const host = env.HOST || undefined;
   const port = Number(env.PORT ?? 8080);
   const prefetchPushAfterMs = Number(env.PREFETCH_PUSH_MS ?? 0);
@@ -553,7 +581,18 @@ if (import.meta.main) {
   const testBot = env.TEST_BOT_USER_ID ? { userId: env.TEST_BOT_USER_ID, greeting: loadGreeting() } : undefined;
   const ringTimeoutMs = env.RING_TIMEOUT_MS ? Number(env.RING_TIMEOUT_MS) : undefined;
   if (ringTimeoutMs !== undefined && (onGoogleCloud || !(ringTimeoutMs > 0))) throw new Error("RING_TIMEOUT_MS is a positive number, for local runs only");
-  const relayOptions = { pusher, deliveries, prefetchPushAfterMs, testBot, minimumBuilds, adminToken, ...(ringTimeoutMs ? { ringTimeoutMs } : {}) };
+  const relayOptions = {
+    pusher,
+    deliveries,
+    prefetchPushAfterMs,
+    testBot,
+    minimumBuilds,
+    adminToken,
+    opsStatsToken,
+    node: env.NODE_NAME || hostname(),
+    ...(env.CANARY_USER_ID ? { canaryUserId: env.CANARY_USER_ID } : {}),
+    ...(ringTimeoutMs ? { ringTimeoutMs } : {}),
+  };
   if (env.STORE === "firestore") {
     const db = new Firestore({ projectId, emulatorHost, accessToken });
     const telemetry: LogSink = onGoogleCloud
@@ -583,6 +622,7 @@ if (import.meta.main) {
   if (testBot) console.log(`[server] the Test Bot ${testBot.userId} answers rings here (${testBot.greeting.length} greeting frames)`);
   if (simulatorPush) console.warn("[server] SIMULATOR_PUSH: rings to simulator tokens run xcrun simctl push");
   if (!adminToken) console.warn("[server] SPIKE_TOKEN not set: the diagnostics (/admin) are unauthenticated");
+  if (!opsStatsToken && adminToken) console.log("[server] OPS_STATS_TOKEN not set: /admin/stats is closed");
   if (Object.keys(minimumBuilds).length) console.log(`[server] minimum builds ${JSON.stringify(minimumBuilds)}`);
   if (fcmStub) console.warn("[server] FCM_STUB: Android rings are recorded, not sent");
   // Container stops (deploys, autohealing) send SIGTERM. Let conversations in progress

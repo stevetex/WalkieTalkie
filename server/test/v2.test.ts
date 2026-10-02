@@ -438,7 +438,11 @@ test("synthetic Android peers: Google accounts, FCM rings (simulated), and Apple
     await appleRelay.waitFor("burst-end");
     assert.deepEqual(appleRelay.frames.map((f) => f.subarray(5).toString("hex")), opus.map((p) => p.toString("hex")));
     assert.equal(pusher.sent.length, 0);
+    // The Ops dashboard's live view counts them by kind, and names the ring's provider.
+    const stats = await call(url, "GET", "/admin/stats", "ops");
+    assert.deepEqual(stats.body.streams, { ios: 1, watchos: 0, android: 1, wearos: 0 });
+    assert.deepEqual(stats.body.live.map((r: any) => [r.from, r.to, r.turns, r.ring]), [["ios", "android", 1, "fcm/notification"]]);
     appleRelay.close();
     androidRelay.close();
-  });
+  }, { opsStatsToken: "ops" });
 });

@@ -1,6 +1,8 @@
 // C. Back-and-forth: ten alternating bursts, each reply pressed as soon as the other's
 // burst-end arrives (as a person would, after hearing the end). Then both press at once: one
-// gets the floor and the other is denied.
+// gets the floor and the other is denied. Once the relay has closed, each conversation's
+// telemetry record must count its changes of speaker (turns); a relay from before turns were
+// recorded (a PR's base) is skipped.
 
 import { randomUUID } from "node:crypto";
 import { ONE_WAY_MS, checkBurst, liveConversation, opus, proxy, startRelay, talk, type Context, type Recorder, type Talk } from "../harness.ts";
@@ -10,18 +12,33 @@ export const name = "C. Back-and-forth";
 
 export async function run(ctx: Context): Promise<void> {
   const relay = await startRelay(ctx.relayDir);
+  const key = "C.back_and_forth.ws";
+  const expected = new Map<string, number>();
   try {
-    const key = "C.back_and_forth.ws";
     const fast = await turns(ctx, relay, 0, 10, key);
+    expected.set(fast.conversationId, fast.changes);
     ctx.results.add(`${key}.turn_gap`, fast.gaps, "ms", "time");
     ctx.results.add(`${key}.burst_end_to_grant`, fast.endToGrant, "ms", "time");
     ctx.results.add(`${key}.messages_per_turn`, fast.messages, "messages", "count");
     if (ctx.suite !== "full") return;
     const slow = await turns(ctx, relay, ONE_WAY_MS, 3, key);
+    expected.set(slow.conversationId, slow.changes);
     ctx.results.legs(`${key}.turn_gap_legs`, slow.gaps);
   } finally {
     await relay.close();
+    ctx.results.fail(`${key}.integrity_failures`, recordedTurns(relay.telemetry(), expected));
   }
+}
+
+// Each conversation's oao.conversation record against the changes of speaker the bots made.
+function recordedTurns(entries: Array<Record<string, any>>, expected: Map<string, number>): string[] {
+  const records = entries.filter((e) => e.kind === "oao.conversation" && expected.has(e.conversationId));
+  if (!records.some((r) => "turns" in r)) return [];
+  return [...expected].flatMap(([id, changes]) => {
+    const record = records.find((r) => r.conversationId === id);
+    if (!record) return [`no telemetry record for conversation ${id}`];
+    return record.turns === changes ? [] : [`record says ${record.turns} turns, the bots made ${changes}`];
+  });
 }
 
 async function turns(ctx: Context, relay: Awaited<ReturnType<typeof startRelay>>, delayMs: number, count: number, key: string) {
@@ -35,6 +52,8 @@ async function turns(ctx: Context, relay: Awaited<ReturnType<typeof startRelay>>
     { client: a, heard: aHeard, name: names.a },
     { client: b, heard: bHeard, name: names.b },
   ];
+  let changes = 0;
+  let conversationId = "";
   try {
     let previous: Talk | null = null;
     for (let turn = 0; turn < count; turn++) {
@@ -45,6 +64,8 @@ async function turns(ctx: Context, relay: Awaited<ReturnType<typeof startRelay>>
       const before = listener.heard.messages.length + speaker.heard.messages.length;
       const sound = opus(5);
       const sent = await talk(speaker.client, listener.name, sound, false);
+      conversationId = sent.conversationId;
+      if (previous) changes++;
       if (previous) gaps.push(sent.grantedAt - previous.releasedAt);
       if (endAt !== null) endToGrant.push(sent.grantedAt - endAt);
       const burst = await listener.heard.ended(sent.burstId);
@@ -54,8 +75,11 @@ async function turns(ctx: Context, relay: Awaited<ReturnType<typeof startRelay>>
     }
     await settled(side[0].heard, previous);
     await settled(side[1].heard, previous);
-    ctx.results.fail(`${key}.integrity_failures`, [...(await bothPress(a, b, names, aHeard, bHeard)), ...aHeard.problems, ...bHeard.problems]);
-    return { gaps, endToGrant, messages };
+    const both = await bothPress(a, b, names, aHeard, bHeard);
+    // The last turn was side[(count - 1) % 2]'s: the other side winning is one more change.
+    if (both.winner !== null && both.winner !== side[(count - 1) % 2].client) changes++;
+    ctx.results.fail(`${key}.integrity_failures`, [...both.problems, ...aHeard.problems, ...bHeard.problems]);
+    return { gaps, endToGrant, messages, changes, conversationId };
   } finally {
     a.close();
     b.close();
@@ -69,8 +93,8 @@ async function settled(heard: Recorder, last: Talk | null): Promise<void> {
   if (last && heard.burst(last.burstId)) await heard.ended(last.burstId);
 }
 
-// Both press at the same moment: exactly one go-ahead and one floor-denied.
-async function bothPress(a: SpikeClient, b: SpikeClient, names: { a: string; b: string }, aHeard: Recorder, bHeard: Recorder): Promise<string[]> {
+// Both press at the same moment: exactly one go-ahead and one floor-denied. Says who won.
+async function bothPress(a: SpikeClient, b: SpikeClient, names: { a: string; b: string }, aHeard: Recorder, bHeard: Recorder): Promise<{ problems: string[]; winner: SpikeClient | null }> {
   const ids = { a: randomUUID(), b: randomUUID() };
   a.send({ type: "talk-start", to: names.b, burstId: ids.a, codec: "opus16k" });
   b.send({ type: "talk-start", to: names.a, burstId: ids.b, codec: "opus16k" });
@@ -85,5 +109,5 @@ async function bothPress(a: SpikeClient, b: SpikeClient, names: { a: string; b: 
   if (db.type === "floor-granted") b.send({ type: "talk-end", burstId: ids.b });
   const winner = da.type === "floor-granted" ? { heard: bHeard, id: ids.a } : { heard: aHeard, id: ids.b };
   if (granted === 1) await winner.heard.ended(winner.id);
-  return problems;
+  return { problems, winner: granted === 1 ? (da.type === "floor-granted" ? a : b) : null };
 }

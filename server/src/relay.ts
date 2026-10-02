@@ -91,6 +91,9 @@ interface RingState {
   // ringing: no answer yet; answered: a device claimed it and has answerJoinTimeoutMs to join;
   // joined: the recipient joined; ended: it ran out, or couldn't ring anyone.
   state: "ringing" | "answered" | "joined" | "ended";
+  // The device last rung: its kind, and the delivery's "provider/mode" (the operator's live view).
+  clientKind?: ClientKind;
+  delivery?: string;
   // The notification deliveries (a watch's alert, an FCM notification) this ring was shown
   // through, so they can be told when it runs out unanswered.
   notified: Delivery[];
@@ -99,6 +102,14 @@ interface RingState {
 interface Conversation {
   id: string;
   members: [string, string];
+  // The first talk-start, who made it, and the back-and-forths since: each change of speaker
+  // is one (the operator's live view, GET /admin/stats).
+  startedAt: number;
+  initiator: string | null;
+  lastSpeaker: string | null;
+  turns: number;
+  // Each member's client kind, from the device they first talked or joined from.
+  kinds: Map<string, ClientKind>;
   // Who's in the conversation, and from which of their devices.
   joined: Map<string, string>;
   // The device each member last joined or talked from. A ring later in the conversation goes
@@ -180,6 +191,10 @@ export interface RelayOptions {
   authTtlMs?: number;
   // A burst ends by itself after this long, whether or not the sender says so.
   maxBurstMs?: number;
+  // Accounts the operator's live view leaves out (stats): the Test Bot's connections, and
+  // the Canary's connections and conversations (it talks to the bot every 15 minutes).
+  testBotUserId?: string;
+  canaryUserId?: string;
   // Audio a conversation holds for a member who hasn't heard it yet. A burst that would go
   // past this ends.
   maxBufferedBytes?: number;
@@ -192,7 +207,15 @@ export class Relay {
   private byId = new Map<string, Conversation>();
   private activeBursts = new Map<string, { conversation: Conversation; burst: Burst; deviceId: string }>();
   private deliveries: Deliveries;
-  private opts: Required<Omit<RelayOptions, "deliveries">>;
+  private opts: Required<Omit<RelayOptions, "deliveries" | "testBotUserId" | "canaryUserId">>;
+  private quietUsers: Set<string>;
+  private canaryUserId: string | undefined;
+  private testBotUserId: string | undefined;
+  // Open streams and conversations, without the bots', and today's peaks (UTC; in memory, so a
+  // restart starts them again).
+  private streamCount = 0;
+  private conversationCount = 0;
+  private peaks = { day: "", conversations: { value: 0, at: 0 }, streams: { value: 0, at: 0 } };
 
   constructor(options: RelayOptions) {
     this.opts = {
@@ -210,6 +233,9 @@ export class Relay {
       ...options,
     };
     this.deliveries = options.deliveries ?? new Deliveries({ apns: new ApnsDelivery(options.pusher) });
+    this.testBotUserId = options.testBotUserId;
+    this.canaryUserId = options.canaryUserId;
+    this.quietUsers = new Set([options.testBotUserId, options.canaryUserId].filter((u): u is string => !!u));
   }
 
   close(): void {
@@ -221,6 +247,10 @@ export class Relay {
     if (previous && previous !== peer) this.disconnect(previous);
     let devices = this.peers.get(peer.userId);
     if (!devices) this.peers.set(peer.userId, (devices = new Map()));
+    if (devices.get(peer.deviceId) !== peer && !this.quietUsers.has(peer.userId)) {
+      this.streamCount++;
+      this.notePeak("streams", this.streamCount);
+    }
     devices.set(peer.deviceId, peer);
   }
 
@@ -228,6 +258,7 @@ export class Relay {
     const devices = this.peers.get(peer.userId);
     if (devices?.get(peer.deviceId) !== peer) return;
     devices.delete(peer.deviceId);
+    if (!this.quietUsers.has(peer.userId)) this.streamCount--;
     if (!devices.size) this.peers.delete(peer.userId);
     if (this.activeBursts.get(peer.userId)?.deviceId === peer.deviceId) this.endActiveBurst(peer.userId);
     for (const conversation of [...this.byId.values()]) {
@@ -257,6 +288,11 @@ export class Relay {
     }
     conversation.joined.set(peer.userId, peer.deviceId);
     conversation.lastDevice.set(peer.userId, peer.deviceId);
+    // The kind each side talked or joined from first, for the cross-platform splits (telemetry.ts).
+    if (peer.clientKind && !conversation.kinds.has(peer.userId)) {
+      conversation.kinds.set(peer.userId, peer.clientKind);
+      this.opts.metrics.server(conversation.id, "memberKind", this.opts.now(), `${peer.userId} ${peer.clientKind}`);
+    }
     this.markActive(peer.userId, peer.deviceId);
   }
 
@@ -445,6 +481,9 @@ export class Relay {
       return;
     }
     this.endActiveBurst(from);
+    if (conversation.lastSpeaker !== null && conversation.lastSpeaker !== from) conversation.turns++;
+    conversation.lastSpeaker = from;
+    conversation.initiator ??= from;
 
     this.enter(conversation, peer);
     this.recordMessage(conversation, from, to, now);
@@ -807,6 +846,10 @@ export class Relay {
     this.armRingTimer(conversation, to, Math.max(0, conversation.ringExpiresAt - conversation.lastRingAt));
     const payload = this.envelope(conversation);
     const delivery = target.delivery;
+    if (conversation.ring) {
+      conversation.ring.clientKind = target.clientKind;
+      conversation.ring.delivery = `${delivery.provider}/${delivery.mode}`;
+    }
     // "watch; r_…; watchos apns/alert; expires <ms>": the first part as before, for dashboards
     // (telemetry.ts).
     this.opts.metrics.server(conversation.id, "pushSent", conversation.lastRingAt, `${platformLabel(target.clientKind)}; ${payload.ringId}; ${target.clientKind} ${delivery.provider}/${delivery.mode}; expires ${payload.expiresAt}`);
@@ -955,8 +998,7 @@ export class Relay {
     conversation.bursts = [];
     conversation.joined.clear();
     conversation.floor = null;
-    this.byId.delete(conversation.id);
-    this.byPair.delete(pairKey(...conversation.members));
+    this.forget(conversation);
     this.opts.metrics.server(conversation.id, "conversationEnded", this.opts.now(), "revoked");
   }
 
@@ -1001,6 +1043,11 @@ export class Relay {
       conversation = {
         id: randomUUID(),
         members,
+        startedAt: this.opts.now(),
+        initiator: null,
+        lastSpeaker: null,
+        turns: 0,
+        kinds: new Map(),
         joined: new Map(),
         lastDevice: new Map(),
         bursts: [],
@@ -1019,8 +1066,86 @@ export class Relay {
       };
       this.byPair.set(key, conversation);
       this.byId.set(conversation.id, conversation);
+      if (!this.isCanary(conversation)) {
+        this.conversationCount++;
+        this.notePeak("conversations", this.conversationCount);
+      }
     }
     return conversation;
+  }
+
+  private forget(conversation: Conversation): void {
+    if (this.byId.get(conversation.id) !== conversation) return;
+    this.byId.delete(conversation.id);
+    this.byPair.delete(pairKey(...conversation.members));
+    if (!this.isCanary(conversation)) this.conversationCount--;
+  }
+
+  private isCanary(conversation: Conversation): boolean {
+    return this.canaryUserId !== undefined && conversation.members.includes(this.canaryUserId);
+  }
+
+  // Today's highest count (UTC); a new day starts again from the current count.
+  private notePeak(which: "conversations" | "streams", value: number): void {
+    const now = this.opts.now();
+    const day = utcDay(now);
+    if (day !== this.peaks.day) {
+      this.peaks = { day, conversations: { value: this.conversationCount, at: now }, streams: { value: this.streamCount, at: now } };
+    }
+    if (value > this.peaks[which].value) this.peaks[which] = { value, at: now };
+  }
+
+  // The operator's live view (GET /admin/stats, the Ops dashboard): totals and at most 50
+  // anonymous rows, newest first. No conversation, ring or account IDs; the Test Bot's and
+  // the Canary's connections, and the Canary's conversations, are left out. A conversation
+  // with the Test Bot is shown, marked, so a ring from a tester's device can be checked.
+  stats(): RelayLiveStats {
+    const now = this.opts.now();
+    this.notePeak("streams", this.streamCount);
+    const streams: Record<ClientKind, number> = { ios: 0, watchos: 0, android: 0, wearos: 0 };
+    let pcmOnly = 0;
+    for (const [userId, devices] of this.peers) {
+      if (this.quietUsers.has(userId)) continue;
+      for (const peer of devices.values()) {
+        if (peer.clientKind) streams[peer.clientKind]++;
+        if (!(peer.decode ?? DEFAULT_CAPABILITIES.decode).includes("opus16k")) pcmOnly++;
+      }
+    }
+    const conversations = { open: 0, talking: 0, ringing: 0, waiting: 0 };
+    const held = { bursts: 0, bytes: 0 };
+    const rows: Array<LiveRow & { startedAt: number }> = [];
+    for (const conversation of this.byId.values()) {
+      if (this.isCanary(conversation)) continue;
+      const state: LiveRow["state"] = conversation.floor
+        ? "talking"
+        : conversation.ringTimer && conversation.ring?.state === "ringing" ? "ringing" : "waiting";
+      conversations.open++;
+      conversations[state]++;
+      const waiting = conversation.bursts.filter((b) => !b.deliveredTo.has(otherMember(conversation, b.from)));
+      held.bursts += waiting.length;
+      held.bytes += waiting.reduce((n, b) => n + b.bytes, 0);
+      const from = conversation.initiator ?? conversation.members[0];
+      const to = otherMember(conversation, from);
+      const ring = conversation.ring;
+      rows.push({
+        state,
+        from: conversation.kinds.get(from) ?? "unknown",
+        to: conversation.kinds.get(to) ?? ring?.clientKind ?? "unknown",
+        ageMs: Math.max(0, now - conversation.startedAt),
+        turns: conversation.turns,
+        held: waiting.length,
+        ...(ring?.delivery ? { ring: ring.delivery } : {}),
+        rolledOver: conversation.rolledOver,
+        ...(this.testBotUserId && conversation.members.includes(this.testBotUserId) ? { testBot: true } : {}),
+        startedAt: conversation.startedAt,
+      });
+    }
+    const live = rows
+      .sort((a, b) => b.startedAt - a.startedAt)
+      .slice(0, 50)
+      .map(({ startedAt: _, ...row }) => row);
+    const { day: _day, ...peaks } = this.peaks;
+    return { conversations, streams, pcmOnly, held, peaks: structuredClone(peaks), live };
   }
 
   // Drop bursts that everyone has heard or that are too old.
@@ -1043,12 +1168,42 @@ export class Relay {
     const waiting = conversation.bursts.some((b) => !b.ended || !b.deliveredTo.has(otherMember(conversation, b.from)));
     if (conversation.joined.size === 0 && !waiting && !conversation.floor) {
       this.clearRing(conversation);
-      this.byId.delete(conversation.id);
-      this.byPair.delete(pairKey(...conversation.members));
+      this.forget(conversation);
       // The telemetry record is written now (telemetry.ts).
       this.opts.metrics.server(conversation.id, "conversationEnded", this.opts.now());
     }
   }
+}
+
+export interface LiveRow {
+  state: "talking" | "ringing" | "waiting";
+  // Client kinds: who started the conversation, and the other side (the device rung, until
+  // they join).
+  from: ClientKind | "unknown";
+  to: ClientKind | "unknown";
+  ageMs: number;
+  turns: number;
+  // Bursts waiting for the other member.
+  held: number;
+  // The latest ring's "provider/mode" (apns/alert, apns/pushtotalk, fcm/notification,
+  // relay/foreground), if it was rung.
+  ring?: string;
+  rolledOver: boolean;
+  testBot?: true;
+}
+
+export interface RelayLiveStats {
+  conversations: { open: number; talking: number; ringing: number; waiting: number };
+  streams: Record<ClientKind, number>;
+  // Streams that can't play Opus.
+  pcmOnly: number;
+  held: { bursts: number; bytes: number };
+  peaks: { conversations: { value: number; at: number }; streams: { value: number; at: number } };
+  live: LiveRow[];
+}
+
+function utcDay(ms: number): string {
+  return new Date(ms).toISOString().slice(0, 10);
 }
 
 // A ring's ID: "r_" and 96 random bits.

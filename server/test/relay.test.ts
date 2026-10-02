@@ -1,7 +1,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import type { Accounts } from "../src/accounts.ts";
+import type { AccountDevice, Accounts } from "../src/accounts.ts";
 import { RecordParser, encodeJSONRecord } from "../src/records.ts";
+import { DryRunPusher } from "../src/apns.ts";
+import { DEFAULT_CAPABILITIES, formFactorOf, type ClientKind, type CodecName, type Delivery } from "../src/contract.ts";
+import { Codec, type ServerMessage } from "../src/protocol.ts";
+import { Relay, type Peer } from "../src/relay.ts";
+import { JsonMetricsStore } from "../src/store.ts";
 import { befriend, call, clientHeaders, friends, pcm, user, withServer, type TestServer, type TestUser } from "./harness.ts";
 
 // A real-looking APNs token: rings go through the pusher, and the push carries the ring.
@@ -669,4 +674,139 @@ test("a burst sent faster than real time is cut off at the longest burst's worth
     assert.equal(h.server.relay.snapshot()[0].bufferedBytes, 10 * 645);
     a.close();
   }, { maxBurstMs: 200 });
+});
+
+// ---- The Ops dashboard's live view (GET /admin/stats) ----
+
+function fakeDevice(id: string, clientKind: ClientKind, delivery: Delivery): AccountDevice {
+  return {
+    id,
+    clientKind,
+    formFactor: formFactorOf(clientKind),
+    delivery,
+    receiveMode: "tap",
+    availability: { enabled: true, notifications: "authorized" },
+    capabilities: structuredClone(DEFAULT_CAPABILITIES),
+    lastActiveAt: 0,
+    updatedAt: 0,
+  };
+}
+
+function fakePeer(userId: string, clientKind: ClientKind, decode?: CodecName[]): Peer & { got: ServerMessage[] } {
+  const got: ServerMessage[] = [];
+  return { userId, deviceId: `${userId}-${clientKind}`, clientKind, ...(decode ? { decode } : {}), got, sendJSON: (m) => got.push(m), sendBinary: () => {} };
+}
+
+function pcmFrame(seq: number): Buffer {
+  const frame = Buffer.alloc(5 + 640);
+  frame[0] = Codec.pcm16le16k;
+  frame.writeUInt32BE(seq, 1);
+  return frame;
+}
+
+const settle = () => new Promise((r) => setTimeout(r, 20));
+
+test("the live view: states, anonymous rows, turns, peaks, pcmOnly, and the bots left out", async () => {
+  let now = Date.parse("2026-10-02T10:00:00Z");
+  // Who rings how: the watch by an APNs alert, the Wear OS watch and the bot over a connection.
+  const devices: Record<string, AccountDevice[]> = {
+    u_b: [fakeDevice("b-watch", "watchos", { provider: "apns", mode: "alert", token: "abcdef0123456789", environment: "sandbox" })],
+    u_d: [fakeDevice("d-wear", "wearos", { provider: "test", mode: "connection" })],
+    u_bot: [fakeDevice("bot", "watchos", { provider: "test", mode: "connection" })],
+  };
+  const relay = new Relay({
+    accounts: { ringLookup: async (_from, to) => ({ allowed: true, fromName: "Someone", devices: devices[to] ?? [] }) },
+    pusher: new DryRunPusher(),
+    metrics: new JsonMetricsStore(null),
+    now: () => now,
+    testBotUserId: "u_bot",
+    canaryUserId: "u_canary",
+  });
+  const log = console.log;
+  console.log = () => {};
+  try {
+    const a = fakePeer("u_a", "ios");
+    const b = fakePeer("u_b", "watchos");
+    // An Android build without Opus.
+    const c = fakePeer("u_c", "android", ["pcm16le16k"]);
+    const d = fakePeer("u_d", "wearos");
+    const bot = fakePeer("u_bot", "watchos");
+    const canary = fakePeer("u_canary", "ios");
+    for (const p of [a, b, c, d, bot, canary]) relay.connect(p);
+
+    // 1. iPhone → watch, rung by an APNs alert; still talking, then held for the watch.
+    relay.handleMessage(a, { type: "talk-start", to: "u_b", burstId: "a1", codec: Codec.pcm16le16k });
+    await settle();
+    for (let i = 0; i < 3; i++) relay.handleAudio(a, pcmFrame(i));
+    assert.equal(relay.stats().live[0].state, "talking");
+    relay.handleMessage(a, { type: "talk-end", burstId: "a1" });
+
+    // 2. Android → Wear OS: rung over its connection, joined, and a reply: one back-and-forth.
+    now += 1000;
+    relay.handleMessage(c, { type: "talk-start", to: "u_d", burstId: "c1", codec: Codec.pcm16le16k });
+    await settle();
+    relay.handleAudio(c, pcmFrame(0));
+    relay.handleMessage(c, { type: "talk-end", burstId: "c1" });
+    const ring = d.got.find((m) => m.type === "ring") as Extract<ServerMessage, { type: "ring" }>;
+    relay.handleMessage(d, { type: "join", conversationId: ring.conversationId, ringId: ring.ringId });
+    relay.handleMessage(d, { type: "talk-start", to: "u_c", burstId: "d1", codec: Codec.pcm16le16k });
+    relay.handleMessage(d, { type: "talk-end", burstId: "d1" });
+
+    // 3. The iPhone rings the Test Bot (shown, marked), and the Canary talks to it (left out).
+    now += 1000;
+    relay.handleMessage(a, { type: "talk-start", to: "u_bot", burstId: "a2", codec: Codec.pcm16le16k });
+    relay.handleMessage(a, { type: "talk-end", burstId: "a2" });
+    relay.handleMessage(canary, { type: "talk-start", to: "u_bot", burstId: "k1", codec: Codec.pcm16le16k });
+    relay.handleMessage(canary, { type: "talk-end", burstId: "k1" });
+    await settle();
+
+    now += 3000;
+    const stats = relay.stats();
+    assert.deepEqual(stats.streams, { ios: 1, watchos: 1, android: 1, wearos: 1 });
+    assert.equal(stats.pcmOnly, 1);
+    assert.deepEqual(stats.conversations, { open: 3, talking: 0, ringing: 2, waiting: 1 });
+    assert.deepEqual(stats.held, { bursts: 2, bytes: 3 * 645 });
+    assert.deepEqual(stats.live, [
+      { state: "ringing", from: "ios", to: "watchos", ageMs: 3000, turns: 0, held: 1, ring: "test/connection", rolledOver: false, testBot: true },
+      { state: "waiting", from: "android", to: "wearos", ageMs: 4000, turns: 1, held: 0, ring: "test/connection", rolledOver: false },
+      { state: "ringing", from: "ios", to: "watchos", ageMs: 5000, turns: 0, held: 1, ring: "apns/alert", rolledOver: false },
+    ]);
+    assert.deepEqual(stats.peaks, { conversations: { value: 3, at: now - 3000 }, streams: { value: 4, at: Date.parse("2026-10-02T10:00:00Z") } });
+    assert.doesNotMatch(JSON.stringify(stats), /u_|r_|-ios|-watchos|a1|c1/);
+
+    // The peaks stay after a disconnect, and a new day (UTC) starts them from what's open.
+    relay.disconnect(c);
+    assert.equal(relay.stats().streams.android, 0);
+    assert.equal(relay.stats().peaks.streams.value, 4);
+    now = Date.parse("2026-10-03T00:00:01Z");
+    assert.deepEqual(relay.stats().peaks.streams, { value: 3, at: now });
+  } finally {
+    console.log = log;
+    relay.close();
+  }
+});
+
+test("/admin/stats opens only with the Ops token: never the diagnostics token or a session token", async () => {
+  await withServer(async (h) => {
+    const alice = await user(h, "Alice", { kind: "ios" });
+    const a = alice.client();
+    await a.connect();
+    const ok = await call(h.url, "GET", "/admin/stats", "ops");
+    assert.equal(ok.status, 200);
+    assert.equal(ok.body.streams.ios, 1);
+    assert.equal(typeof ok.body.node, "string");
+    assert.ok(ok.body.startedAt <= ok.body.now);
+    assert.equal((await call(h.url, "GET", "/admin/stats", "admin")).status, 401);
+    assert.equal((await call(h.url, "GET", "/admin/stats", alice.token)).status, 401);
+    assert.equal((await call(h.url, "GET", "/admin/stats", null)).status, 401);
+    // The Ops token opens nothing else.
+    assert.equal((await call(h.url, "GET", "/admin/status", "ops")).status, 401);
+    assert.equal((await call(h.url, "GET", "/admin/metrics", "ops")).status, 401);
+    a.close();
+  }, { opsStatsToken: "ops" });
+  // Not configured on a relay with a diagnostics token: closed to everyone.
+  await withServer(async (h) => {
+    assert.equal((await call(h.url, "GET", "/admin/stats", "admin")).status, 401);
+    assert.equal((await call(h.url, "GET", "/admin/stats", null)).status, 401);
+  });
 });

@@ -3,7 +3,7 @@
 
 import { fork, type ChildProcess } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -89,6 +89,8 @@ export interface Relay {
   stats(): Promise<RelayStats>;
   resetStats(): Promise<void>;
   close(): Promise<void>;
+  // The telemetry entries it wrote (DATA_DIR/telemetry.jsonl), once it has closed.
+  telemetry(): Array<Record<string, any>>;
 }
 
 // The operator's diagnostics token (SPIKE_TOKEN), for /admin/status.
@@ -134,8 +136,11 @@ export function startRelay(relayDir: string, env: Record<string, string> = {}): 
     execArgv: [...process.execArgv, "--expose-gc", "--import", pathToFileURL(childPath).href],
   });
   children.add(child);
+  let telemetry: Array<Record<string, any>> = [];
   child.once("exit", () => {
     children.delete(child);
+    const file = join(dataDir, "telemetry.jsonl");
+    if (existsSync(file)) telemetry = readFileSync(file, "utf8").split("\n").filter((l) => l.trim()).map((l) => JSON.parse(l));
     rmSync(dataDir, { recursive: true, force: true });
   });
   const request = <T>(message: string, key: string): Promise<T> =>
@@ -162,6 +167,7 @@ export function startRelay(relayDir: string, env: Record<string, string> = {}): 
         url: `http://127.0.0.1:${port}`,
         stats: () => request<RelayStats>("stats", "stats"),
         resetStats: () => request<boolean>("reset", "reset").then(() => {}),
+        telemetry: () => telemetry,
         close: () =>
           new Promise<void>((done) => {
             child.once("exit", () => done());
