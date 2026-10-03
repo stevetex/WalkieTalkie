@@ -77,7 +77,8 @@ struct TalkView: View {
                 .padding(.leading, 13)
                 .padding(.top, 2)
 
-            // The crown turns the volume; its level shows at bottom right, beside the name.
+            // The crown turns the volume; while it changes, its level shows at bottom right, beside
+            // the name.
             // Inset from the rounded corner, level with the name.
             CrownVolume()
                 .frame(width: 26, height: 26)
