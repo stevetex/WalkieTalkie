@@ -157,10 +157,10 @@ final class TalkController: ObservableObject {
         audio.onCaptureFormat = { [weak self] format in
             self?.conversation?.timeline.mark("micFormat", detail: format, once: false)
         }
-        audio.onBurstPlayed = { [weak self] level, frames in
+        audio.onBurstPlayed = { [weak self] level, frames, detail in
             // The system volume, so "played quietly" can be told from "volume turned down".
             let volume = String(format: "%.2f", AVAudioSession.sharedInstance().outputVolume)
-            self?.markLevel("burstLevelPlayed", level, frames: frames, context: ",volume=\(volume)")
+            self?.markLevel("burstLevelPlayed", level, frames: frames, context: ",volume=\(volume)" + detail)
         }
         audio.onRestart = { [weak self] detail in
             let route = Self.routeDescription()

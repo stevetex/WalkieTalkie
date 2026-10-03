@@ -1,6 +1,7 @@
 import Foundation
 
-/// Automatic gain for the microphone, applied to each 20 ms frame before encoding. The watch's
+/// Automatic gain, applied to each 20 ms frame: for the microphone before encoding, and (with
+/// `playback()`) for received speech before it plays. The watch's
 /// microphone arrives unleveled and quiet: speech peaked at −35 dBFS on Steve's watch
 /// (2026-10-01, build 140), where speech normally peaks near −10. This brings speech up to
 /// about `targetDbfs` RMS.
@@ -21,6 +22,17 @@ struct AutoGain {
 
     init(startDb: Double = 20) {
         gainDb = startDb
+    }
+
+    /// For received speech on the watch's small speaker (2026-10-02: Helen's watch-sent messages
+    /// played at −23.5 dBFS RMS with peaks near −6, and Steve had to hold the watch to his ear).
+    /// Brings speech up to about −14 dBFS RMS, at most 15 dB, with the limiter taking the peaks;
+    /// louder senders (the Test Bot, −16.5) get only a little.
+    static func playback() -> AutoGain {
+        var gain = AutoGain(startDb: 8)
+        gain.targetDbfs = -14
+        gain.maxGainDb = 15
+        return gain
     }
 
     /// One frame, in place.

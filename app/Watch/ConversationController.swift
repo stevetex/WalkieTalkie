@@ -119,8 +119,9 @@ final class ConversationController: NSObject, ObservableObject {
 
     /// Stamps when relay data arrives, off the main queue, for the timeline.
     private let relay = RelayConnection(stampsArrivals: true)
-    // The watch's microphone arrives quiet and unleveled (build 140: speech peaking at −35 dBFS).
-    private let audio = AudioPipeline(autoGain: true)
+    // The watch's microphone arrives quiet and unleveled (build 140: speech peaking at −35 dBFS),
+    // and its small speaker needs received speech louder (2026-10-02: held to the ear to hear).
+    private let audio = AudioPipeline(autoGain: true, playbackGain: true)
 
     private var started = false
     private var conversation: Conversation?
@@ -263,8 +264,13 @@ final class ConversationController: NSObject, ObservableObject {
         audio.onCaptureFormat = { [weak self] format in
             self?.conversation?.timeline.mark("micFormat", detail: format, once: false)
         }
-        audio.onBurstPlayed = { [weak self] level, frames in
-            self?.markLevel("burstLevelPlayed", level, frames: frames, context: "")
+        audio.onBurstPlayed = { [weak self] level, frames, detail in
+            // The system volume and the speaker, so "played quietly" can be told from "volume
+            // turned down" or a Bluetooth route.
+            let session = AVAudioSession.sharedInstance()
+            let volume = String(format: "%.2f", session.outputVolume)
+            self?.markLevel("burstLevelPlayed", level, frames: frames,
+                            context: ",volume=\(volume),out=\(AudioLevel.outputPort())" + detail)
         }
         audio.onRestart = { [unowned self] detail in
             log("Audio: \(detail)")
@@ -969,7 +975,10 @@ final class ConversationController: NSObject, ObservableObject {
         activatingAudio = true
         let session = AVAudioSession.sharedInstance()
         do {
-            try session.setCategory(.playAndRecord, mode: .voiceChat, options: [])
+            // Mode default, not voiceChat: voice chat's call processing played messages so
+            // quietly the watch had to be held to the ear (2026-10-02). Talk is half duplex, so
+            // its echo cancellation isn't needed.
+            try session.setCategory(.playAndRecord, mode: .default, options: [])
         } catch {
             log("Audio session setup failed: \(error.localizedDescription)")
         }
