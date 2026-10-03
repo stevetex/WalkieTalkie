@@ -2,8 +2,7 @@ import AVFoundation
 
 /// Microphone capture and speaker playback for the duration of a conversation.
 ///
-/// The app owns the audio session (playAndRecord, voiceChat) and activates it before
-/// `start()`. Frames received before `start()` are held and played once it runs.
+/// The app owns the audio session (playAndRecord) and activates it before `start()`. Frames received before `start()` are held and played once it runs.
 ///
 /// Who owns what:
 /// - The main actor: the public API, every callback, and the engine's lifecycle (start, stop,
@@ -34,9 +33,10 @@ public final class AudioPipeline {
     /// A start with the microphone: the format it delivers ("48000 Hz, 1 ch, float32,
     /// deinterleaved"), or why there's none. For diagnosing silent capture.
     public var onCaptureFormat: ((String) -> Void)?
-    /// A received burst ended: how loud the decoded audio handed to the speaker was, and how
-    /// many frames. For Beta telemetry's per-burst levels.
-    public var onBurstPlayed: ((AudioLevel, Int) -> Void)?
+    /// A received burst ended: how loud the decoded audio handed to the speaker was (after any
+    /// playback gain), how many frames, and the gain applied (",gain=8.6", or ""). For Beta
+    /// telemetry's per-burst levels.
+    public var onBurstPlayed: ((AudioLevel, Int, String) -> Void)?
 
     public var codecDescription: String {
         codec == .opus16k ? "Opus 24 kbps" : "PCM 256 kbps (no Opus encoder)"
@@ -66,9 +66,11 @@ public final class AudioPipeline {
     private let state: AudioQueueState
 
     /// `autoGain`: level the microphone's speech before sending (the watch, whose microphone
-    /// arrives quiet and unleveled).
-    public init(autoGain: Bool = false) {
-        state = AudioQueueState(player: player, autoGain: autoGain ? AutoGain() : nil)
+    /// arrives quiet and unleveled). `playbackGain`: level received speech before it plays (the
+    /// watch, whose small speaker needs it louder).
+    public init(autoGain: Bool = false, playbackGain: Bool = false) {
+        state = AudioQueueState(player: player, autoGain: autoGain ? AutoGain() : nil,
+                                playbackGain: playbackGain ? AutoGain.playback() : nil)
         codec = state.codec
         observeConfigurationChanges()
         state.async { [weak self] state in
@@ -339,7 +341,8 @@ public final class AudioPipeline {
             if raw.count > 1 { detail += ",rawch=" + raw.map { String(format: "%.1f", $0) }.joined(separator: "/") }
             if let gainDb { detail += ",gain=\(String(format: "%.1f", gainDb))" }
             onBurstCaptured?(level, frames, detail)
-        case .playbackLevel(let level, let frames): onBurstPlayed?(level, frames)
+        case .playbackLevel(let level, let frames, let gainDb):
+            onBurstPlayed?(level, frames, gainDb.map { ",gain=\(String(format: "%.1f", $0))" } ?? "")
         }
     }
 }
@@ -362,7 +365,7 @@ private final class AudioQueueState: @unchecked Sendable {
         case drained
         case stalled(buffers: Int, drained: Bool)
         case captureLevel(AudioLevel, frames: Int, rawPeaks: [Float], gainDb: Double?)
-        case playbackLevel(AudioLevel, frames: Int)
+        case playbackLevel(AudioLevel, frames: Int, gainDb: Double?)
     }
 
     private let queue = DispatchQueue(label: "walkie.audio", qos: .userInteractive)
@@ -384,6 +387,8 @@ private final class AudioQueueState: @unchecked Sendable {
     private var capturedRawPeaks: [Float] = []
     /// Levels the microphone before sending, if the app asked for it.
     private var autoGain: AutoGain?
+    /// Levels received speech before it plays, if the app asked for it.
+    private var playbackGain: AutoGain?
     private var playedLevel = AudioLevel()
     private var playedFrames = 0
     private var held: [AVAudioPCMBuffer] = []
@@ -400,9 +405,10 @@ private final class AudioQueueState: @unchecked Sendable {
     /// Frames of jitter buffer before a live burst starts playing (4 × 20 ms).
     private static let prebufferFrames = 4
 
-    init(player: AVAudioPlayerNode, autoGain: AutoGain?) {
+    init(player: AVAudioPlayerNode, autoGain: AutoGain?, playbackGain: AutoGain?) {
         self.player = player
         self.autoGain = autoGain
+        self.playbackGain = playbackGain
         codec = encoder.codec
     }
 
@@ -596,6 +602,7 @@ private final class AudioQueueState: @unchecked Sendable {
         onQueue()
         guard let (codec, _, payload) = VoiceFrame.decode(frame),
               let buffer = decoder.decode(codec: codec, payload: payload) else { return }
+        applyPlaybackGain(buffer)
         playedLevel.add(buffer)
         playedFrames += 1
         held.append(buffer)
@@ -607,9 +614,17 @@ private final class AudioQueueState: @unchecked Sendable {
         onQueue()
         prebuffering = false
         flushHeld()
-        if playedFrames > 0 { send(.playbackLevel(playedLevel, frames: playedFrames)) }
+        if playedFrames > 0 { send(.playbackLevel(playedLevel, frames: playedFrames, gainDb: playbackGain?.gainDb)) }
         playedLevel = AudioLevel()
         playedFrames = 0
+    }
+
+    /// The playback gain on a decoded frame, in place.
+    private func applyPlaybackGain(_ buffer: AVAudioPCMBuffer) {
+        guard playbackGain != nil, let channel = buffer.floatChannelData?[0], buffer.frameLength > 0 else { return }
+        var samples = Array(UnsafeBufferPointer(start: channel, count: Int(buffer.frameLength)))
+        playbackGain?.process(&samples)
+        samples.withUnsafeBufferPointer { channel.update(from: $0.baseAddress!, count: $0.count) }
     }
 
     private func flushHeld() {

@@ -64,6 +64,11 @@ extension AudioLevel {
         AVAudioSession.sharedInstance().currentRoute.inputs.first?.portType.rawValue ?? "none"
     }
 
+    /// The speaker's kind ("Speaker", "BluetoothA2DPOutput"), never a device's name.
+    public static func outputPort() -> String {
+        AVAudioSession.sharedInstance().currentRoute.outputs.first?.portType.rawValue ?? "none"
+    }
+
     /// The microphone's permission and the session's input, for diagnosing silent capture:
     /// "permission=granted,inputAvailable=1,in=MicrophoneBuiltIn,channels=1,rate=48000,mode=VoiceChat".
     public static func microphoneSetup() -> String {
