@@ -29,6 +29,8 @@ guard let opusFormat = AVAudioFormat(streamDescription: &description),
     exit(1)
 }
 converter.bitRate = 24_000
+// Constant bitrate, as the apps encode (VoiceEncoder): every packet 60 bytes.
+converter.bitRateStrategy = AVAudioBitRateStrategy_Constant
 
 let samples: [Float] = pcm.withUnsafeBytes { raw in
     let values = raw.bindMemory(to: Int16.self)

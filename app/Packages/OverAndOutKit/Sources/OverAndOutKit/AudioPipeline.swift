@@ -27,8 +27,9 @@ public final class AudioPipeline {
     public var onRestart: ((String) -> Void)?
     /// A burst's capture ended: how loud the audio sent was (after any automatic gain, before
     /// encoding), how many frames it made, and more detail for the timeline mark: the loudest
-    /// raw sample the microphone gave before conversion, per channel, and the gain applied
-    /// (",raw=-34.7,rawch=-34.7/-48.1/-51.0,gain=31.5"). For Beta telemetry's per-burst levels.
+    /// raw sample the microphone gave before conversion, per channel, the gain applied, and the
+    /// smallest and largest encoded payload (",raw=-34.7,rawch=-34.7/-48.1/-51.0,gain=31.5,
+    /// bytes=60-60"). For Beta telemetry's per-burst levels.
     public var onBurstCaptured: ((AudioLevel, Int, String) -> Void)?
     /// A start with the microphone: the format it delivers ("48000 Hz, 1 ch, float32,
     /// deinterleaved"), or why there's none. For diagnosing silent capture.
@@ -335,11 +336,12 @@ public final class AudioPipeline {
         case .stalled(let buffers, let drained):
             onRestart?("playback stalled: \(buffers) buffers never reported played; counted as played")
             if drained { onPlaybackDrained?() }
-        case .captureLevel(let level, let frames, let rawPeaks, let gainDb):
+        case .captureLevel(let level, let frames, let rawPeaks, let gainDb, let payloadBytes):
             let raw = rawPeaks.map { AudioLevel.dbfs(Double($0)) }
             var detail = ",raw=\(String(format: "%.1f", raw.max() ?? AudioLevel.floorDbfs))"
             if raw.count > 1 { detail += ",rawch=" + raw.map { String(format: "%.1f", $0) }.joined(separator: "/") }
             if let gainDb { detail += ",gain=\(String(format: "%.1f", gainDb))" }
+            if let payloadBytes { detail += ",bytes=\(payloadBytes.lowerBound)-\(payloadBytes.upperBound)" }
             onBurstCaptured?(level, frames, detail)
         case .playbackLevel(let level, let frames, let gainDb):
             onBurstPlayed?(level, frames, gainDb.map { ",gain=\(String(format: "%.1f", $0))" } ?? "")
@@ -364,7 +366,7 @@ private final class AudioQueueState: @unchecked Sendable {
         case firstCapturedFrame(Double)
         case drained
         case stalled(buffers: Int, drained: Bool)
-        case captureLevel(AudioLevel, frames: Int, rawPeaks: [Float], gainDb: Double?)
+        case captureLevel(AudioLevel, frames: Int, rawPeaks: [Float], gainDb: Double?, payloadBytes: ClosedRange<Int>?)
         case playbackLevel(AudioLevel, frames: Int, gainDb: Double?)
     }
 
@@ -385,6 +387,8 @@ private final class AudioQueueState: @unchecked Sendable {
     private var capturedLevel = AudioLevel()
     /// The loudest raw sample the microphone gave this burst in each channel, before conversion.
     private var capturedRawPeaks: [Float] = []
+    /// The smallest and largest encoded payload this burst (bytes), to check constant bitrate.
+    private var capturedPayloadBytes: ClosedRange<Int>?
     /// Levels the microphone before sending, if the app asked for it.
     private var autoGain: AutoGain?
     /// Levels received speech before it plays, if the app asked for it.
@@ -517,6 +521,7 @@ private final class AudioQueueState: @unchecked Sendable {
         pendingSamples.removeAll()
         capturedLevel = AudioLevel()
         capturedRawPeaks = []
+        capturedPayloadBytes = nil
         capturing = true
     }
 
@@ -528,12 +533,14 @@ private final class AudioQueueState: @unchecked Sendable {
             emitFrames()
         }
         if capturing, sequence > 0 {
-            send(.captureLevel(capturedLevel, frames: Int(sequence), rawPeaks: capturedRawPeaks, gainDb: autoGain?.gainDb))
+            send(.captureLevel(capturedLevel, frames: Int(sequence), rawPeaks: capturedRawPeaks, gainDb: autoGain?.gainDb,
+                               payloadBytes: capturedPayloadBytes))
         }
         capturing = false
         pendingSamples.removeAll()
         capturedLevel = AudioLevel()
         capturedRawPeaks = []
+        capturedPayloadBytes = nil
     }
 
     func captured(_ samples: [Float], rawPeaks: [Float] = []) {
@@ -554,6 +561,9 @@ private final class AudioQueueState: @unchecked Sendable {
             // What's sent: after the gain, before the encoder.
             capturedLevel.add(frame)
             guard let payload = encoder.encode(frame) else { continue }
+            capturedPayloadBytes = capturedPayloadBytes.map {
+                min($0.lowerBound, payload.count)...max($0.upperBound, payload.count)
+            } ?? payload.count...payload.count
             if sequence == 0 { send(.firstCapturedFrame(Clock.nowMs())) }
             send(.frame(VoiceFrame.encode(codec: encoder.codec, seq: sequence, payload: payload)))
             sequence &+= 1
