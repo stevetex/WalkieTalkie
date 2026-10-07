@@ -28,12 +28,14 @@ Decided with Steve on 2026-10-07:
 | Forward secrecy | Device encryption keys rotate weekly; old private keys are deleted after a 7-day grace |
 | Packet-size leak | Try constant-bitrate Opus; pad inside the ciphertext only if Apple's encoder won't do CBR |
 | Timing | Before the App Store launch, as a forced update like Phase 0, so no plaintext fallback outlives the beta |
+| A malicious server (same day, after a review of man-in-the-middle attacks) | Close replays (a signed send time, no sequence played twice); senders refuse expired encryption keys; signing in again to the same account keeps the phone's identity key, so notices stay rare; a message from a just-changed key is marked while it plays; the inviter's key fingerprint goes in the invite link. Key changes don't block yet; blocking and key transparency are kept under "Later" |
 
 ## What it protects, and what it doesn't
 
 Protected: the audio of every message, live or held, against the relay, Google Cloud, and anyone
 who can read relay memory or traffic past TLS. It also protects against a server that injects
-audio claiming to come from a friend (each message is signed by the sending device).
+audio claiming to come from a friend's known devices (each message is signed by the sending
+device), or that replays a real message later (see "The server as attacker").
 
 Not protected:
 - **Metadata:** who rings whom, when, how long, which devices, and burst lengths. The service
@@ -42,8 +44,9 @@ Not protected:
   encrypted links has shown phrases can sometimes be spotted from packet sizes. Constant
   bitrate mostly closes this (see "Opus at a constant bitrate").
 - **A malicious directory, until someone verifies:** the server could list a key it controls for
-  a friend. The "security code changed" notice is how people notice; verification codes (phase
-  2) are how they check.
+  a friend. The "security code changed" notice is how people notice; the invite link's
+  fingerprint covers the first contact for invites; verification codes (phase 2) are how they
+  check. "The server as attacker" goes through each case.
 - **The devices themselves.** A compromised or unlocked device can hear what it plays.
 
 ## Cryptography
@@ -75,7 +78,7 @@ test vectors.
 | --- | --- | --- | --- |
 | **Phone identity key** (Ed25519) | each phone (iPhone, later Android) | itself | until sign-out on that phone |
 | **Device signing key** (Ed25519) | each device: the phone and each of its watches | the phone identity key (a *device certificate*) | until sign-out or revocation |
-| **Device encryption key** (X25519) | each device | the device signing key (an *encryption key certificate*, with a key ID and `notAfter`) | rotated weekly |
+| **Device encryption key** (X25519) | each device | the device signing key (an *encryption key certificate*, with a key ID, `issuedAt` and `notAfter` = 30 days later) | rotated weekly |
 
 - **A phone identity per phone, not per account.** Accounts can have more than one phone, and
   no key has to be copied between them. A friend's "security code" covers the set of their
@@ -91,14 +94,24 @@ test vectors.
   and on the watch the keys go under the app group's access group, so the notification service
   extension can read them for the prefetch. Not synced through iCloud Keychain: a new iPhone
   means a new identity and a notice to friends.
-- **Rotation:** each device makes a new encryption key weekly (at launch or on coming to the
-  foreground when the current one is 7 days old) and uploads its certificate. It keeps the
-  previous private key for 7 days for senders with a stale cache, then deletes it. That bounds
-  what a stolen device key can decrypt from recorded traffic to about two weeks.
-- **Sign-out** deletes all of the device's private keys. Signing out on a phone also deletes its
-  identity key; its watches' certificates are then worthless, as their sessions already are.
-  The server drops a device's certificates with its registration, on revocation, and on account
-  deletion.
+- **Rotation:** each device makes a new encryption key weekly (when the app, or on the watch the
+  notification extension, runs and the current one is 7 days old) and uploads its certificate.
+  It keeps the previous private key for 7 days for senders with a stale cache, then deletes it.
+  That bounds what a stolen device key can decrypt from recorded traffic to about two weeks.
+- **Expiry:** a sender seals only to the newest unexpired encryption key certificate it has for
+  each device, and never to one past `notAfter`. A device none of whose certificates are current
+  is left out of the bundle; if that leaves none of the friend's devices, Talk fails with "Can't
+  reach Steve right now" and an `e2eeFailed` (`no-current-key`) event. The 30 days keep a device
+  that's rarely opened reachable, while stopping a server from pushing an old key (perhaps
+  stolen from a device) back into use after that.
+- **Sign-out** deletes the device's signing and encryption keys. On a phone, the identity key
+  stays in the Keychain, filed under the account ID, so signing in again to the **same account**
+  on the same phone keeps it: new device keys under the same identity, and no notice for
+  friends. It's deleted when a **different account** signs in on that phone, when the account
+  is deleted, and with the app's data. Routine notices would teach people to ignore the ones
+  that matter. Revoked watches delete their keys on `session-ended`; the iPhone certifies them
+  again at the next sign-in. The server drops a device's certificates with its registration, on
+  revocation, and on account deletion.
 
 ## Messages
 
@@ -113,6 +126,7 @@ At `talk-start` the sender attaches a bundle:
   "v": 1,
   "sender": { "deviceId": "…", "deviceCert": "<b64>", "phoneCert": "<b64>", "encCert": "<b64>" },
   "keys": [ { "deviceId": "…", "keyId": "…", "enc": "<b64>", "ct": "<b64>" } ],
+  "sentAt": 1791331200000,
   "sig": "<b64>"
 }
 ```
@@ -121,9 +135,20 @@ At `talk-start` the sender attaches a bundle:
   the one that will ring: the ring may roll over to the iPhone, fall back, or the conversation
   may move to another device. Each entry is the message key sealed with HPKE to that device's
   current encryption key. The HPKE `info` binds the format version and the burst ID.
-- `sig` is the sender device's signature over the conversation ID, burst ID, codec, sender and
-  recipient account IDs, and every `keys` entry. It stops the relay from moving a message to
-  another conversation, replaying it under another burst ID, or swapping keys.
+- `sentAt` is the sender device's clock (ms) when it built the bundle.
+- `sig` is the sender device's signature over the conversation ID, burst ID, codec, `sentAt`,
+  sender and recipient account IDs, and every `keys` entry. It stops the relay from moving a
+  message to another conversation, relabelling it with another burst ID or time, sending it
+  back to its sender, or swapping keys.
+- **Replays:** a listener plays a message only if `sentAt` is at most about 3 minutes old by its
+  own clock: the longest a real message waits before its start is heard (a 35 s ring, a 30 s
+  join grace, queued bursts of up to 60 s, and a 30 s resume), plus a minute for clock drift. The
+  exact value goes in PR A. Within that window each device remembers, for 10 minutes, every
+  burst ID and sequence number it has played, and never plays one again. That's the same rule
+  the playback ledger already follows for prefetched frames the relay replays, so prefetch,
+  replays and resumes still work. A message older than the limit, or played already, is dropped
+  with an `e2eeFailed` event (`replayed`). Inside the window, the same message can still play on
+  another of the listener's devices, as a rollover or a moved conversation legitimately does.
 - `sender` carries the sender's certificate chain, so a listener checks the bundle with nothing
   but the friend's phone identity keys, which it has cached since they became friends. **No key
   is fetched on the ring path.** If the chain ends at a phone key the listener hasn't seen (the
@@ -162,6 +187,32 @@ dropped like a malformed one.
 The sender can build the next message's bundle as soon as the Talk screen opens, so the first
 press still talks at once. Sealing to 2–3 devices and one signature takes a few milliseconds even
 so.
+
+## The server as attacker
+
+Someone between a device and the relay faces TLS and this encryption both, and gains nothing.
+The real man-in-the-middle is whoever controls the server (us, a bad deploy, an intruder in the
+relay or the API, or a legal demand), because the server is the key directory. What they can do
+with this design:
+
+| Attack | Outcome |
+| --- | --- |
+| List their own phone key for Steve before Helen's app has ever seen Steve's | Works, unseen, unless Helen became Steve's friend through his invite link (the fingerprint catches it) or they verify codes later (phase 2) |
+| Add a phone of their own to Steve's devices later, so Helen's messages are sealed to it too | Helen sees "Steve's security code changed". Not blocked |
+| Add a watch of their own under Steve's real phone | Fails: only Steve's phone can certify his watches |
+| Substitute an encryption key | Fails: each is signed by its device |
+| Push an old encryption key back into use (perhaps stolen) | Fails after the certificate's 30 days. Before that, the sender still prefers the newest certificate it has seen |
+| Send audio as Steve, signed by a phone of their own | Plays, marked as from a just-changed key, after the notice |
+| Replay one of Steve's real messages later, or play it twice | Fails: the signed `sentAt` limits its age, and a device never plays a burst's sequence numbers twice |
+| Move a message to another conversation, to another friend, or back to its sender | Fails: the signature covers the conversation, both accounts and the burst |
+| Force plaintext | Only during the rollout, and only for a friend whose keys a device hasn't seen yet. Format 1 is refused everywhere after PR D |
+| Interfere when the watch hands its key to the iPhone | Not exposed: that goes over Apple's paired-watch link, not our server |
+| Listen to the Test Bot | Yes, by design: the server holds the bot's keys. Nobody's real conversations go through it |
+
+So, until phase 2, a malicious server can still listen by adding a phone key, but not without
+the friend's app showing a notice, except at a first contact that didn't come from an invite
+link. Nothing cryptographic stops it; people notice it. "Later" lists the two ideas that would
+close it further.
 
 ## Relay and API changes
 
@@ -227,15 +278,27 @@ frame.
 - **Watch notification extension:** downloads the prefetch as today and keeps it encrypted on
   disk. The app opens it at the tap, so plaintext never touches the disk.
 - **Notice:** when a friend's phone keys change, the friend's page and the Talk screen show
-  once: "Steve's security code changed. This happens when they sign in on a new iPhone." It
-  never blocks a message.
+  once: "Steve's security code changed. This happens when they sign in on a new iPhone." For a
+  day after the change, the Talk screen also marks each message from the new key while it plays
+  (a small mark by the friend's name, on the watch and the iPhone), because a notice seen once
+  is easy to miss. It never blocks a message.
+- **Invite fingerprint:** an invite link carries the inviter's phone key fingerprint in its
+  fragment, `overandout.app/i/<code>#k=<fingerprint>`. Browsers and universal links don't send
+  the fragment to the server, and most invites travel by Messages or email, which our server
+  doesn't carry. When the link is accepted, the app checks that the inviter's keys from the
+  directory include that key. If they don't, the friendship still forms, but the friend's page
+  says "Couldn't confirm Steve's security code" until a later check passes (phase 2). This
+  covers the invitee's first sight of the inviter, not the reverse; the inviter has no channel
+  back that skips the server. The invite web page must keep the fragment when it hands the link
+  to the app.
 - **Downgrade:** once a device has seen keys for a friend, it never sends format 1 to that friend
   and never plays format 1 from them (it drops the message and logs it). After the cutover,
   format 1 is refused everywhere.
 - **Telemetry** (on the device timeline; never keys or key material): `bundleSealed` with the
   time it took, `bundleOpened` with the time it took (between burst start and first audio, so
   run analysis shows the cost), `e2eeFailed` with a reason (`bad-signature`, `no-key`,
-  `stale-key`, `decrypt`, `downgrade`), and `keysRotated`.
+  `stale-key`, `no-current-key`, `decrypt`, `downgrade`, `replayed`), `keysRotated`, and
+  `keyChanged` (a friend's phone keys changed; the friend's account ID, never the keys).
 
 ## Rollout
 
@@ -252,8 +315,9 @@ Store launch while every tester can be told to update.
    pass-through, bundles in `burst-start` and the prefetch, `keys-stale`, the Test Bot and the
    Canary, and the perf budgets. Format 1 still works, so it can deploy before the apps (deploy
    with Steve's OK).
-4. **PR C: apps.** Keys, the watch link, sealing and opening, the extension, the notice,
-   rotation and telemetry. A build sends format 2 to a friend once every device of theirs has
+4. **PR C: apps.** Keys, the watch link, sealing and opening, replay checks, the extension, the
+   notice and the playing mark, rotation, the invite fingerprint (the apps, and the invite page
+   in `web/public` keeping the fragment; a website deploy with Steve's OK), and telemetry. A build sends format 2 to a friend once every device of theirs has
    keys, and format 1 otherwise. Simulators on a local relay, then a TestFlight build (ask
    first), then device runs.
 5. **PR D: enforcement.** Raise `minimumBuilds` to that build, refuse format 1 in the relay and
@@ -263,9 +327,15 @@ Store launch while every tester can be told to update.
 ## Testing
 
 - **Kit and server:** the shared vectors; round trips; tampering (each field of the bundle, a
-  frame's codec, sequence, or burst), the wrong device, an expired encryption key, the previous
-  key within the grace, an unknown phone key (plays, flags the notice), and format 1 from a
-  friend with keys (dropped).
+  frame's codec, sequence, burst or `sentAt`), the wrong device, an expired encryption key (not
+  sealed to; the friend's only device expired gives `no-current-key`), the previous key within
+  the grace, an unknown phone key (plays, flags the notice and the mark), format 1 from a friend
+  with keys (dropped), a message replayed after the age limit and a sequence played twice
+  (both dropped), and a prefetched message the relay then replays (plays once).
+- **Sign-in again:** the same account on the same phone keeps the identity key (no notice for
+  friends); a different account deletes it.
+- **Invite fingerprint:** a matching key, a different key (the warning), and a link without a
+  fragment (as today), through the universal link and through the invite web page.
 - **Relay:** bundles reach live, replayed, resumed and prefetched listeners unchanged;
   `keys-stale` for a missing device and an old key ID; rollover to the iPhone opens with the
   iPhone's entry; a conversation moved to another device.
@@ -294,9 +364,23 @@ Store launch while every tester can be told to update.
 ## Phase 2 (not planned yet)
 
 Verification: a security code (a fingerprint over both people's phone keys) and a QR code on the
-friend's page; the inviter's fingerprint in the invite link's fragment (`/i/<code>#k=…`, which
-the server never sees; check that universal links keep the fragment); after verifying, a later
-key change asks to verify again instead of only noting it.
+friend's page; a failed invite fingerprint check is cleared by verifying; after verifying, a
+later key change asks to verify again instead of only noting it.
+
+## Later (ideas kept, not planned)
+
+- **Holding messages from a changed key** (Steve, 2026-10-07: not now). Instead of playing a
+  message from a friend's new phone key with a mark, hold it until the listener accepts the
+  change ("Steve has a new iPhone. Play?"). Safer against a server adding a phone, but every
+  new phone delays the first message after it, and a tap on the watch to accept becomes part of
+  the ring path. Phase 2 already blocks key changes for friends who verified each other; this
+  would extend it to everyone.
+- **Key transparency.** Publish every account's phone keys to a public, append-only log (a
+  Merkle tree, as in CONIKS, Google's Key Transparency, WhatsApp's and Apple's iMessage
+  Contact Key Verification). Each app checks that the keys it's given for a friend, and its own
+  keys, are in the log as everyone else sees it, so a server can't show one person a key it
+  hides from the key's owner. Needs an independent auditor or witnesses to mean much, and new
+  hosting; worth it only at scale.
 
 ## Open questions
 
@@ -305,6 +389,9 @@ key change asks to verify again instead of only noting it.
    vectors as well as ours?
 3. The Secret Manager secret for the Test Bot's keys (Steve's OK).
 4. Export compliance answers (before PR D).
+5. Does the universal link hand the app the URL with its fragment, and can the invite web page
+   keep it through the TestFlight or App Store install for someone without the app?
+6. The exact replay age limit, from the timing table, and how much clock drift to allow.
 
 ## What needs Steve
 
