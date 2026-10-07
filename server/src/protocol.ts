@@ -43,7 +43,8 @@ export type ClientMessage =
   // answered (none for a rejoin or a move).
   // resume: a rejoin after the stream dropped mid-burst; replays that burst from fromSeq.
   | { type: "join"; conversationId: string; ringId?: string; resume?: { burstId: string; fromSeq: number } }
-  | { type: "leave"; conversationId: string };
+  // reason "end": the person tapped End (the friend's app ends too).
+  | { type: "leave"; conversationId: string; reason?: "end" };
 
 const MAX_ID_LENGTH = 128;
 const RING_ID = /^r_[\w-]{1,64}$/;
@@ -80,7 +81,8 @@ export function parseClientMessage(value: unknown): ClientMessage | null {
       return { type: "join", conversationId: m.conversationId, ...(ringId ? { ringId } : {}), ...(resume ? { resume } : {}) };
     }
     case "leave":
-      return id(m.conversationId) ? { type: m.type, conversationId: m.conversationId } : null;
+      if (!id(m.conversationId)) return null;
+      return { type: m.type, conversationId: m.conversationId, ...(m.reason === "end" ? { reason: "end" as const } : {}) };
     default:
       return null;
   }
@@ -111,7 +113,7 @@ export type ServerMessage =
   | { type: "joined"; conversationId: string; peer: string; replayBursts: number; resumedFrames?: number; ringId?: string }
   | { type: "burst-start"; conversationId: string; burstId: string; from: string; replay: boolean; resumed?: boolean; codec?: string }
   | { type: "burst-end"; conversationId: string; burstId: string }
-  | { type: "peer-left"; conversationId: string; peer: string }
+  | { type: "peer-left"; conversationId: string; peer: string; reason: "ended" | "left" | "disconnected" }
   // The two may no longer talk (a block, an unfriending or a deleted account): the relay
   // dropped the conversation and its audio.
   | { type: "conversation-ended"; conversationId: string; reason: "not-friends" }

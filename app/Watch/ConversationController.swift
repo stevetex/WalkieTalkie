@@ -55,6 +55,8 @@ final class ConversationController: NSObject, ObservableObject {
     /// them starts, or they talk.
     enum Outcome: Equatable {
         case missed, didNotAnswer, unreachable, continuedOnPhone, couldNotConnect
+        /// The friend tapped End.
+        case friendEnded
 
         /// The friend couldn't be reached: their dot is red.
         var isUnavailable: Bool { self == .didNotAnswer || self == .unreachable || self == .couldNotConnect }
@@ -456,8 +458,9 @@ final class ConversationController: NSObject, ObservableObject {
         incomingRingDelivered = nil
     }
 
+    /// The End button: the friend's app ends the conversation too.
     func end() {
-        finish()
+        finish(byPerson: true)
     }
 
     // MARK: Answering
@@ -882,7 +885,15 @@ final class ConversationController: NSObject, ObservableObject {
             finish(outcome: .unreachable)
             account.refresh()
         case "peer-left":
-            log("\(name) left")
+            log("\(name) left (\(message.reason ?? "no reason"))")
+            // They tapped End ("ended"): it ends here too (Steve and Helen, build 220). Their app
+            // leaving by itself ("left") or a dropped stream ("disconnected") keeps it: a new
+            // Talk rings them again, or they resume.
+            guard message.reason == "ended", message.conversationId == conversation?.conversationId else { return }
+            WKInterfaceDevice.current().play(.stop)
+            audio.endCapture {}
+            burstId = nil
+            finish(outcome: .friendEnded)
         case "ring-timeout":
             // The relay dropped what they didn't hear; the next Talk rings them again.
             WKInterfaceDevice.current().play(.failure)
@@ -1039,11 +1050,15 @@ final class ConversationController: NSObject, ObservableObject {
     // MARK: Teardown
 
     /// Ends the conversation. An `outcome` stays on the friend's row in the friends list.
-    private func finish(outcome: Outcome? = nil) {
+    /// `byPerson`: the End button. Only then does the leave say "end", which ends the friend's
+    /// side too; an idle timeout or a move to the iPhone leaves without it.
+    private func finish(outcome: Outcome? = nil, byPerson: Bool = false) {
         guard var ended = conversation else { return }
         if let outcome { outcomes[ended.peerId] = OutcomeNote(outcome: outcome, at: Date()) }
         if let conversationId = ended.conversationId {
-            relay.send(["type": "leave", "conversationId": conversationId])
+            var leave: [String: Any] = ["type": "leave", "conversationId": conversationId]
+            if byPerson { leave["reason"] = "end" }
+            relay.send(leave)
         }
         let offset = clockOffsetMs
         relay.close()

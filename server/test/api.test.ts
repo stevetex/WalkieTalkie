@@ -481,6 +481,39 @@ test("rollover: an unanswered watch rings the iPhone, within the first ring's ti
   }, { ringTimeoutMs: 800, rollOverMs: 300 });
 });
 
+test("rollover: an iPhone that only played a rolled-over message doesn't keep the conversation", async () => {
+  await withApi(async ({ url, pusher }) => {
+    const { alice, bob } = await twoDevices(url);
+    await register(url, alice.token, pushToTalk(PHONE));
+    await call(url, "PATCH", "/v2/me", alice.token, { rollOver: true });
+    const bobClient = relayClient(url, "bob", bob.token, "ios");
+    await bobClient.connect();
+    const alicePhone = relayClient(url, "alice-phone", alice.token, "ios");
+    await alicePhone.connect();
+    const alerts = () => pusher.sent.filter((p) => (p.pushType ?? "alert") === "alert" && p.token === WATCH).length;
+    const pushToTalks = () => pusher.sent.filter((p) => p.pushType === "pushtotalk").length;
+
+    // Rolled over: the iPhone plays it by itself, then iOS ends its call (a leave without "end").
+    const { conversationId } = await bobClient.talk(alice.user.id, pcm(2), { realtime: false });
+    await sleep(300);
+    assert.equal(pushToTalks(), 1);
+    alicePhone.send({ type: "join", conversationId, ringId: ringIn(pusher, PHONE).ringId });
+    await alicePhone.waitFor("burst-end");
+    alicePhone.send({ type: "leave", conversationId });
+    const left = await bobClient.waitFor("peer-left");
+    assert.equal(left.reason, "left");
+
+    // Bob talks again in the same conversation: the watch rings first again, not the iPhone.
+    const alertsBefore = alerts();
+    await bobClient.talk(alice.user.id, pcm(1), { realtime: false });
+    await sleep(100);
+    assert.equal(alerts(), alertsBefore + 1);
+    assert.equal(pushToTalks(), 1);
+    alicePhone.close();
+    bobClient.close();
+  }, { ringTimeoutMs: 800, rollOverMs: 200 });
+});
+
 test("rollover: off by default, and an answer or a decline on the watch stops it", async () => {
   await withApi(async ({ url, pusher }) => {
     const { alice, watchToken, bob } = await twoDevices(url);

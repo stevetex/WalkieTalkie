@@ -197,7 +197,7 @@ struct WalkieTalkieSection: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(option.title)
                         if option == .watchThenPhone {
-                            Text("Your iPhone rings if you don't answer your watch within 12 seconds.")
+                            Text("Your iPhone rings if you don't answer your watch within 20 seconds.")
                                 .font(.footnote)
                                 .foregroundStyle(Brand.secondary)
                         }

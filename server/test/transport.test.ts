@@ -113,6 +113,8 @@ test("the HTTP stream disconnecting leaves the conversation", async () => {
     watch.close();
     const left = await bot.waitFor("peer-left");
     assert.equal(left.peer, watchUser.id);
+    // A dropped stream isn't an End: the friend's app keeps the conversation for a resume.
+    assert.equal(left.reason, "disconnected");
     bot.close();
   });
 });

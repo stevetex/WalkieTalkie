@@ -225,6 +225,38 @@ test("half duplex: the floor is denied while the other side is talking", async (
   });
 });
 
+test("End tells the friend (reason ended), so their app ends too; leaving by itself doesn't", async () => {
+  await withServer(async (h) => {
+    const [alice, bob] = await friends(h, "Alice", "Bob");
+    const a = alice.client();
+    const b = bob.client();
+    await a.connect();
+    await b.connect();
+
+    const { conversationId } = await a.talk(bob.id, pcm(2), { realtime: false });
+    const ring = await b.waitFor("ring");
+    b.send({ type: "join", conversationId, ringId: ring.ringId });
+    await b.waitFor("burst-end");
+    // The app leaving by itself (an idle timeout, a PushToTalk call iOS ended): "left".
+    b.send({ type: "leave", conversationId });
+    const left = await a.waitFor("peer-left");
+    assert.equal(left.conversationId, conversationId);
+    assert.equal(left.peer, bob.id);
+    assert.equal(left.reason, "left");
+
+    // Rung again in the same conversation, Bob joins and taps End: "ended".
+    await a.talk(bob.id, pcm(2), { realtime: false });
+    const again = await b.waitFor("ring");
+    b.send({ type: "join", conversationId, ringId: again.ringId });
+    await b.waitFor("burst-end");
+    b.send({ type: "leave", conversationId, reason: "end" });
+    const ended = await a.waitFor("peer-left");
+    assert.equal(ended.reason, "ended");
+    a.close();
+    b.close();
+  });
+});
+
 test("after both leave, the next talk rings again in a new conversation", async () => {
   await withServer(async (h) => {
     const [alice, bob] = await friends(h, "Alice", "Bob");

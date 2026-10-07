@@ -279,8 +279,9 @@ final class TalkController: ObservableObject {
         Task { await uploadTimeline(timeline, conversationId: ring.conversationId, clockOffsetMs: offset, session: session) }
     }
 
+    /// The End button: the friend's app ends the conversation too.
     func end() {
-        finish()
+        finish(byPerson: true)
     }
 
     // MARK: PushToTalk events
@@ -562,7 +563,13 @@ final class TalkController: ObservableObject {
             friendStoppedTalkingIfDone()
             resetIdleTimer()
         case "peer-left":
-            log("\(name) left")
+            log("\(name) left (\(message.reason ?? "no reason"))")
+            // They tapped End ("ended"): it ends here too (Steve and Helen, build 220). Their app
+            // leaving by itself ("left": an idle timeout, a PushToTalk call iOS ended) or a
+            // dropped stream ("disconnected") keeps it: a new Talk rings them again, or they resume.
+            guard message.reason == "ended", message.conversationId == conversation?.conversationId else { return }
+            cancelBurst()
+            finish(status: "\(name) ended the conversation")
         case "ring-timeout":
             UINotificationFeedbackGenerator().notificationOccurred(.error)
             statusLine = "\(name) didn't answer"
@@ -758,13 +765,17 @@ final class TalkController: ObservableObject {
     }
 
     /// Ends the conversation. `status` stays on screen afterwards (for example "Missed Alice").
-    private func finish(status: String = "") {
+    /// `byPerson`: the End button. Only then does the leave say "end", which ends the friend's
+    /// side too; a PushToTalk call iOS ended in the background or an idle timeout leaves without it.
+    private func finish(status: String = "", byPerson: Bool = false) {
         guard var ended = conversation else {
             statusLine = status
             return
         }
         if let conversationId = ended.conversationId {
-            relay.send(["type": "leave", "conversationId": conversationId])
+            var leave: [String: Any] = ["type": "leave", "conversationId": conversationId]
+            if byPerson { leave["reason"] = "end" }
+            relay.send(leave)
         }
         let offset = clockOffsetMs
         relay.close()

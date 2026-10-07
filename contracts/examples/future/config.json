@@ -4,6 +4,6 @@
   "relay": { "baseUrl": "https://relay-us.overandout.app", "protocols": [2, 3], "audioFormats": [1, 2], "codecs": ["opus16k", "pcm16le16k", "opus24k"], "regions": ["us", "eu"] },
   "features": { "googleSignIn": true, "fcmDelivery": true, "groups": false },
   "compatibility": { "minimumBuilds": { "ios": 170, "watchos": 170, "android": 12, "wearos": 12 }, "message": null, "recommendedBuilds": { "ios": 200 } },
-  "timing": { "ringUnansweredMs": 35000, "answerJoinGraceMs": 30000, "conversationIdleMs": 45000, "rollOverMs": 12000 },
+  "timing": { "ringUnansweredMs": 35000, "answerJoinGraceMs": 30000, "conversationIdleMs": 45000, "rollOverMs": 20000 },
   "announcements": [{ "id": "a1", "text": "New: Android" }]
 }
