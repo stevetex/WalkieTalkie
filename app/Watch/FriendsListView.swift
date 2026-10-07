@@ -147,6 +147,7 @@ struct FriendRow: View {
         case .unreachable: return "Can't reach"
         case .continuedOnPhone: return "Continued on iPhone"
         case .couldNotConnect: return "Couldn't connect"
+        case .friendEnded: return "Ended"
         }
     }
 }

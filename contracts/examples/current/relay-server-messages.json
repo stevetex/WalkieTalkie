@@ -7,7 +7,7 @@
   { "type": "joined", "conversationId": "4f1c7f7e-9b1a-4f0b-9a55-1f6a0c3e2d11", "peer": "u_NvlyGM47nb3JKca_", "replayBursts": 1, "ringId": "r_3qgS0mXPRkK8z1yA" },
   { "type": "burst-start", "conversationId": "4f1c7f7e-9b1a-4f0b-9a55-1f6a0c3e2d11", "burstId": "8b0c6c52-3d0f-4b8e-a1f4-0d9e0f1a2b3c", "from": "u_NvlyGM47nb3JKca_", "replay": true, "codec": "opus16k" },
   { "type": "burst-end", "conversationId": "4f1c7f7e-9b1a-4f0b-9a55-1f6a0c3e2d11", "burstId": "8b0c6c52-3d0f-4b8e-a1f4-0d9e0f1a2b3c" },
-  { "type": "peer-left", "conversationId": "4f1c7f7e-9b1a-4f0b-9a55-1f6a0c3e2d11", "peer": "u_NvlyGM47nb3JKca_" },
+  { "type": "peer-left", "conversationId": "4f1c7f7e-9b1a-4f0b-9a55-1f6a0c3e2d11", "peer": "u_NvlyGM47nb3JKca_", "reason": "ended" },
   { "type": "moved", "conversationId": "4f1c7f7e-9b1a-4f0b-9a55-1f6a0c3e2d11" },
   { "type": "conversation-ended", "conversationId": "4f1c7f7e-9b1a-4f0b-9a55-1f6a0c3e2d11", "reason": "not-friends" },
   { "type": "ring-timeout", "conversationId": "4f1c7f7e-9b1a-4f0b-9a55-1f6a0c3e2d11", "peer": "u_NvlyGM47nb3JKca_", "droppedBursts": 1 },

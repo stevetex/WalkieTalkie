@@ -15,6 +15,7 @@ import {
   DEFAULT_CAPABILITIES,
   codecName,
   deliveryToken,
+  formFactorOf,
   isNotificationDelivery,
   platformLabel,
   type CodecName,
@@ -112,9 +113,14 @@ interface Conversation {
   kinds: Map<string, ClientKind>;
   // Who's in the conversation, and from which of their devices.
   joined: Map<string, string>;
-  // The device each member last joined or talked from. A ring later in the conversation goes
-  // there first, so the device in use keeps the conversation (design decision 2026-09-27).
+  // The device each member last joined or talked from (a join without a ring ID may rejoin).
   lastDevice: Map<string, string>;
+  // The device each member chose: talked from, or answered a ring on. A ring later in the
+  // conversation goes there first, so the device in use keeps the conversation (design decision
+  // 2026-09-27). An iPhone that joined only because a ring rolled over to it (PushToTalk plays
+  // by itself) doesn't take it: the next message rings the watch first again (Steve and Helen,
+  // build 220: after one rollover, every later message went to the iPhone alone).
+  chosenDevice: Map<string, string>;
   bursts: Burst[];
   floor: { userId: string; burstId: string } | null;
   ring: RingState | null;
@@ -224,7 +230,9 @@ export class Relay {
       resumeTtlMs: 30_000,
       ringTimeoutMs: 35_000,
       answerJoinTimeoutMs: 30_000,
-      rollOverMs: 12_000,
+      // 20 s (Steve, 2026-10-07): 12 s played the message on the iPhone while people were still
+      // reaching for the watch (Helen took 18.5 s).
+      rollOverMs: 20_000,
       prefetchPushAfterMs: 0,
       authTtlMs: 10_000,
       maxBurstMs: 60_000,
@@ -262,7 +270,7 @@ export class Relay {
     if (!devices.size) this.peers.delete(peer.userId);
     if (this.activeBursts.get(peer.userId)?.deviceId === peer.deviceId) this.endActiveBurst(peer.userId);
     for (const conversation of [...this.byId.values()]) {
-      if (conversation.joined.get(peer.userId) === peer.deviceId) this.leave(peer.userId, conversation);
+      if (conversation.joined.get(peer.userId) === peer.deviceId) this.leave(peer.userId, conversation, "disconnected");
     }
   }
 
@@ -277,8 +285,9 @@ export class Relay {
   }
 
   // A member joins or talks from this device. If they were in the conversation from another
-  // of their devices, it moves here, and that device is told.
-  private enter(conversation: Conversation, peer: Peer): void {
+  // of their devices, it moves here, and that device is told. `chosen`: false for an iPhone
+  // joining a ring that rolled over to it, which doesn't keep later rings.
+  private enter(conversation: Conversation, peer: Peer, chosen = true): void {
     const previous = conversation.joined.get(peer.userId);
     if (previous !== undefined && previous !== peer.deviceId) {
       const active = this.activeBursts.get(peer.userId);
@@ -288,6 +297,7 @@ export class Relay {
     }
     conversation.joined.set(peer.userId, peer.deviceId);
     conversation.lastDevice.set(peer.userId, peer.deviceId);
+    if (chosen) conversation.chosenDevice.set(peer.userId, peer.deviceId);
     // The kind each side talked or joined from first, for the cross-platform splits (telemetry.ts).
     if (peer.clientKind && !conversation.kinds.has(peer.userId)) {
       conversation.kinds.set(peer.userId, peer.clientKind);
@@ -323,7 +333,9 @@ export class Relay {
         break;
       case "leave": {
         const conversation = this.byId.get(message.conversationId);
-        if (conversation?.joined.get(peer.userId) === peer.deviceId) this.leave(peer.userId, conversation);
+        if (conversation?.joined.get(peer.userId) === peer.deviceId) {
+          this.leave(peer.userId, conversation, message.reason === "end" ? "ended" : "left");
+        }
         break;
       }
       default:
@@ -662,7 +674,9 @@ export class Relay {
     const conversationId = conversation.id;
     const now = this.opts.now();
     this.pruneBursts(conversation);
-    this.enter(conversation, peer);
+    const rolledOverToHere = conversation.rolledOver && conversation.ring?.to === peer.userId
+      && peer.clientKind !== undefined && formFactorOf(peer.clientKind) === "phone";
+    this.enter(conversation, peer, !rolledOverToHere);
     if (conversation.ring?.to === peer.userId && conversation.ring.state !== "ended") conversation.ring.state = "joined";
     this.clearRing(conversation);
     // A rejoin after the stream dropped: the burst they were hearing, from the first frame
@@ -689,11 +703,14 @@ export class Relay {
     return name ? { codec: name } : {};
   }
 
-  private leave(userId: string, conversation: Conversation): void {
+  // "ended": they tapped End (the apps end the conversation on their side too); "left": their
+  // app left by itself (an idle timeout, a PushToTalk call iOS ended in the background), so a
+  // new Talk rings them again; "disconnected": their stream dropped, and they may resume.
+  private leave(userId: string, conversation: Conversation, reason: "ended" | "left" | "disconnected"): void {
     conversation.joined.delete(userId);
     if (conversation.floor?.userId === userId) this.endActiveBurst(userId);
     const other = otherMember(conversation, userId);
-    this.memberPeer(conversation, other)?.sendJSON({ type: "peer-left", conversationId: conversation.id, peer: userId });
+    this.memberPeer(conversation, other)?.sendJSON({ type: "peer-left", conversationId: conversation.id, peer: userId, reason });
     this.prune(conversation);
   }
 
@@ -888,7 +905,7 @@ export class Relay {
     // codec null: whatever the burst's codec (to tell "nobody plays it" from "nobody at all").
     const eligible = devices.filter((d) => this.canRing(to, d, codec));
     const ordered: AccountDevice[] = [];
-    const sticky = eligible.find((d) => d.id === conversation.lastDevice.get(to));
+    const sticky = eligible.find((d) => d.id === conversation.chosenDevice.get(to));
     if (sticky) ordered.push(sticky);
     const first: FormFactor = preferred ?? (eligible.some((d) => d.formFactor === "watch") ? "watch" : "phone");
     for (const formFactor of [first, first === "watch" ? "phone" : "watch"] as const) {
@@ -1050,6 +1067,7 @@ export class Relay {
         kinds: new Map(),
         joined: new Map(),
         lastDevice: new Map(),
+        chosenDevice: new Map(),
         bursts: [],
         floor: null,
         ring: null,

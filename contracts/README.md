@@ -306,7 +306,7 @@ rejoin after a dropped stream (`resumeBurst`) or a deliberate move needs none.
 | `talk-start` | `to`, `burstId`, `codec` (`opus16k` or `pcm16le16k`) |
 | `talk-end` | `burstId` |
 | `join` | `conversationId`, `ringId?`, `resume?: {burstId, fromSeq}` |
-| `leave` | `conversationId` |
+| `leave` | `conversationId`, `reason?`: `end` when the person tapped End (the friend's app ends too); absent when the app left by itself (an idle timeout, a PushToTalk call iOS ended) |
 
 Server to client (clients ignore unknown types and fields):
 
@@ -320,7 +320,7 @@ Server to client (clients ignore unknown types and fields):
 | `joined` | `conversationId`, `peer`, `replayBursts`, `resumedFrames?`, `ringId?` |
 | `burst-start` | `conversationId`, `burstId`, `from`, `replay`, `resumed?`, `codec?` |
 | `burst-end` | `conversationId`, `burstId` |
-| `peer-left` | `conversationId`, `peer` |
+| `peer-left` | `conversationId`, `peer`, `reason?`: `ended` (they tapped End: end the conversation here too), `left` (their app left by itself; a new Talk rings them again) or `disconnected` (their stream dropped; they may resume). Absent from relays before 2026-10-07 |
 | `moved` | `conversationId`: the account continued this conversation on another device |
 | `conversation-ended` | `conversationId`, `reason` (`not-friends`) |
 | `ring-timeout` | `conversationId`, `peer`, `droppedBursts` |

@@ -29,6 +29,6 @@
         }
       }
     },
-    { "type": "object", "required": ["type", "conversationId"], "properties": { "type": { "const": "leave" }, "conversationId": { "$ref": "common.schema.json#/$defs/id" } } }
+    { "type": "object", "required": ["type", "conversationId"], "properties": { "type": { "const": "leave" }, "conversationId": { "$ref": "common.schema.json#/$defs/id" }, "reason": { "enum": ["end"] } } }
   ]
 }
