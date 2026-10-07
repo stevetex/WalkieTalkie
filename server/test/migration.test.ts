@@ -119,7 +119,7 @@ test("migration: plan writes nothing; apply makes every record readable by the v
   // Every user, device and device-keyed session still has v1 fields (the moved session doesn't).
   assert.equal(counts.v1Records, 3 + 5 + 2);
 
-  const accounts = new Accounts(docs);
+  const accounts = new Accounts(docs, { now: () => T.getTime() + DAY });
   // The same accounts, found through their identity indexes; the same settings, friends,
   // invites and photos.
   const signedIn = await accounts.signInWithApple("001.steve.1");
