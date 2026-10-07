@@ -56,6 +56,10 @@ public final class VoiceEncoder {
         if preferOpus, let format = Self.makeOpusFormat(),
            let converter = AVAudioConverter(from: VoiceFrame.pcmFormat, to: format) {
             converter.bitRate = bitRate
+            // Constant bitrate: every packet the same size (60 bytes at 24 kbps). The default,
+            // variable, makes silence 8 bytes and speech up to about 110, and packet sizes can
+            // give away what's said even once frames are encrypted (E2EE_SPEC.md).
+            converter.bitRateStrategy = AVAudioBitRateStrategy_Constant
             self.opusFormat = format
             self.converter = converter
             self.codec = .opus16k

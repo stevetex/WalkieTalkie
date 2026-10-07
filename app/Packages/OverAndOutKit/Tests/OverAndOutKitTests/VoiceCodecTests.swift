@@ -52,6 +52,25 @@ struct VoiceCodecTests {
         #expect(decodedSamples > 0)
     }
 
+    /// Constant bitrate: silence, a tone, noise and near-silence all encode to the same packet
+    /// size, so packet sizes don't show when someone speaks or pauses (E2EE_SPEC.md). Under the
+    /// default variable bitrate these ranged from 8 to 107 bytes.
+    @Test func opusPacketsAreAllTheSameSize() throws {
+        let encoder = VoiceEncoder()
+        try #require(encoder.codec == .opus16k, "no Opus encoder on this machine")
+        var sizes = Set<Int>()
+        for frame in 0..<200 {
+            let samples: [Float] = switch (frame / 25) % 4 {
+            case 0: Array(repeating: 0, count: VoiceFrame.samplesPerFrame)
+            case 1: tone()
+            case 2: (0..<VoiceFrame.samplesPerFrame).map { _ in Float.random(in: -0.3...0.3) }
+            default: (0..<VoiceFrame.samplesPerFrame).map { _ in Float.random(in: -0.01...0.01) }
+            }
+            sizes.insert(try #require(encoder.encode(samples)).count)
+        }
+        #expect(sizes == [60])
+    }
+
     private func tone() -> [Float] {
         (0..<VoiceFrame.samplesPerFrame).map { 0.3 * sin(Float($0) * 2 * .pi * 440 / Float(VoiceFrame.sampleRate)) }
     }

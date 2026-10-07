@@ -257,12 +257,20 @@ The relay passes ciphertext through. Specifically:
 
 ## Opus at a constant bitrate
 
-`VoiceCodec` asks for 24 kbps from `AVAudioConverter`, leaving the bitrate strategy at its
-default. First step: set `bitRateStrategy` to `AVAudioBitRateStrategy_Constant` and check, in the
-simulator and on the watch, that every packet is the same size (60 bytes at 24 kbps). That needs
-no E2EE and can ship on its own. If Apple's Opus encoder ignores it, format 2 pads inside the
-ciphertext to a fixed size per codec (a length prefix plus zeros), at the cost of a few bytes per
-frame.
+`VoiceCodec` asked for 24 kbps from `AVAudioConverter`, leaving the bitrate strategy at its
+default (variable). PR 0 sets `bitRateStrategy` to `AVAudioBitRateStrategy_Constant`. That needs
+no E2EE and ships on its own. If Apple's Opus encoder ignored it on some device, format 2 would
+pad inside the ciphertext to a fixed size per codec (a length prefix plus zeros), at the cost of
+a few bytes per frame.
+
+Measured 2026-10-07 (branch `opus-cbr`):
+- **macOS encoder**, 250 frames of silence, a sweeping tone, noise and near-silence: variable
+  (the old default) gave 8–107 bytes, 38 distinct sizes, silence always 8 bytes;
+  long-term-average and variable-constrained the same; constant gave 60 bytes for every packet.
+- **watchOS 27 simulator** → local relay → bot: a 4.5 s burst of the test tone, 227 frames,
+  `burstLevelSent` `bytes=60-60`.
+- **Still to check on devices** (TestFlight): real speech on the watch and the iPhone gives
+  `bytes=60-60`, and the voice sounds no worse. Pauses now cost 60 bytes a frame instead of 8.
 
 ## The apps
 
