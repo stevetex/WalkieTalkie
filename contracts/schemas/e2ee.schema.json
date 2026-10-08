@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "e2ee.schema.json",
+  "title": "End-to-end encryption: key bundles and keys (contracts/README.md, \"End-to-end encryption\")",
+  "$defs": {
+    "base64": { "type": "string", "minLength": 1, "maxLength": 8192, "pattern": "^[A-Za-z0-9+/]+={0,2}$" },
+    "keyId": { "type": "string", "pattern": "^[0-9a-f]{16}$" },
+    "bundle": {
+      "type": "object",
+      "required": ["v", "sender", "keys", "sentAt", "sig"],
+      "properties": {
+        "v": { "type": "integer", "minimum": 1 },
+        "sender": {
+          "type": "object",
+          "required": ["deviceId", "phoneCert", "deviceCert"],
+          "properties": {
+            "deviceId": { "$ref": "common.schema.json#/$defs/id" },
+            "phoneCert": { "$ref": "#/$defs/base64" },
+            "deviceCert": { "$ref": "#/$defs/base64" }
+          }
+        },
+        "keys": {
+          "type": "array",
+          "maxItems": 32,
+          "items": {
+            "type": "object",
+            "required": ["deviceId", "keyId", "enc", "ct"],
+            "properties": {
+              "deviceId": { "$ref": "common.schema.json#/$defs/id" },
+              "keyId": { "$ref": "#/$defs/keyId" },
+              "enc": { "$ref": "#/$defs/base64" },
+              "ct": { "$ref": "#/$defs/base64" }
+            }
+          }
+        },
+        "sentAt": { "$ref": "common.schema.json#/$defs/millis" },
+        "sig": { "$ref": "#/$defs/base64" }
+      }
+    },
+    "friendKeys": {
+      "type": "object",
+      "required": ["phones", "devices"],
+      "properties": {
+        "phones": { "type": "array", "maxItems": 16, "items": { "$ref": "#/$defs/base64" } },
+        "devices": {
+          "type": "array",
+          "maxItems": 32,
+          "items": {
+            "type": "object",
+            "required": ["deviceId", "clientKind", "deviceCert", "encCert"],
+            "properties": {
+              "deviceId": { "$ref": "common.schema.json#/$defs/id" },
+              "clientKind": { "$ref": "common.schema.json#/$defs/openClientKind" },
+              "deviceCert": { "$ref": "#/$defs/base64" },
+              "encCert": { "$ref": "#/$defs/base64" }
+            }
+          }
+        }
+      }
+    },
+    "deviceKeys": {
+      "type": "object",
+      "required": ["deviceCert", "encCert"],
+      "properties": {
+        "phoneCert": { "$ref": "#/$defs/base64" },
+        "deviceCert": { "$ref": "#/$defs/base64" },
+        "encCert": { "$ref": "#/$defs/base64" }
+      },
+      "additionalProperties": false
+    }
+  }
+}

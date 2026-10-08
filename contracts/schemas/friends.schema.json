@@ -17,7 +17,8 @@
           "photoVersion": { "$ref": "common.schema.json#/$defs/millis" },
           "avatar": { "type": "string" },
           "favorite": { "type": "boolean" },
-          "lastMessageAt": { "$ref": "common.schema.json#/$defs/millis" }
+          "lastMessageAt": { "$ref": "common.schema.json#/$defs/millis" },
+          "keys": { "$ref": "e2ee.schema.json#/$defs/friendKeys" }
         },
         "not": { "anyOf": [{ "required": ["signInProvider"] }, { "required": ["identity"] }, { "required": ["appleSub"] }] }
       }

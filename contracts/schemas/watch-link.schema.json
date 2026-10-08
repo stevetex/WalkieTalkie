@@ -11,6 +11,9 @@
     "needsSession": { "type": "boolean" },
     "signedIn": { "type": "boolean" },
     "signedOut": { "type": "boolean" },
+    "signingKey": { "$ref": "e2ee.schema.json#/$defs/base64" },
+    "phoneCert": { "$ref": "e2ee.schema.json#/$defs/base64" },
+    "deviceCert": { "$ref": "e2ee.schema.json#/$defs/base64" },
     "session": {
       "type": "object",
       "required": ["token", "expiresAt", "userId", "name", "deviceId"],

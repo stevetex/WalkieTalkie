@@ -23,7 +23,10 @@
     "droppedBursts": { "type": "integer", "minimum": 0 },
     "clientTime": { "type": "number" },
     "serverTime": { "type": "number" },
-    "codec": { "type": "string" }
+    "codec": { "type": "string" },
+    "format": { "type": "integer", "minimum": 1 },
+    "e2ee": { "$ref": "e2ee.schema.json#/$defs/bundle" },
+    "keys": { "$ref": "e2ee.schema.json#/$defs/friendKeys" }
   },
   "allOf": [
     { "if": { "properties": { "type": { "const": "ring" } } }, "then": { "$ref": "common.schema.json#/$defs/ringEnvelope" } },

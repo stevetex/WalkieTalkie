@@ -9,10 +9,11 @@ this contract, and a later Android launch must not need that build to change.
 - `schemas/`: JSON Schemas (draft 2020-12) for every JSON body below.
 - `examples/`: language-neutral examples. `examples/current/` is what today's Apple clients
   send and receive; `examples/future/` is what a later service may send them (Google accounts,
-  Android and Wear OS devices, FCM delivery, unknown fields, values and events). Apple clients
-  must decode every response example in both. `examples/rejected/` holds requests the server
-  must refuse.
-- `fixtures/`: binary audio frames and relay records, as hex.
+  Android and Wear OS devices, FCM delivery, unknown fields, values and events), and what
+  later clients send (end-to-end encryption). Apple clients must decode every response example
+  in both. `examples/rejected/` holds requests the server must refuse.
+- `fixtures/`: binary audio frames and relay records, as hex; `e2ee.json`, the end-to-end
+  encryption test vectors (made by `server/tools/e2ee-vectors.ts`).
 
 The server tests (`server/test/contracts.test.ts`) check the examples against the schemas and
 against the server's own parsers; the kit's tests (`ContractTests.swift`) decode them in Swift.
@@ -23,7 +24,7 @@ Three versions are kept apart, and change independently:
 | --- | --- | --- |
 | API version | 2 | the path: `/v2/…` |
 | Relay protocol version | 2 | `X-OAO-Relay-Protocol` on relay admission |
-| Binary audio format version | 1 | unchanged since the spike; `relay.audioFormats` in config |
+| Binary audio format version | 1; 2 specified, not yet served | `relay.audioFormats` in config; `format` on talk-start |
 
 Version 1 (the `/v1/…` paths, no admission headers) was the tester-only contract before Phase 0.
 It's retired: the service no longer serves it, and no build that speaks it is supported.
@@ -354,6 +355,136 @@ An Opus payload is 1–1275 bytes. Anything else (an unknown codec, a PCM payloa
 
 **Records** (the HTTPS transport): `type` (1 byte: 1 = JSON, 2 = audio frame), length (uint32
 big-endian, at most 64 KiB), then the payload. A partial record waits for the rest.
+
+## End-to-end encryption (binary audio format 2)
+
+Specified here and tested (`fixtures/e2ee.json`, `server/src/e2ee.ts`, the kit's `E2EE.swift`),
+but not yet served: no client sends it and the relay doesn't accept it until the server and app
+changes of [E2EE_SPEC.md](../E2EE_SPEC.md) land (PRs B and C). Only audio is encrypted; the relay
+forwards ciphertext it can't read.
+
+### Cryptography
+
+| Use | Algorithm |
+| --- | --- |
+| Signatures | Ed25519 (32-byte keys, 64-byte signatures) |
+| Sealing a message key to a device | HPKE (RFC 9180), base mode: DHKEM(X25519, HKDF-SHA256), HKDF-SHA256, ChaCha20-Poly1305; single-shot, empty additional data |
+| Frames | ChaCha20-Poly1305 |
+| Key IDs, fingerprints | SHA-256 |
+
+**Signed bytes are never JSON.** Every signed or sealed byte string is a context label, then
+fields, each encoded as:
+
+- `str` and `bytes`: a uint16 big-endian length, then the bytes (UTF-8 for `str`);
+- `u8`, `u16`: big-endian;
+- `u64`: uint64 big-endian (times are milliseconds since 1970).
+
+The label itself is the first `str`. JSON carries certificates, signatures and HPKE outputs as
+standard base64 with padding.
+
+### Keys and certificates
+
+Each phone has an **identity key** (Ed25519). Each device (a phone, or one of its watches) has a
+**signing key** (Ed25519), certified by its phone's identity key, and an **encryption key**
+(X25519), certified by the device's signing key and rotated weekly. A certificate is its body
+followed by a 64-byte Ed25519 signature over the body.
+
+| Certificate | Body | Signed by |
+| --- | --- | --- |
+| Phone (`phoneCert`) | `str("oao-phone-v1")`, `str(userId)`, `str(deviceId)`, `bytes(identityKey)`, `u64(issuedAt)` | its own identity key |
+| Device (`deviceCert`) | `str("oao-device-v1")`, `str(userId)`, `str(deviceId)`, `str(clientKind)`, `bytes(signingKey)`, `bytes(issuer's identityKey)`, `u64(issuedAt)` | the issuing phone's identity key |
+| Encryption key (`encCert`) | `str("oao-enckey-v1")`, `str(userId)`, `str(deviceId)`, `bytes(encKey)`, `u64(issuedAt)`, `u64(notAfter)` | the device's signing key |
+
+- A device certificate is valid only with a phone certificate of the same account whose identity
+  key is its issuer's. An encryption key certificate is valid only with a device certificate of
+  the same account and device.
+- `notAfter` is 30 days after `issuedAt`. A sender never seals to an expired key.
+- **Key ID:** the first 8 bytes of SHA-256(encKey), as 16 lowercase hex characters.
+- **Fingerprint** (what people compare; in invite links' fragments): the first 16 bytes of
+  SHA-256(`str("oao-fingerprint-v1")` ‖ identityKey), base64url without padding (22
+  characters).
+
+A device registers its keys with `PUT /v2/me/device`: `"e2ee": {phoneCert?, deviceCert,
+encCert}` (`phoneCert` from phones). Friends see them in `GET /v2/friends`, on each friend:
+
+```json
+"keys": {
+  "phones": ["<phoneCert>"],
+  "devices": [{ "deviceId": "…", "clientKind": "watchos", "deviceCert": "<base64>", "encCert": "<base64>" }]
+}
+```
+
+A sender seals to every device of the friend whose chain checks out (the device certificate from
+one of the friend's phones, the encryption key from the device) and whose key hasn't expired,
+and leaves out any that don't, rather than failing the message.
+
+Over WatchConnectivity, the watch's session request adds `signingKey` (its raw Ed25519 public
+key, base64); the phone's reply adds the watch's `deviceCert` and the phone's `phoneCert`.
+
+### The key bundle
+
+A message (burst) has its own random 32-byte message key. `talk-start` carries `"format": 2`
+and the bundle in `e2ee`; the relay passes the bundle to listeners in `burst-start` (`format`,
+`e2ee`), wherever it sends one: live, replayed, resumed, and in `GET /v2/rings/audio`.
+
+```json
+"e2ee": {
+  "v": 1,
+  "sender": { "deviceId": "…", "phoneCert": "<base64>", "deviceCert": "<base64>" },
+  "keys": [{ "deviceId": "…", "keyId": "0123456789abcdef", "enc": "<32 bytes>", "ct": "<48 bytes>" }],
+  "sentAt": 1791399595000,
+  "sig": "<64 bytes>"
+}
+```
+
+- `keys`: one entry for each of the listener's devices the sender could seal to: HPKE of the
+  message key to that device's encryption key, with info `str("oao-message-key-v1")`,
+  `str(burstId)`, `str(deviceId)`, `str(keyId)`. `enc` is HPKE's encapsulated key.
+- `sentAt`: the sender's clock when it made the bundle.
+- `sig`: the sender device's signing key over `str("oao-bundle-v1")`, `str(conversationId)`,
+  `str(burstId)`, `u8(2)`, `str(codec)`, `u64(sentAt)`, `str(sender's userId)`,
+  `str(sender's deviceId)`, `str(listener's userId)`, `u16(number of keys)`, then for each
+  entry in order `str(deviceId)`, `str(keyId)`, `bytes(enc)`, `bytes(ct)`.
+
+A listener's device opens it in this order, refusing with the first failure that applies (the
+names are the same on every platform, and in telemetry):
+
+1. `v` is 1, else `bad-bundle`.
+2. The phone certificate checks out and is the sender's account; the device certificate was
+   issued by it and is `sender.deviceId`. Else `bad-certificate`.
+3. The signature checks out with the device certificate's signing key, else `bad-signature`.
+4. `sentAt` is at most 180,000 ms before this device's clock (`too-old`) and at most 60,000 ms
+   after it (`from-the-future`).
+5. There's an entry for this device, with a key ID it holds (its current key or the previous
+   one), else `no-key`.
+6. HPKE opens it to 32 bytes, else `decrypt`.
+
+The sender's phone identity key is then compared with the ones this device has seen for that
+friend; a new one is shown as "security code changed", and doesn't stop the message.
+
+**Keys stale.** If a bundle has no entry, or an old key ID, for a device of the listener that has
+current keys, the relay refuses the floor: `talk-refused` with `reason: "keys-stale"` and the
+listener's current keys in `keys` (the same shape as the friends list). The client checks them
+as above, seals again and retries.
+
+### Frames
+
+The same header as format 1; the payload is encrypted:
+
+```
+byte 0      codec, as format 1
+bytes 1..4  sequence number, uint32 big-endian, as format 1
+bytes 5..   ChaCha20-Poly1305 ciphertext of the payload, then its 16-byte tag
+```
+
+- Key: HKDF-SHA256 of the message key, no salt, info `"oao-frames-v1"` (bytes, not a `str`), 32
+  bytes.
+- Nonce: 8 zero bytes, then the sequence number (uint32 big-endian).
+- Additional data: `0x02`, the codec byte, the sequence number (uint32 big-endian), then the
+  burst ID's UTF-8 bytes.
+- Valid sizes: an Opus payload of 17–1291 bytes (1–1275 encrypted, plus the tag), a PCM payload
+  of exactly 656.
+- A frame that doesn't decrypt is dropped, like a malformed one.
 
 ## The iPhone and its watch
 

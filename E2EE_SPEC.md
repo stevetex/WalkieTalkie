@@ -53,7 +53,11 @@ Not protected:
 
 Everything is in the platforms' own libraries: CryptoKit on iOS 17 and watchOS 10 (HPKE arrived
 in those releases, which are our minimums), Tink or BoringSSL on Android later, and node:crypto
-plus a vetted RFC 9180 package on the server (for the Test Bot and the shared test vectors).
+on the server (for the Test Bot and the shared test vectors). Node has no HPKE, so
+`server/src/e2ee.ts` builds it from node:crypto's X25519, HMAC-SHA256 and ChaCha20-Poly1305 and
+checks it against RFC 9180's published vectors; the server keeps no dependencies.
+
+The exact byte layouts are in [contracts/README.md](contracts/README.md), "End-to-end encryption".
 
 | Use | Algorithm |
 | --- | --- |
@@ -124,7 +128,7 @@ At `talk-start` the sender attaches a bundle:
 ```json
 "e2ee": {
   "v": 1,
-  "sender": { "deviceId": "…", "deviceCert": "<b64>", "phoneCert": "<b64>", "encCert": "<b64>" },
+  "sender": { "deviceId": "…", "phoneCert": "<b64>", "deviceCert": "<b64>" },
   "keys": [ { "deviceId": "…", "keyId": "…", "enc": "<b64>", "ct": "<b64>" } ],
   "sentAt": 1791331200000,
   "sig": "<b64>"
@@ -142,8 +146,8 @@ At `talk-start` the sender attaches a bundle:
   back to its sender, or swapping keys.
 - **Replays:** a listener plays a message only if `sentAt` is at most about 3 minutes old by its
   own clock: the longest a real message waits before its start is heard (a 35 s ring, a 30 s
-  join grace, queued bursts of up to 60 s, and a 30 s resume), plus a minute for clock drift. The
-  exact value goes in PR A. Within that window each device remembers, for 10 minutes, every
+  join grace, queued bursts of up to 60 s, and a 30 s resume), plus a minute for clock drift:
+  180 s, and at most 60 s in the future (PR A). Within that window each device remembers, for 10 minutes, every
   burst ID and sequence number it has played, and never plays one again. That's the same rule
   the playback ledger already follows for prefetched frames the relay replays, so prefetch,
   replays and resumes still work. A message older than the limit, or played already, is dropped
@@ -155,17 +159,20 @@ At `talk-start` the sender attaches a bundle:
   friend's new phone, a cache older than the change), it plays the message, records the
   "security code changed" notice, and refreshes the friend's keys in the background.
 
-A bundle is about 150 bytes per recipient device plus about 400 bytes of certificates and
-signature.
+A bundle is about 1.2 KB of JSON for a friend with two devices (the test vectors' 1,172 bytes):
+about 150 bytes per device, and the rest the sender's two certificates and the signature.
 
 ### Frames: binary audio format 2
 
 ```
 byte 0      codec (unchanged: 1 = opus16k, 2 = pcm16le16k)
 bytes 1..4  sequence number, uint32 big-endian (unchanged)
-bytes 5..   ChaCha20-Poly1305(message key, nonce = 8 zero bytes ‖ seq, aad = 0x02 ‖ codec ‖ seq ‖ burstId)
+bytes 5..   ChaCha20-Poly1305(frame key, nonce = 8 zero bytes ‖ seq, aad = 0x02 ‖ codec ‖ seq ‖ burstId)
             = the codec payload, then a 16-byte tag
 ```
+
+- The frame key is HKDF-SHA256 of the message key (info "oao-frames-v1"), so the message key
+  itself is only ever used once, inside HPKE.
 
 - The codec and sequence stay readable for codec enforcement, replay and resume, but they're
   authenticated. A frame moved to another position or burst fails to decrypt.
@@ -240,7 +247,8 @@ The relay passes ciphertext through. Specifically:
 - **Storage:** the certificates go on the device record in Firestore; no new collections. No new
   billed resources.
 - **Watch link:** the watch's session request gains `signingKey`; the iPhone's reply gains
-  `deviceCert`. Both are optional fields under `schemaVersion: 2`.
+  `deviceCert` and the iPhone's `phoneCert` (the watch puts both in its bundles). Optional
+  fields under `schemaVersion: 2`.
 
 ## The Test Bot, the Canary and the tools
 
@@ -318,7 +326,7 @@ Store launch while every tester can be told to update.
 2. **PR A: contract and crypto.** `contracts/` (format 2, the bundle, certificates, the
    signed-byte layouts, `keys-stale`), shared test vectors in `contracts/fixtures` (checked by
    `ContractTests.swift` and `contracts.test.ts`), the kit's `E2EE` module and its tests, and the
-   server's crypto helper. No change in behaviour.
+   server's crypto helper. No change in behaviour. Built 2026-10-07 on branch `e2ee-crypto`.
 3. **PR B: server.** Key registration, keys in the friends list, the relay's format 2
    pass-through, bundles in `burst-start` and the prefetch, `keys-stale`, the Test Bot and the
    Canary, and the perf budgets. Format 1 still works, so it can deploy before the apps (deploy
@@ -393,13 +401,13 @@ later key change asks to verify again instead of only noting it.
 ## Open questions
 
 1. Does Apple's Opus encoder honour constant bitrate? (PR 0 answers it.)
-2. Which RFC 9180 package for Node, and is the Test Bot's HPKE checked against the RFC's
-   vectors as well as ours?
+2. ~~Which RFC 9180 package for Node?~~ None: built from node:crypto and checked against the
+   RFC's vectors (PR A).
 3. The Secret Manager secret for the Test Bot's keys (Steve's OK).
 4. Export compliance answers (before PR D).
 5. Does the universal link hand the app the URL with its fragment, and can the invite web page
    keep it through the TestFlight or App Store install for someone without the app?
-6. The exact replay age limit, from the timing table, and how much clock drift to allow.
+6. ~~The exact replay age limit?~~ 180 s old, 60 s ahead (PR A).
 
 ## What needs Steve
 

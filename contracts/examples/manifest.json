@@ -40,6 +40,10 @@
     { "file": "future/relay-server-messages.json", "schema": "relay-server-message.schema.json", "direction": "response", "many": true },
     { "file": "future/errors.json", "schema": "error.schema.json", "direction": "response", "many": true },
     { "file": "future/watch-link-session.json", "schema": "watch-link.schema.json", "direction": "response" },
+    { "file": "future/relay-client-talk-start-e2ee.json", "schema": "relay-client-message.schema.json", "direction": "request" },
+    { "file": "future/device-ios-e2ee.json", "schema": "device-registration.schema.json", "direction": "request" },
+    { "file": "future/watch-link-request-e2ee.json", "schema": "watch-link.schema.json", "direction": "request" },
+    { "file": "future/watch-link-session-e2ee.json", "schema": "watch-link.schema.json", "direction": "response" },
 
     { "file": "rejected/device-ios-fcm.json", "schema": "device-registration.schema.json", "direction": "request", "schemaValid": true, "serverError": "unsupported-delivery" },
     { "file": "rejected/device-watchos-pushtotalk.json", "schema": "device-registration.schema.json", "direction": "request", "schemaValid": true, "serverError": "unsupported-delivery" },
@@ -50,6 +54,7 @@
     { "file": "rejected/companion-phone-kind.json", "schema": "companion-session.schema.json", "direction": "request", "schemaValid": false, "serverError": "unsupported-client-kind" },
     { "file": "rejected/talk-start-unknown-codec.json", "schema": "relay-client-message.schema.json", "direction": "request", "schemaValid": false },
     { "file": "rejected/talk-start-no-codec.json", "schema": "relay-client-message.schema.json", "direction": "request", "schemaValid": false },
+    { "file": "rejected/talk-start-format-2-no-bundle.json", "schema": "relay-client-message.schema.json", "direction": "request", "schemaValid": false },
     { "file": "rejected/join-pending.json", "schema": "relay-client-message.schema.json", "direction": "request", "schemaValid": false },
     { "file": "rejected/delete-no-proof.json", "schema": "delete-account.schema.json", "direction": "request", "schemaValid": false, "serverError": "proof-required" },
     { "file": "rejected/delete-google-proof.json", "schema": "delete-account.schema.json", "direction": "request", "schemaValid": true, "serverError": "wrong-provider" }
