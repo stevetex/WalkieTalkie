@@ -39,6 +39,12 @@ public final class AudioPipeline {
     /// telemetry's per-burst levels.
     public var onBurstPlayed: ((AudioLevel, Int, String) -> Void)?
 
+    /// How loud received messages play, 0–1, on top of the system volume (the watch's crown sets
+    /// it; 1 = as loud as the system volume allows).
+    public var playbackVolume: Float = 1 {
+        didSet { player.volume = playbackVolume }
+    }
+
     public var codecDescription: String {
         codec == .opus16k ? "Opus 24 kbps" : "PCM 256 kbps (no Opus encoder)"
     }
@@ -98,6 +104,7 @@ public final class AudioPipeline {
         wantsCapture = capture
         if !capture, engineHasInput, !engine.isRunning { replaceEngine() }
         if !attached {
+            player.volume = playbackVolume
             engine.attach(player)
             engine.connect(player, to: engine.mainMixerNode, format: VoiceFrame.pcmFormat)
             attached = true
