@@ -266,13 +266,15 @@ final class ConversationController: NSObject, ObservableObject {
         audio.onCaptureFormat = { [weak self] format in
             self?.conversation?.timeline.mark("micFormat", detail: format, once: false)
         }
+        audio.playbackVolume = Self.storedPlaybackVolume
         audio.onBurstPlayed = { [weak self] level, frames, detail in
-            // The system volume and the speaker, so "played quietly" can be told from "volume
-            // turned down" or a Bluetooth route.
+            // The system volume, the app's (the crown's) and the speaker, so "played quietly" can
+            // be told from "volume turned down" or a Bluetooth route.
             let session = AVAudioSession.sharedInstance()
             let volume = String(format: "%.2f", session.outputVolume)
+            let appVolume = String(format: "%.2f", Self.storedPlaybackVolume)
             self?.markLevel("burstLevelPlayed", level, frames: frames,
-                            context: ",volume=\(volume),out=\(AudioLevel.outputPort())" + detail)
+                            context: ",volume=\(volume),appVolume=\(appVolume),out=\(AudioLevel.outputPort())" + detail)
         }
         audio.onRestart = { [unowned self] detail in
             log("Audio: \(detail)")
@@ -980,6 +982,18 @@ final class ConversationController: NSObject, ObservableObject {
     }
 
     // MARK: Audio session
+
+    /// How loud friends' messages play, 0–1, set with the crown on a Talk screen (CrownVolume).
+    /// On top of the watch's own volume: 1 is as loud as that allows.
+    static let playbackVolumeKey = "playbackVolume"
+    static var storedPlaybackVolume: Float {
+        UserDefaults.standard.object(forKey: playbackVolumeKey) as? Float ?? 1
+    }
+
+    func setPlaybackVolume(_ volume: Float) {
+        UserDefaults.standard.set(volume, forKey: Self.playbackVolumeKey)
+        audio.playbackVolume = volume
+    }
 
     private func activateOwnAudio() {
         guard conversation != nil, conversation?.audioActive == false, !activatingAudio else { return }

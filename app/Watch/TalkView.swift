@@ -80,9 +80,8 @@ struct TalkView: View {
             // The crown turns the volume; while it changes, its level shows at bottom right, beside
             // the name.
             // Inset from the rounded corner, level with the name.
-            CrownVolume()
+            CrownVolume(controller: controller)
                 .frame(width: 26, height: 26)
-                .accessibilityLabel("Volume")
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
                 .padding(.trailing, Self.compactScreen ? 12 : 16)
                 .padding(.bottom, 5)
