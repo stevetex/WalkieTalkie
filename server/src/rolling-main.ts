@@ -24,6 +24,9 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { CANARY_DEVICE, canaryToken, runCanary, type CanaryResult } from "./canary.ts";
+import { Accounts, type DeviceRegistration } from "./accounts.ts";
+import { createEndpointSecrets, openEndpointSecrets } from "./endpoint-keys.ts";
+import { usableKeys } from "./e2ee.ts";
 import { parseMinimumBuilds, type MinimumBuilds } from "./contract.ts";
 import type { Docs } from "./docs.ts";
 import type { FirestoreData, FirestoreDocument } from "./firestore.ts";
@@ -141,8 +144,31 @@ if (import.meta.main) {
     },
     canary: async () => {
       if (!bots.canary || !bots.testBot || !signingKey) return null;
+      const accounts = new Accounts(ctx.docs);
+      const keys = openEndpointSecrets(createEndpointSecrets(bots.canary, CANARY_DEVICE, "ios"), bots.canary, CANARY_DEVICE);
+      const registration: DeviceRegistration = {
+        clientKind: "ios", delivery: { provider: "relay", mode: "foreground" },
+        availability: { enabled: true, notifications: "unknown" },
+        capabilities: { relayProtocols: [2], audioFormats: [1, 2], decode: ["opus16k", "pcm16le16k"], encode: ["pcm16le16k"], features: [] },
+        e2ee: keys.registration,
+      };
       const token = await canaryToken(ctx.docs, bots.canary, signingKey);
-      return runCanary({ relayUrl: nodes[0], token, botUserId: bots.testBot });
+      if (ctx.localDir) {
+        // The local relay owns accounts.json in memory. Register through its API instead of
+        // rewriting that file from this job's separate MemoryDocs instance.
+        const response = await fetch(new URL("/v2/me/device", nodes[0]), {
+          method: "PUT",
+          headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+          body: JSON.stringify(registration),
+        });
+        if (!response.ok) throw new Error(`Canary key registration: HTTP ${response.status}`);
+      } else {
+        await accounts.registerDevice(bots.canary, CANARY_DEVICE, registration);
+      }
+      const botKeys = await accounts.friendKeys(bots.testBot);
+      const encrypted = usableKeys(bots.testBot, botKeys, Date.now()).recipients.length > 0;
+      return runCanary({ relayUrl: nodes[0], token, botUserId: bots.testBot,
+        ...(encrypted ? { keys, botKeys } : {}) });
     },
   });
   const last = doc.canary.last;

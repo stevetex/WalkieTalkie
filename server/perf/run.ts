@@ -47,6 +47,7 @@ const scenarios: Array<[string, Scenario]> = [
   ["F", await import("./scenarios/f-unanswered.ts")],
   ["G", await import("./scenarios/g-codecs.ts")],
   ["H", await import("./scenarios/h-load.ts")],
+  ["I", await import("./scenarios/i-encrypted.ts")],
 ];
 
 export interface RunResults {

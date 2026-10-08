@@ -11,12 +11,13 @@
         "type": { "const": "talk-start" },
         "to": { "$ref": "common.schema.json#/$defs/userId" },
         "burstId": { "$ref": "common.schema.json#/$defs/id" },
+        "conversationId": { "$ref": "common.schema.json#/$defs/id" },
         "codec": { "$ref": "common.schema.json#/$defs/codec" },
         "format": { "enum": [1, 2] },
         "e2ee": { "$ref": "e2ee.schema.json#/$defs/bundle" }
       },
       "if": { "required": ["format"], "properties": { "format": { "const": 2 } } },
-      "then": { "required": ["e2ee"] }
+      "then": { "required": ["conversationId", "e2ee"] }
     },
     { "type": "object", "required": ["type", "burstId"], "properties": { "type": { "const": "talk-end" }, "burstId": { "$ref": "common.schema.json#/$defs/id" } } },
     {

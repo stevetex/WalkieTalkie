@@ -4,6 +4,8 @@
 
 import { randomUUID } from "node:crypto";
 import { Codec, FRAME_HEADER_BYTES, type ClientMessage, type MetricEvent, type ServerMessage } from "../src/protocol.ts";
+import { openBundle, sealBundle, usableKeys, type FrameCipher, type FriendKeysJSON, type KeyBundle } from "../src/e2ee.ts";
+import type { EndpointKeys } from "../src/endpoint-keys.ts";
 import { RecordParser, RecordType, encodeJSONRecord, encodeRecord } from "../src/records.ts";
 
 export interface ClientOptions {
@@ -20,13 +22,15 @@ export interface ClientOptions {
   // Codecs this client plays and sends (X-OAO-Decode and X-OAO-Encode).
   decode?: string[];
   encode?: string[];
+  audioFormats?: number[];
+  e2ee?: { keys: EndpointKeys; directory: (userId: string) => Promise<FriendKeysJSON> };
 }
 
 // A message as it goes on the wire: talk-start names its codec ("opus16k"), where the relay's
 // parsed ClientMessage carries the codec's byte.
 export type WireMessage =
   | Exclude<ClientMessage, { type: "talk-start" }>
-  | { type: "talk-start"; to: string; burstId: string; codec: string };
+  | { type: "talk-start"; to: string; burstId: string; codec: string; format?: 1 | 2; conversationId?: string; e2ee?: KeyBundle };
 
 type Waiter = { match: (m: ServerMessage) => boolean; resolve: (m: ServerMessage) => void };
 
@@ -45,6 +49,8 @@ export class SpikeClient {
   private stream: AbortController | null = null;
   private outbox: Buffer[] = [];
   private posting = false;
+  private conversations = new Map<string, string>();
+  private receiving: { format: 1 | 2; cipher: FrameCipher | null } = { format: 1, cipher: null };
 
   constructor(options: ClientOptions) {
     this.opts = options;
@@ -64,6 +70,7 @@ export class SpikeClient {
       "x-oao-relay-protocol": "2",
       "x-oao-decode": (this.opts.decode ?? ["opus16k", "pcm16le16k"]).join(","),
       "x-oao-encode": (this.opts.encode ?? ["opus16k", "pcm16le16k"]).join(","),
+      ...(this.opts.audioFormats ? { "x-oao-audio-formats": this.opts.audioFormats.join(",") } : {}),
     };
   }
 
@@ -143,6 +150,21 @@ export class SpikeClient {
 
   private receive(message: ServerMessage): void {
     if (message.type === "ping") return;
+    if (message.type === "ring") this.conversations.set(message.from, message.conversationId);
+    if (message.type === "joined") this.conversations.set(message.peer, message.conversationId);
+    if (message.type === "burst-start") {
+      this.conversations.set(message.from, message.conversationId);
+      this.receiving = { format: message.format === 2 ? 2 : 1, cipher: null };
+      if (message.format === 2 && message.e2ee && message.codec && this.opts.e2ee) {
+        try {
+          this.receiving.cipher = openBundle(message.e2ee,
+            { conversationId: message.conversationId, burstId: message.burstId, codec: message.codec, from: message.from, to: this.userId },
+            { deviceId: this.opts.e2ee.keys.secrets.deviceId, keys: this.opts.e2ee.keys.encryption }, Date.now()).cipher;
+        } catch (error) {
+          console.error(`[client] encrypted burst refused: ${(error as Error).message}`);
+        }
+      }
+    }
     this.received.push(message);
     this.onMessage(message);
     this.waiters = this.waiters.filter((w) => {
@@ -153,6 +175,17 @@ export class SpikeClient {
   }
 
   private receiveFrame(frame: Buffer): void {
+    if (this.receiving.format === 2) {
+      if (!this.receiving.cipher) return;
+      try {
+        const opened = this.receiving.cipher.open(frame);
+        const plain = Buffer.alloc(FRAME_HEADER_BYTES + opened.payload.length);
+        plain[0] = opened.codec;
+        plain.writeUInt32BE(opened.seq, 1);
+        opened.payload.copy(plain, FRAME_HEADER_BYTES);
+        frame = plain;
+      } catch { return; }
+    }
     this.frames.push(frame);
     this.onFrame(frame);
   }
@@ -246,20 +279,42 @@ export class SpikeClient {
     audio: { codec: number; frames: Buffer[] },
     options: { realtime?: boolean } = {},
   ): Promise<{ conversationId: string; pushed: boolean }> {
-    const burstId = randomUUID();
+    const codec = audio.codec === Codec.opus16k ? "opus16k" : "pcm16le16k";
     this.mark("talkPressed");
-    this.send({ type: "talk-start", to, burstId, codec: audio.codec === Codec.opus16k ? "opus16k" : "pcm16le16k" });
-    const granted = await this.waitForMatch(
-      (m) => (m.type === "floor-granted" || m.type === "floor-denied" || m.type === "talk-refused") && m.burstId === burstId,
-      "floor decision",
-    );
+    let granted: ServerMessage;
+    let burstId: string;
+    let cipher: FrameCipher | null = null;
+    for (let attempt = 0; ; attempt++) {
+      cipher = null;
+      burstId = randomUUID();
+      const conversationId = this.conversations.get(to) ?? randomUUID();
+      let bundle: KeyBundle | undefined;
+      if (this.opts.e2ee) {
+        const directory = await this.opts.e2ee.directory(to);
+        const recipients = usableKeys(to, directory, Date.now()).recipients;
+        if ((directory.devices.length || attempt > 0) && !recipients.length) throw new Error("no-current-key");
+        if (recipients.length) {
+          const sealed = sealBundle({ conversationId, burstId, codec, from: this.userId, to }, this.opts.e2ee.keys.sender, recipients, Date.now());
+          bundle = sealed.bundle;
+          cipher = sealed.cipher;
+        }
+      }
+      this.send({ type: "talk-start", to, burstId, codec, ...(bundle ? { format: 2, conversationId, e2ee: bundle } : {}) });
+      granted = await this.waitForMatch(
+        (m) => (m.type === "floor-granted" || m.type === "floor-denied" || m.type === "talk-refused") && m.burstId === burstId,
+        "floor decision",
+      );
+      if (granted.type !== "talk-refused" || granted.reason !== "keys-stale" || attempt >= 1) break;
+      // The next iteration fetches the friend's current certificates and seals a new bundle.
+    }
     if (granted.type === "floor-denied") throw new Error(`floor held by ${granted.holder}`);
     if (granted.type === "talk-refused") throw new Error(`refused: ${granted.reason}`);
     if (granted.type !== "floor-granted") throw new Error(`unexpected ${granted.type}`);
+    this.conversations.set(to, granted.conversationId);
     this.mark("floorGranted", granted.pushed ? "rang recipient" : "recipient live");
     const start = performance.now();
     for (let seq = 0; seq < audio.frames.length; seq++) {
-      this.sendFrame(audio.codec, seq, audio.frames[seq]);
+      this.sendFrame(audio.codec, seq, cipher ? cipher.seal(audio.codec, seq, audio.frames[seq]).subarray(FRAME_HEADER_BYTES) : audio.frames[seq]);
       if (seq === 0) this.mark("firstFrameSent");
       if (options.realtime !== false) {
         const due = start + (seq + 1) * 20;

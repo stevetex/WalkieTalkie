@@ -36,6 +36,8 @@ trap 'rm -rf "$stage"' EXIT
   if [ -n "${FULL_TIMELINE_USERS:-}" ]; then echo "FULL_TIMELINE_USERS=$FULL_TIMELINE_USERS"; fi
   # The always-on Test Bot answers rings inside the relay (server/src/test-bot.ts).
   if [ -n "${TEST_BOT_USER_ID:-}" ]; then echo "TEST_BOT_USER_ID=$TEST_BOT_USER_ID"; fi
+  # Once Steve has created this secret, every relay node uses the same persistent bot keys.
+  if gc secrets describe test-bot-e2ee >/dev/null 2>&1; then echo "TEST_BOT_E2EE_SECRET=test-bot-e2ee"; fi
   # The Ops dashboard (OPS_DASHBOARD_SPEC.md): its token opens /admin/stats only (setup-ops.sh
   # creates it), and the Canary's connections and conversations are left out of that view.
   if gc secrets describe ops-stats-token >/dev/null 2>&1; then echo "OPS_STATS_TOKEN_SECRET=ops-stats-token"; fi

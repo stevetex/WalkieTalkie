@@ -35,13 +35,15 @@
 
 import { parseArgs } from "node:util";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SpikeClient } from "./client.ts";
-import { BOT_TOKEN_FILE, loadBotSession } from "./test-account.ts";
+import { BOT_KEYS_FILE, BOT_TOKEN_FILE, loadBotSession } from "./test-account.ts";
 import { Codec, FRAME_HEADER_BYTES } from "../src/protocol.ts";
 import { GREETING_FILE } from "../src/test-bot.ts";
+import { openEndpointSecrets, type EndpointSecrets } from "../src/endpoint-keys.ts";
+import type { FriendKeysJSON } from "../src/e2ee.ts";
 
 const { positionals, values } = parseArgs({
   allowPositionals: true,
@@ -91,6 +93,16 @@ async function accountClient(): Promise<SpikeClient> {
     token: session.token,
     clientKind: values["client-kind"] as "watchos",
     encode: [values.pcm ? "pcm16le16k" : "opus16k"],
+    ...(existsSync(BOT_KEYS_FILE) ? (() => {
+      const keys = openEndpointSecrets(JSON.parse(readFileSync(BOT_KEYS_FILE, "utf8")) as EndpointSecrets, session.userId, "test-bot");
+      if (keys.secrets.clientKind !== values["client-kind"]) throw new Error("bot keys belong to another client kind");
+      return { audioFormats: [1, 2], e2ee: { keys, directory: async (userId: string): Promise<FriendKeysJSON> => {
+        const response = await fetch(new URL("/v2/friends", session.api), { headers: { authorization: `Bearer ${session.token}` } });
+        if (!response.ok) throw new Error(`friend keys: HTTP ${response.status}`);
+        const { friends } = await response.json() as { friends: Array<{ id: string; keys?: FriendKeysJSON }> };
+        return friends.find((friend) => friend.id === userId)?.keys ?? { phones: [], devices: [] };
+      } } };
+    })() : {}),
   });
   if (mode === "send" && !values.to?.startsWith("u_")) {
     const res = await fetch(new URL("/v2/friends", session.api), { headers: { authorization: `Bearer ${session.token}` } });

@@ -20,8 +20,8 @@ export const MAX_OPUS_PACKET_BYTES = 1275;
 
 // A frame the apps can decode: a known codec and a payload of the right size for it. The
 // relay drops anything else rather than forward it to a decoder.
-export function isValidFrame(frame: Buffer): boolean {
-  const payload = frame.length - FRAME_HEADER_BYTES;
+export function isValidFrame(frame: Buffer, format: 1 | 2 = 1): boolean {
+  const payload = frame.length - FRAME_HEADER_BYTES - (format === 2 ? 16 : 0);
   switch (frame[0]) {
     case Codec.pcm16le16k: return payload === PCM_FRAME_BYTES;
     case Codec.opus16k: return payload > 0 && payload <= MAX_OPUS_PACKET_BYTES;
@@ -37,7 +37,7 @@ export type ClientMessage =
   // First message after connecting. clientTime lets the client estimate clock offset.
   | { type: "hello"; clientTime: number }
   // Sender pressed Talk. Joins the sender to the conversation with `to`. codec: the burst's.
-  | { type: "talk-start"; to: string; burstId: string; codec: CodecId }
+  | { type: "talk-start"; to: string; burstId: string; codec: CodecId; format?: 1 | 2; conversationId?: string; e2ee?: KeyBundle }
   | { type: "talk-end"; burstId: string }
   // Receiver answered the ring: replay anything buffered, then go live. ringId: the ring being
   // answered (none for a rejoin or a move).
@@ -48,6 +48,31 @@ export type ClientMessage =
 
 const MAX_ID_LENGTH = 128;
 const RING_ID = /^r_[\w-]{1,64}$/;
+import type { FriendKeysJSON, KeyBundle } from "./e2ee.ts";
+
+// Bounds every untrusted bundle before it can be held or forwarded. The relay deliberately
+// doesn't verify the signature: recipients do that with their own cached identity keys.
+export function parseKeyBundle(value: unknown): KeyBundle | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const b = value as Record<string, unknown>;
+  const sender = b.sender as Record<string, unknown> | undefined;
+  const b64 = (v: unknown, bytes: number): v is string => typeof v === "string" && v.length <= Math.ceil(bytes / 3) * 4 &&
+    /^[A-Za-z0-9+/]+={0,2}$/.test(v) && Buffer.from(v, "base64").length === bytes;
+  const cert = (v: unknown): v is string => typeof v === "string" && v.length <= 2048 && /^[A-Za-z0-9+/]+={0,2}$/.test(v);
+  const id = (v: unknown): v is string => typeof v === "string" && v.length > 0 && v.length <= MAX_ID_LENGTH;
+  if (b.v !== 1 || !sender || !id(sender.deviceId) || !cert(sender.phoneCert) || !cert(sender.deviceCert) ||
+      !Number.isSafeInteger(b.sentAt) || (b.sentAt as number) < 0 || !b64(b.sig, 64) ||
+      !Array.isArray(b.keys) || b.keys.length === 0 || b.keys.length > 32) return null;
+  const seen = new Set<string>();
+  for (const entry of b.keys) {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) return null;
+    const k = entry as Record<string, unknown>;
+    if (!id(k.deviceId) || seen.has(k.deviceId) || typeof k.keyId !== "string" || !/^[0-9a-f]{16}$/.test(k.keyId) ||
+        !b64(k.enc, 32) || !b64(k.ct, 48)) return null;
+    seen.add(k.deviceId);
+  }
+  return value as KeyBundle;
+}
 
 export function isRingId(value: unknown): value is string {
   return typeof value === "string" && RING_ID.test(value);
@@ -66,7 +91,14 @@ export function parseClientMessage(value: unknown): ClientMessage | null {
       if (!id(m.to) || !id(m.burstId)) return null;
       const codec = m.codec === "opus16k" ? Codec.opus16k : m.codec === "pcm16le16k" ? Codec.pcm16le16k : undefined;
       if (codec === undefined) return null;
-      return { type: "talk-start", to: m.to, burstId: m.burstId, codec };
+      if (m.format !== undefined && m.format !== 1 && m.format !== 2) return null;
+      if (m.format === 2) {
+        const bundle = parseKeyBundle(m.e2ee);
+        if (!id(m.conversationId) || !bundle) return null;
+        return { type: "talk-start", to: m.to, burstId: m.burstId, codec, format: 2, conversationId: m.conversationId, e2ee: bundle };
+      }
+      if (m.e2ee !== undefined || m.conversationId !== undefined) return null;
+      return { type: "talk-start", to: m.to, burstId: m.burstId, codec, format: 1 };
     }
     case "talk-end":
       return id(m.burstId) ? { type: "talk-end", burstId: m.burstId } : null;
@@ -105,13 +137,13 @@ export type ServerMessage =
   // The burst was dropped and nobody was rung: not friends (an account can only ring its
   // friends), none of the friend's devices can be rung right now, or the listener can't play
   // the burst's codec.
-  | { type: "talk-refused"; burstId: string; reason: "not-friends" | "unavailable" | "unsupported-codec" }
+  | { type: "talk-refused"; burstId: string; reason: "not-friends" | "unavailable" | "unsupported-codec" | "keys-stale"; keys?: FriendKeysJSON }
   // The user joined or talked in this conversation from another of their devices, which now
   // has it; this device should end its side.
   | { type: "moved"; conversationId: string }
   // resumedFrames: on a rejoin with resume, how many frames of that burst are replayed.
   | { type: "joined"; conversationId: string; peer: string; replayBursts: number; resumedFrames?: number; ringId?: string }
-  | { type: "burst-start"; conversationId: string; burstId: string; from: string; replay: boolean; resumed?: boolean; codec?: string }
+  | { type: "burst-start"; conversationId: string; burstId: string; from: string; replay: boolean; resumed?: boolean; codec?: string; format?: 1 | 2; e2ee?: KeyBundle }
   | { type: "burst-end"; conversationId: string; burstId: string }
   | { type: "peer-left"; conversationId: string; peer: string; reason: "ended" | "left" | "disconnected" }
   // The two may no longer talk (a block, an unfriending or a deleted account): the relay

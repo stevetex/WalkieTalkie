@@ -49,6 +49,9 @@
     "G.codecs.opus.replay_bytes_down": 12197,
     "G.codecs.pcm.join_to_replay_done_1mbps": 1608,
     "G.codecs.pcm.replay_bytes_down": 99350,
+    "I.format2.bundle_bytes": 1000,
+    "I.format2.ciphertext_bytes": 4050,
+    "I.format2.frames": 50,
     "kit.capture.level_change_db.44k": {
       "absMax": 0.5
     },
