@@ -398,6 +398,49 @@ later key change asks to verify again instead of only noting it.
   hides from the key's owner. Needs an independent auditor or witnesses to mean much, and new
   hosting; worth it only at scale.
 
+### Maybe: server impersonation (reviewed 2026-10-07)
+
+Steve asked whether someone could pose as our servers, for example with a DNS hack on the
+client. All of this is a possible future step, not planned.
+
+**What protects us today.** Release builds talk only to `https://relay-1.overandout.app` and
+`https://overandout.app` (plain HTTP only for localhost, in the simulator). No code overrides the
+system's certificate checks, and the service can point apps only at HTTPS hosts under
+overandout.app (`ServiceConfigStore.approved`). So a DNS hack on the client, such as rogue Wi-Fi
+or a poisoned resolver, only stops the app connecting: the attacker can't show a valid
+certificate. Nothing is pinned, though: any certificate from a CA the device trusts is
+accepted.
+
+**What would work:**
+
+| Attack | Likelihood | Why it works |
+| --- | --- | --- |
+| Taking over our real DNS (the GoDaddy account or the registrar) | The realistic "DNS hack" | Whoever controls the zone can pass a CA's ownership check and get a valid certificate |
+| A wrongly issued certificate from any trusted CA | Rare | Nothing is pinned |
+| A root certificate installed on the device (company TLS inspection, MDM, a profile someone was tricked into) | Targeted | iOS trusts roots the user has enabled |
+
+**What an impersonator gets.** Before E2EE: all audio, the ability to inject it, friends lists,
+and **session tokens**. Those are bearer tokens (30 days, refreshable for a year), so the
+attacker can use the real service as that person afterwards. With E2EE: no more than the
+malicious server above, but stolen tokens still matter. A phone's token could register the
+attacker's own phone key for that device, which friends would see only as "security code
+changed".
+
+**Possible mitigations**, roughly by value for effort:
+1. **DNS hygiene** (Steve, at GoDaddy): a hardware-key second factor on the account, registrar
+   lock, DNSSEC.
+2. **CAA records** that allow only the CAs we use: Google Trust Services for the relay's
+   Caddy (`setup-relay.sh`); Firebase Hosting's CA to be checked. Optionally RFC 8657's
+   `accounturi`, which ties issuance to our own ACME account.
+3. **Certificate Transparency monitoring** for overandout.app: free services alert on any new
+   certificate, so a wrongly issued one shows up within hours.
+4. **Sessions bound to a device key:** each request signed with the device's signing key
+   (E2EE gives every device one), so a captured token alone is useless.
+5. **Certificate pinning** in the apps: pin CA keys with a backup, not the server's own
+   certificate. It defeats wrongly issued certificates and installed roots. But a CA change
+   could lock every installed app out until an update ships, and it breaks people behind
+   company TLS inspection. Last, if at all.
+
 ## Open questions
 
 1. Does Apple's Opus encoder honour constant bitrate? (PR 0 answers it.)
