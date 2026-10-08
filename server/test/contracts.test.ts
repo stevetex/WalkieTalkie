@@ -9,6 +9,10 @@ import { join } from "node:path";
 import { SchemaSet } from "./json-schema.ts";
 import { isValidFrame } from "../src/protocol.ts";
 import { RecordParser } from "../src/records.ts";
+import {
+  E2EEError, FrameCipher, MAX_BUNDLE_AGE_MS, MAX_CLOCK_AHEAD_MS, agreementKey, fingerprint, hpkeOpen, keyId, openBundle,
+  parseDeviceCertificate, parseEncryptionKeyCertificate, parsePhoneCertificate, rawPublic, signingKey, usableKeys,
+} from "../src/e2ee.ts";
 
 const contracts = join(import.meta.dirname!, "..", "..", "contracts");
 const schemas = new SchemaSet(join(contracts, "schemas"));
@@ -79,6 +83,53 @@ test("contracts: records parse whole, across chunk boundaries, and malformed one
     const [record] = parser.push(Buffer.from(r.hex!, "hex"));
     assert.equal(record.type, r.type === "json" ? 1 : 2, r.name);
     if (r.json) assert.deepEqual(JSON.parse(record.payload.toString("utf8")), r.json, r.name);
+  }
+});
+
+test("contracts: the end-to-end encryption vectors open, verify and refuse exactly as e2ee.json says", () => {
+  const v = JSON.parse(readFileSync(join(contracts, "fixtures", "e2ee.json"), "utf8"));
+  const hex = (s: string) => Buffer.from(s, "hex");
+  const b64 = (s: string) => Buffer.from(s, "base64");
+
+  assert.deepEqual(hpkeOpen(agreementKey(hex(v.hpke.skR)), hex(v.hpke.enc), hex(v.hpke.info), hex(v.hpke.aad), hex(v.hpke.ct)), hex(v.hpke.pt));
+  assert.equal(v.limits.maxBundleAgeMs, MAX_BUNDLE_AGE_MS);
+  assert.equal(v.limits.maxClockAheadMs, MAX_CLOCK_AHEAD_MS);
+
+  const devices = new Map<string, { deviceId: string; encSecret: string; keyId: string }>();
+  for (const account of v.accounts) {
+    const phone = parsePhoneCertificate(b64(account.phoneCert));
+    assert.equal(phone.userId, account.userId);
+    assert.equal(phone.identityKey.toString("hex"), account.identityKey);
+    assert.equal(rawPublic(signingKey(hex(account.identitySeed))).toString("hex"), account.identityKey);
+    assert.equal(fingerprint(phone.identityKey), account.fingerprint);
+    for (const d of account.devices) {
+      const device = parseDeviceCertificate(b64(d.deviceCert), phone);
+      assert.deepEqual([device.deviceId, device.clientKind], [d.deviceId, d.clientKind]);
+      assert.deepEqual(device.signingKey, rawPublic(signingKey(hex(d.signingSeed))));
+      const enc = parseEncryptionKeyCertificate(b64(d.encCert), device);
+      assert.equal(enc.encKey.toString("hex"), d.encKey);
+      assert.equal(enc.keyId, d.keyId);
+      assert.equal(keyId(rawPublic(agreementKey(hex(d.encSecret)))), d.keyId);
+      devices.set(d.name, d);
+    }
+  }
+
+  const { recipients } = usableKeys(v.friendKeys.userId, v.friendKeys.keys, v.now);
+  assert.deepEqual(recipients.map((r) => r.deviceId), v.friendKeys.usableDeviceIds);
+
+  const m = v.message;
+  for (const name of m.recipients) {
+    const d = devices.get(name)!;
+    const opened = openBundle(m.bundle, m.context, { deviceId: d.deviceId, keys: new Map([[d.keyId, agreementKey(hex(d.encSecret))]]) }, v.now);
+    for (const f of m.frames) assert.deepEqual(opened.cipher.open(hex(f.frame)), { codec: 1, seq: f.seq, payload: hex(f.payload) }, `${name} frame ${f.seq}`);
+    for (const f of v.badFrames) assert.throws(() => opened.cipher.open(hex(f.frame)), (e) => e instanceof E2EEError && e.failure === f.failure, f.name);
+  }
+  // The same message key gives the same frames.
+  assert.equal(new FrameCipher(hex(m.messageKey), m.context.burstId).seal(1, 0, hex(m.frames[0].payload)).toString("hex"), m.frames[0].frame);
+
+  for (const bad of v.bad) {
+    const keys = new Map(Object.entries(bad.open.keys as Record<string, string>).map(([id, secret]) => [id, agreementKey(hex(secret))]));
+    assert.throws(() => openBundle(bad.bundle, bad.context, { deviceId: bad.open.deviceId, keys }, bad.now), (e) => e instanceof E2EEError && e.failure === bad.failure, bad.name);
   }
 });
 

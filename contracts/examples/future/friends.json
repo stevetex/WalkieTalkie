@@ -1,7 +1,16 @@
 {
   "friends": [
     { "id": "u_googleGoogleGoo", "name": "Riley", "since": 1790640000000, "avatar": "a-mascot-from-2027", "status": "busy", "badges": ["early"] },
-    { "id": "u_helenHelenHelen", "name": "Helen", "since": 1790640000000, "favorite": true, "lastMessageAt": 1790726400000, "presence": { "online": true } }
+    {
+      "id": "u_bobBobBobBobBob1", "name": "Bob", "since": 1790640000000, "favorite": true, "lastMessageAt": 1790726400000, "presence": { "online": true },
+      "keys": {
+        "phones": ["AAxvYW8tcGhvbmUtdjEAEnVfYm9iQm9iQm9iQm9iQm9iMQAkOWE4YjdjNmQtNWU0Zi00YTNiLTljMmQtMWUwZjlhOGI3YzZkACAl8eJMuibCBaeprGWgHj6cLgv3gX2BEasZnIC/c6PcvAAAAaCwhoEA05ZxVCYyAAR2eynRof0saJwXR9I3dPT1x7WEB4ZGzpur2VaxK9OABW4hpTNv4NK+5DqbXwaJExdxDAU864YyBw=="],
+        "devices": [
+          { "deviceId": "9a8b7c6d-5e4f-4a3b-9c2d-1e0f9a8b7c6d", "clientKind": "ios", "deviceCert": "AA1vYW8tZGV2aWNlLXYxABJ1X2JvYkJvYkJvYkJvYkJvYjEAJDlhOGI3YzZkLTVlNGYtNGEzYi05YzJkLTFlMGY5YThiN2M2ZAADaW9zACAXM+kbOOdNKN/6Q8LIZthB61N/L4fhHXXx8SI+xhfMZgAgJfHiTLomwgWnqaxloB4+nC4L94F9gRGrGZyAv3Oj3LwAAAGgsIaBABsteM1OHZH44TYDV0Dt3u8FP2PtC+n5NSRTRn2RdkMjre0ScNiSkXNimNMSamJqPocVBatWUddVqWhxqdlEIQM=", "encCert": "AA1vYW8tZW5ja2V5LXYxABJ1X2JvYkJvYkJvYkJvYkJvYjEAJDlhOGI3YzZkLTVlNGYtNGEzYi05YzJkLTFlMGY5YThiN2M2ZAAg/DoOMk6b+X4MdYKejKzAVp9gGb4lzUwcDKIKvheJHRAAAAGhCBKdAAAAAaGikWUAcBlhzlXdUj8j8WFyciFCc5R29Tzx1uN+pPfT/Mr9y6b5fOPJ4hVzp5maefZvjvBiPMozIbdb1AuWsHKYzqLZAA==" },
+          { "deviceId": "1f2e3d4c-5b6a-4978-8695-a4b3c2d1e0f9", "clientKind": "watchos", "deviceCert": "AA1vYW8tZGV2aWNlLXYxABJ1X2JvYkJvYkJvYkJvYkJvYjEAJDFmMmUzZDRjLTViNmEtNDk3OC04Njk1LWE0YjNjMmQxZTBmOQAHd2F0Y2hvcwAgeYn5V1kBddfnJKLzVVnXaG87I9fviDY1y1yvEQ/pKq8AICXx4ky6JsIFp6msZaAePpwuC/eBfYERqxmcgL9zo9y8AAABoLCGgQDmv2OI8V8rxLXbmzjpoFI3iZsPU5ECQepl9d+31/sUeNrDmyEw3Q4Af0KmbU4ENHxqRiUraKtoA6DuM73zX/gO", "encCert": "AA1vYW8tZW5ja2V5LXYxABJ1X2JvYkJvYkJvYkJvYkJvYjEAJDFmMmUzZDRjLTViNmEtNDk3OC04Njk1LWE0YjNjMmQxZTBmOQAglYd0P+dqGswkGqppTOOkSIE7sK9+P0vR0mqIPR6ei3oAAAGhCBKdAAAAAaGikWUAoq/qEIzKmsNhpZiwF/IYDj66EeWFdGDEaEfAr7RY7IqJYOjfsjLn1mte4LCXW4riZxLxWIYkvOXQk7DaZ8Z7Bg==" }
+        ]
+      }
+    }
   ],
   "nextPage": null
 }

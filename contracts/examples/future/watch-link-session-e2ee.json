@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 2,
+  "session": {
+    "token": "eyJhbGciOiJFZERTQSJ9.e30.c2ln",
+    "expiresAt": 1793318400000,
+    "userId": "u_aliceAliceAlice1",
+    "name": "Alice",
+    "deviceId": "0d1e2f3a-4b5c-4d6e-8f70-8192a3b4c5d6",
+    "clientKind": "watchos",
+    "parentDeviceId": "6c8f7e2a-1b3d-4e5f-9a7b-0c1d2e3f4a5b"
+  },
+  "phoneCert": "AAxvYW8tcGhvbmUtdjEAEnVfYWxpY2VBbGljZUFsaWNlMQAkNmM4ZjdlMmEtMWIzZC00ZTVmLTlhN2ItMGMxZDJlM2Y0YTViACBxj0+Knr69JfOkGf8r2FtK80Obpkpl1/woayPGBHt1gQAAAaCwhoEAkYyqWTm0l9txDwX955jXm7oIyeQCYUa7WkEJ8jublNVTnRNRVSNdtmAxfCT4hZXC0ERvS3SvjONRbI2DS38DAw==",
+  "deviceCert": "AA1vYW8tZGV2aWNlLXYxABJ1X2FsaWNlQWxpY2VBbGljZTEAJDBkMWUyZjNhLTRiNWMtNGQ2ZS04ZjcwLTgxOTJhM2I0YzVkNgAHd2F0Y2hvcwAgy1tUL8h02l6VRxg8SsYqH8qUhIICw3ZlD2pQlSAkQ/gAIHGPT4qevr0l86QZ/yvYW0rzQ5umSmXX/ChrI8YEe3WBAAABoLCGgQBNYj8fMe5YVwUV5X3s36mO3zynkzCuiyza5MLxwasASdzWu1Z+Ar0uoGUrLGshgiXEyo/SN0npgE5M3uiN1NMA"
+}

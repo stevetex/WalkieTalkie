@@ -57,6 +57,7 @@
       "additionalProperties": false
     },
     "clientVersion": { "type": "string", "maxLength": 32 },
-    "build": { "type": "string", "maxLength": 32 }
+    "build": { "type": "string", "maxLength": 32 },
+    "e2ee": { "$ref": "e2ee.schema.json#/$defs/deviceKeys" }
   }
 }

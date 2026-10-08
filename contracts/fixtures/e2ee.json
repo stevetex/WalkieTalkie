@@ -1,0 +1,813 @@
+{
+  "description": "End-to-end encryption test vectors (contracts/README.md, \"End-to-end encryption\"). Made by server/tools/e2ee-vectors.ts; don't edit by hand. Binary values are hex, certificates and bundle fields base64.",
+  "limits": {
+    "maxBundleAgeMs": 180000,
+    "maxClockAheadMs": 60000
+  },
+  "hpke": {
+    "source": "RFC 9180, A.2.1 and A.2.1.1 (sequence number 0): DHKEM(X25519, HKDF-SHA256), HKDF-SHA256, ChaCha20Poly1305, base mode",
+    "skR": "8057991eef8f1f1af18f4a9491d16a1ce333f695d4db8e38da75975c4478e0fb",
+    "pkR": "4310ee97d88cc1f088a5576c77ab0cf5c3ac797f3d95139c6c84b5429c59662a",
+    "info": "4f6465206f6e2061204772656369616e2055726e",
+    "enc": "1afa08d3dec047a643885163f1180476fa7ddb54c6a8029ea33f95796bf2ac4a",
+    "aad": "436f756e742d30",
+    "pt": "4265617574792069732074727574682c20747275746820626561757479",
+    "ct": "1c5250d8034ec2b784ba2cfd69dbdb8af406cfe3ff938e131f0def8c8b60b4db21993c62ce81883d2dd1b51a28"
+  },
+  "now": 1791396000000,
+  "accounts": [
+    {
+      "name": "alice",
+      "userId": "u_aliceAliceAlice1",
+      "identitySeed": "9db2d8dee349d7ba4a50d92ea2803b89d532189e5ee0811d71138c48fdf29b24",
+      "identityKey": "718f4f8a9ebebd25f3a419ff2bd85b4af3439ba64a65d7fc286b23c6047b7581",
+      "fingerprint": "PnJAWW6egfDKlzcoGpsiRQ",
+      "phoneCert": "AAxvYW8tcGhvbmUtdjEAEnVfYWxpY2VBbGljZUFsaWNlMQAkNmM4ZjdlMmEtMWIzZC00ZTVmLTlhN2ItMGMxZDJlM2Y0YTViACBxj0+Knr69JfOkGf8r2FtK80Obpkpl1/woayPGBHt1gQAAAaCwhoEAkYyqWTm0l9txDwX955jXm7oIyeQCYUa7WkEJ8jublNVTnRNRVSNdtmAxfCT4hZXC0ERvS3SvjONRbI2DS38DAw==",
+      "devices": [
+        {
+          "name": "alice-phone",
+          "deviceId": "6c8f7e2a-1b3d-4e5f-9a7b-0c1d2e3f4a5b",
+          "clientKind": "ios",
+          "signingSeed": "58f9eafdcafadadc11075675f07b51f722d2ad875983405526c672c503610708",
+          "encSecret": "7a0a210501bcfc4f5e5df740a59924439243bb6bd2c19754ce291e5539e872c8",
+          "encKey": "d49eba651af067d81ca24b18b0f9563dc80eb2de21725cfb0e6cb03ffffa1f3e",
+          "keyId": "8c3fc0431b8613ce",
+          "deviceCert": "AA1vYW8tZGV2aWNlLXYxABJ1X2FsaWNlQWxpY2VBbGljZTEAJDZjOGY3ZTJhLTFiM2QtNGU1Zi05YTdiLTBjMWQyZTNmNGE1YgADaW9zACAZGQKYchOLqEIvljv8fJEVFrq0AGgniVxK7dCcXZ6jYgAgcY9Pip6+vSXzpBn/K9hbSvNDm6ZKZdf8KGsjxgR7dYEAAAGgsIaBAGZiVLD1Yn14xQUsR8doN5HGUCPfctGOoCq4fYtto/ByWrr3xeDOoRxq38K7fQ5HTlRg1rdvtwehijMzmP/+rwk=",
+          "encCert": "AA1vYW8tZW5ja2V5LXYxABJ1X2FsaWNlQWxpY2VBbGljZTEAJDZjOGY3ZTJhLTFiM2QtNGU1Zi05YTdiLTBjMWQyZTNmNGE1YgAg1J66ZRrwZ9gcoksYsPlWPcgOst4hclz7DmywP//6Hz4AAAGhCBKdAAAAAaGikWUAo9W7awVMLLmdWkqMBPsf8AwP7tMAJDIBbyZWPVhVV35MCwhk+X2niFfAGXBY7m0GKNaSn7NJjZVwKncoWCWgBA=="
+        },
+        {
+          "name": "alice-watch",
+          "deviceId": "0d1e2f3a-4b5c-4d6e-8f70-8192a3b4c5d6",
+          "clientKind": "watchos",
+          "signingSeed": "042120b235f0be19fedf1b1ff5443903c42b24b2378b053c9825404d0c33a2f0",
+          "encSecret": "056bcf6d7c47b17175e085358c8aab109b3f2139afc35f08f0136251bb9d1666",
+          "encKey": "f8857bef457e9b3c6172f983218e3d4de54ed73e67ebe5c4cdeedd4b06e1a860",
+          "keyId": "e375fa73e8762ba6",
+          "deviceCert": "AA1vYW8tZGV2aWNlLXYxABJ1X2FsaWNlQWxpY2VBbGljZTEAJDBkMWUyZjNhLTRiNWMtNGQ2ZS04ZjcwLTgxOTJhM2I0YzVkNgAHd2F0Y2hvcwAgy1tUL8h02l6VRxg8SsYqH8qUhIICw3ZlD2pQlSAkQ/gAIHGPT4qevr0l86QZ/yvYW0rzQ5umSmXX/ChrI8YEe3WBAAABoLCGgQBNYj8fMe5YVwUV5X3s36mO3zynkzCuiyza5MLxwasASdzWu1Z+Ar0uoGUrLGshgiXEyo/SN0npgE5M3uiN1NMA",
+          "encCert": "AA1vYW8tZW5ja2V5LXYxABJ1X2FsaWNlQWxpY2VBbGljZTEAJDBkMWUyZjNhLTRiNWMtNGQ2ZS04ZjcwLTgxOTJhM2I0YzVkNgAg+IV770V+mzxhcvmDIY49TeVO1z5n6+XEze7dSwbhqGAAAAGhCBKdAAAAAaGikWUAVfawHyOmhiJFUJyfpDdrBqEGvWPWkK941Mz6kR53JsE510z62RfeIZRFMb+gi501+a8qYt5rwzwl/PoXPWnRAg=="
+        }
+      ]
+    },
+    {
+      "name": "bob",
+      "userId": "u_bobBobBobBobBob1",
+      "identitySeed": "e3a72e0dbedf1b675ce34ef581d472c4834d09152dba07a3a5f5ceb812f0f43c",
+      "identityKey": "25f1e24cba26c205a7a9ac65a01e3e9c2e0bf7817d8111ab199c80bf73a3dcbc",
+      "fingerprint": "87k34EWX9yBKzmhZqkIm0A",
+      "phoneCert": "AAxvYW8tcGhvbmUtdjEAEnVfYm9iQm9iQm9iQm9iQm9iMQAkOWE4YjdjNmQtNWU0Zi00YTNiLTljMmQtMWUwZjlhOGI3YzZkACAl8eJMuibCBaeprGWgHj6cLgv3gX2BEasZnIC/c6PcvAAAAaCwhoEA05ZxVCYyAAR2eynRof0saJwXR9I3dPT1x7WEB4ZGzpur2VaxK9OABW4hpTNv4NK+5DqbXwaJExdxDAU864YyBw==",
+      "devices": [
+        {
+          "name": "bob-phone",
+          "deviceId": "9a8b7c6d-5e4f-4a3b-9c2d-1e0f9a8b7c6d",
+          "clientKind": "ios",
+          "signingSeed": "fe997b19927ef25a5b9048432129f496a5f15f54e9d596c1b48c45425dce0f60",
+          "encSecret": "03dcce71a980aacbe1aa6166a6efab182b9777e57b1a28a1a8e5f126a2c250ec",
+          "encKey": "fc3a0e324e9bf97e0c75829e8cacc0569f6019be25cd4c1c0ca20abe17891d10",
+          "keyId": "6800f47d32e25beb",
+          "deviceCert": "AA1vYW8tZGV2aWNlLXYxABJ1X2JvYkJvYkJvYkJvYkJvYjEAJDlhOGI3YzZkLTVlNGYtNGEzYi05YzJkLTFlMGY5YThiN2M2ZAADaW9zACAXM+kbOOdNKN/6Q8LIZthB61N/L4fhHXXx8SI+xhfMZgAgJfHiTLomwgWnqaxloB4+nC4L94F9gRGrGZyAv3Oj3LwAAAGgsIaBABsteM1OHZH44TYDV0Dt3u8FP2PtC+n5NSRTRn2RdkMjre0ScNiSkXNimNMSamJqPocVBatWUddVqWhxqdlEIQM=",
+          "encCert": "AA1vYW8tZW5ja2V5LXYxABJ1X2JvYkJvYkJvYkJvYkJvYjEAJDlhOGI3YzZkLTVlNGYtNGEzYi05YzJkLTFlMGY5YThiN2M2ZAAg/DoOMk6b+X4MdYKejKzAVp9gGb4lzUwcDKIKvheJHRAAAAGhCBKdAAAAAaGikWUAcBlhzlXdUj8j8WFyciFCc5R29Tzx1uN+pPfT/Mr9y6b5fOPJ4hVzp5maefZvjvBiPMozIbdb1AuWsHKYzqLZAA=="
+        },
+        {
+          "name": "bob-watch",
+          "deviceId": "1f2e3d4c-5b6a-4978-8695-a4b3c2d1e0f9",
+          "clientKind": "watchos",
+          "signingSeed": "b9227d516ba2ce33ffcdda1d5e88b394fd210d87638c8a0b58abbb7353f2836e",
+          "encSecret": "d1d7b91fa2335b43179854d5ef2e0b83383b213997eba72eb0cfaad0c88dd476",
+          "encKey": "9587743fe76a1acc241aaa694ce3a448813bb0af7e3f4bd1d26a883d1e9e8b7a",
+          "keyId": "2bdfad3524085e05",
+          "deviceCert": "AA1vYW8tZGV2aWNlLXYxABJ1X2JvYkJvYkJvYkJvYkJvYjEAJDFmMmUzZDRjLTViNmEtNDk3OC04Njk1LWE0YjNjMmQxZTBmOQAHd2F0Y2hvcwAgeYn5V1kBddfnJKLzVVnXaG87I9fviDY1y1yvEQ/pKq8AICXx4ky6JsIFp6msZaAePpwuC/eBfYERqxmcgL9zo9y8AAABoLCGgQDmv2OI8V8rxLXbmzjpoFI3iZsPU5ECQepl9d+31/sUeNrDmyEw3Q4Af0KmbU4ENHxqRiUraKtoA6DuM73zX/gO",
+          "encCert": "AA1vYW8tZW5ja2V5LXYxABJ1X2JvYkJvYkJvYkJvYkJvYjEAJDFmMmUzZDRjLTViNmEtNDk3OC04Njk1LWE0YjNjMmQxZTBmOQAglYd0P+dqGswkGqppTOOkSIE7sK9+P0vR0mqIPR6ei3oAAAGhCBKdAAAAAaGikWUAoq/qEIzKmsNhpZiwF/IYDj66EeWFdGDEaEfAr7RY7IqJYOjfsjLn1mte4LCXW4riZxLxWIYkvOXQk7DaZ8Z7Bg=="
+        }
+      ]
+    },
+    {
+      "name": "mallory",
+      "userId": "u_malloryMallory1",
+      "identitySeed": "4ec7334f917ecd64966b97c2aa8410bf954ebc23318d6ddf5cb7bd65f04030a5",
+      "identityKey": "736126a44cf15a38ac1a81c42f5837d3bbb791be9d25ad315ce314e737fc3e4d",
+      "fingerprint": "9UkMC72vKtw3Ddz6C_ABnQ",
+      "phoneCert": "AAxvYW8tcGhvbmUtdjEAEXVfbWFsbG9yeU1hbGxvcnkxACQ3YjZhNTk0OC0zNzI2LTQxNTAtOWY4ZS03ZDZjNWI0YTM5MjgAIHNhJqRM8Vo4rBqBxC9YN9O7t5G+nSWtMVzjFOc3/D5NAAABoLCGgQDysE4BF6Viv/e7S+JnMwBtPymxaWcHB68xpHf2V0AwcTavuq5oOhyAl91NB7wHpQrJx7Jl6m/NjRP8y1M1O90J",
+      "devices": [
+        {
+          "name": "mallory-phone",
+          "deviceId": "7b6a5948-3726-4150-9f8e-7d6c5b4a3928",
+          "clientKind": "ios",
+          "signingSeed": "6db2712c984e52bb72d34b11199a5960a40926d3a0cadfdab074c583b4ff8725",
+          "encSecret": "14f7f612f035f75a75789f28099abd6efe211bade045b365fe6d54ff1aad8139",
+          "encKey": "114c90855a2796df48ef8b705922a1aca93cbba524f612c4e6056e6fdb31755f",
+          "keyId": "d3633cf6d8157258",
+          "deviceCert": "AA1vYW8tZGV2aWNlLXYxABF1X21hbGxvcnlNYWxsb3J5MQAkN2I2YTU5NDgtMzcyNi00MTUwLTlmOGUtN2Q2YzViNGEzOTI4AANpb3MAIIH5oNDFe3z4Nz/DUGcmlRwlm1sdDa8rCAAARn2jxnoOACBzYSakTPFaOKwagcQvWDfTu7eRvp0lrTFc4xTnN/w+TQAAAaCwhoEA3AVZryC7Q7nw7t6S45n60N7bTQFskWir53SLIBbXQihjfTZXzxM47K387YKoBWaJoPkuKF1XkYMWPrc0G4SkAA==",
+          "encCert": "AA1vYW8tZW5ja2V5LXYxABF1X21hbGxvcnlNYWxsb3J5MQAkN2I2YTU5NDgtMzcyNi00MTUwLTlmOGUtN2Q2YzViNGEzOTI4ACARTJCFWieW30jvi3BZIqGsqTy7pST2EsTmBW5v2zF1XwAAAaEIEp0AAAABoaKRZQAf1Hqf5CFfcPT+3PYeW331af691DR1UCRRhcCs8NaawIt8xR16lz2Sd6thjoRdf5VPl+OmmYU5xoLOg81Bo4oM"
+        }
+      ]
+    }
+  ],
+  "friendKeys": {
+    "userId": "u_bobBobBobBobBob1",
+    "keys": {
+      "phones": [
+        "AAxvYW8tcGhvbmUtdjEAEnVfYm9iQm9iQm9iQm9iQm9iMQAkOWE4YjdjNmQtNWU0Zi00YTNiLTljMmQtMWUwZjlhOGI3YzZkACAl8eJMuibCBaeprGWgHj6cLgv3gX2BEasZnIC/c6PcvAAAAaCwhoEA05ZxVCYyAAR2eynRof0saJwXR9I3dPT1x7WEB4ZGzpur2VaxK9OABW4hpTNv4NK+5DqbXwaJExdxDAU864YyBw=="
+      ],
+      "devices": [
+        {
+          "deviceId": "9a8b7c6d-5e4f-4a3b-9c2d-1e0f9a8b7c6d",
+          "clientKind": "ios",
+          "deviceCert": "AA1vYW8tZGV2aWNlLXYxABJ1X2JvYkJvYkJvYkJvYkJvYjEAJDlhOGI3YzZkLTVlNGYtNGEzYi05YzJkLTFlMGY5YThiN2M2ZAADaW9zACAXM+kbOOdNKN/6Q8LIZthB61N/L4fhHXXx8SI+xhfMZgAgJfHiTLomwgWnqaxloB4+nC4L94F9gRGrGZyAv3Oj3LwAAAGgsIaBABsteM1OHZH44TYDV0Dt3u8FP2PtC+n5NSRTRn2RdkMjre0ScNiSkXNimNMSamJqPocVBatWUddVqWhxqdlEIQM=",
+          "encCert": "AA1vYW8tZW5ja2V5LXYxABJ1X2JvYkJvYkJvYkJvYkJvYjEAJDlhOGI3YzZkLTVlNGYtNGEzYi05YzJkLTFlMGY5YThiN2M2ZAAg/DoOMk6b+X4MdYKejKzAVp9gGb4lzUwcDKIKvheJHRAAAAGhCBKdAAAAAaGikWUAcBlhzlXdUj8j8WFyciFCc5R29Tzx1uN+pPfT/Mr9y6b5fOPJ4hVzp5maefZvjvBiPMozIbdb1AuWsHKYzqLZAA=="
+        },
+        {
+          "deviceId": "1f2e3d4c-5b6a-4978-8695-a4b3c2d1e0f9",
+          "clientKind": "watchos",
+          "deviceCert": "AA1vYW8tZGV2aWNlLXYxABJ1X2JvYkJvYkJvYkJvYkJvYjEAJDFmMmUzZDRjLTViNmEtNDk3OC04Njk1LWE0YjNjMmQxZTBmOQAHd2F0Y2hvcwAgeYn5V1kBddfnJKLzVVnXaG87I9fviDY1y1yvEQ/pKq8AICXx4ky6JsIFp6msZaAePpwuC/eBfYERqxmcgL9zo9y8AAABoLCGgQDmv2OI8V8rxLXbmzjpoFI3iZsPU5ECQepl9d+31/sUeNrDmyEw3Q4Af0KmbU4ENHxqRiUraKtoA6DuM73zX/gO",
+          "encCert": "AA1vYW8tZW5ja2V5LXYxABJ1X2JvYkJvYkJvYkJvYkJvYjEAJDFmMmUzZDRjLTViNmEtNDk3OC04Njk1LWE0YjNjMmQxZTBmOQAglYd0P+dqGswkGqppTOOkSIE7sK9+P0vR0mqIPR6ei3oAAAGhCBKdAAAAAaGikWUAoq/qEIzKmsNhpZiwF/IYDj66EeWFdGDEaEfAr7RY7IqJYOjfsjLn1mte4LCXW4riZxLxWIYkvOXQk7DaZ8Z7Bg=="
+        },
+        {
+          "deviceId": "2b3c4d5e-6f70-4182-93a4-b5c6d7e8f901",
+          "clientKind": "watchos",
+          "deviceCert": "AA1vYW8tZGV2aWNlLXYxABJ1X2JvYkJvYkJvYkJvYkJvYjEAJDJiM2M0ZDVlLTZmNzAtNDE4Mi05M2E0LWI1YzZkN2U4ZjkwMQAHd2F0Y2hvcwAgsLDnKKmJr1p7sfPsFnmptQ+mtwzIAbDabg9Y4nWFJ/kAICXx4ky6JsIFp6msZaAePpwuC/eBfYERqxmcgL9zo9y8AAABn+KIIQDpxHPU6KGv5AI9CERNNXKq+ecwZjOLhZVbFf6V20udisOhNirppsaxGrdRY64PHUNzTgE+pvNDzM7vdoaS5rkA",
+          "encCert": "AA1vYW8tZW5ja2V5LXYxABJ1X2JvYkJvYkJvYkJvYkJvYjEAJDJiM2M0ZDVlLTZmNzAtNDE4Mi05M2E0LWI1YzZkN2U4ZjkwMQAgqFu7bRF0C4q5on84uDpxO4UzqO6AJkQpxPa5JxbzenIAAAGgd+CNAAAAAaESX1UAngqXrQAcJ3w2SVE8qZrabhzUZLQ8/QKV2hvSUZQWFfkkQ8q5A8ExFBDv5RiRCTy/CgNMXpnXWemmVKGwDjAtCQ=="
+        },
+        {
+          "deviceId": "3c4d5e6f-7081-4293-a4b5-c6d7e8f90a1b",
+          "clientKind": "watchos",
+          "deviceCert": "AA1vYW8tZGV2aWNlLXYxABJ1X2JvYkJvYkJvYkJvYkJvYjEAJDNjNGQ1ZTZmLTcwODEtNDI5My1hNGI1LWM2ZDdlOGY5MGExYgAHd2F0Y2hvcwAgLI59IlxS231Icfdcb71kA9+ATdMUvgp6cPmESZWKncQAIHNhJqRM8Vo4rBqBxC9YN9O7t5G+nSWtMVzjFOc3/D5NAAABoRJfVQB8SHTzrcfhlWxCz2NeULjOOKHHC02YrI/WIfyxn5uRD3iNm8hRaNa7/7isC8cOG/nUNWIK4NZwW1+4a0GvudkA",
+          "encCert": "AA1vYW8tZW5ja2V5LXYxABJ1X2JvYkJvYkJvYkJvYkJvYjEAJDNjNGQ1ZTZmLTcwODEtNDI5My1hNGI1LWM2ZDdlOGY5MGExYgAgBc06we3P4ZnYxjphwR/XIvQzI7HY3RWUmlv/5KC0kXIAAAGhEl9VAAAAAaGs3h0A5H9pWwCpnq9CbJAUm/h1BUbkX58YFr4F3QaP0kcGWltsXKax68bU4DrjrnXzhM6miR5oZytJXy/hpqgFIUDlBg=="
+        }
+      ]
+    },
+    "usableDeviceIds": [
+      "9a8b7c6d-5e4f-4a3b-9c2d-1e0f9a8b7c6d",
+      "1f2e3d4c-5b6a-4978-8695-a4b3c2d1e0f9"
+    ]
+  },
+  "message": {
+    "sender": "alice-watch",
+    "context": {
+      "conversationId": "4f1c7f7e-9b1a-4f0b-9a55-1f6a0c3e2d11",
+      "burstId": "8b0c6c52-3d0f-4b8e-a1f4-0d9e0f1a2b3c",
+      "codec": "opus16k",
+      "from": "u_aliceAliceAlice1",
+      "to": "u_bobBobBobBobBob1"
+    },
+    "sentAt": 1791395995000,
+    "messageKey": "9c88f00980a6d58de5235cdde48472e5a586a4cbdb49b23eef8077f244ff7d24",
+    "bundle": {
+      "v": 1,
+      "sender": {
+        "deviceId": "0d1e2f3a-4b5c-4d6e-8f70-8192a3b4c5d6",
+        "phoneCert": "AAxvYW8tcGhvbmUtdjEAEnVfYWxpY2VBbGljZUFsaWNlMQAkNmM4ZjdlMmEtMWIzZC00ZTVmLTlhN2ItMGMxZDJlM2Y0YTViACBxj0+Knr69JfOkGf8r2FtK80Obpkpl1/woayPGBHt1gQAAAaCwhoEAkYyqWTm0l9txDwX955jXm7oIyeQCYUa7WkEJ8jublNVTnRNRVSNdtmAxfCT4hZXC0ERvS3SvjONRbI2DS38DAw==",
+        "deviceCert": "AA1vYW8tZGV2aWNlLXYxABJ1X2FsaWNlQWxpY2VBbGljZTEAJDBkMWUyZjNhLTRiNWMtNGQ2ZS04ZjcwLTgxOTJhM2I0YzVkNgAHd2F0Y2hvcwAgy1tUL8h02l6VRxg8SsYqH8qUhIICw3ZlD2pQlSAkQ/gAIHGPT4qevr0l86QZ/yvYW0rzQ5umSmXX/ChrI8YEe3WBAAABoLCGgQBNYj8fMe5YVwUV5X3s36mO3zynkzCuiyza5MLxwasASdzWu1Z+Ar0uoGUrLGshgiXEyo/SN0npgE5M3uiN1NMA"
+      },
+      "keys": [
+        {
+          "deviceId": "9a8b7c6d-5e4f-4a3b-9c2d-1e0f9a8b7c6d",
+          "keyId": "6800f47d32e25beb",
+          "enc": "5mfj1HxWy+2lo5VbZvnV7yVlZ4J3/0puRwAxmkMCggs=",
+          "ct": "+lO6GTAJmVPB3JpBu4sItFN2TxPlayTxiYUffK4E4BAvfzaNarNKNGy8BM/k/PMu"
+        },
+        {
+          "deviceId": "1f2e3d4c-5b6a-4978-8695-a4b3c2d1e0f9",
+          "keyId": "2bdfad3524085e05",
+          "enc": "Z0mieY+MCiUY274Kqa+G5pQPpdJEEA4KbYoNhN/3fEg=",
+          "ct": "bqGS87YHF8t+Tq+zryM4U063GBRUVD1hz9sCpBojcMTEIIWo/mZHOBT5zHDE4tL5"
+        }
+      ],
+      "sentAt": 1791395995000,
+      "sig": "0hMGW2O6K+fG7X0PhGh/6kKx35KFNg0kXL+hFK1RDi+UF7l4pzPqU/ylf9lsy7sUVt6H/cKzNKn0ykqFGbcsCQ=="
+    },
+    "recipients": [
+      "bob-phone",
+      "bob-watch"
+    ],
+    "frames": [
+      {
+        "seq": 0,
+        "codec": "opus16k",
+        "payload": "48011e6108a89071fef6ac626e2a136136655ca7f06a3e677d6a2529f70ddcc7adcb44cecec918a250169a7d6d0dc7a94b9dc32c1e10ba5280",
+        "frame": "0100000000264396d58ac1f63c76bda3a17203cc7fe72266d5dacaf3dae2a5a1acd34c99b78b6d1e110ea67a4173edb9905dd485e6fc55e9fd7bd27020dfc4789c704158bc39a1318de41d6bb7a3"
+      },
+      {
+        "seq": 1,
+        "codec": "opus16k",
+        "payload": "488a2843f57a7c31a29d56b19bb54f3a43f97b70eee2fe4a2d1e8298ee350713bdfcda82ba40f170be7481a6cafe601592f184030de413c2b809931f3f83fa2467d05b794ec62ff5b95a10fea1a6fb",
+        "frame": "01000000014200bceba4057435060f83c4d9e81e8484cac9a74a2425e44938e74d1fe30bb1092590533fae2654a03d34c852b60ca2df6816294e7fb4c2a908cb341238e17f4e494797a9ec6732dfed1fcf01086555bd25431e67cbcbbea98084784a1d25"
+      },
+      {
+        "seq": 2,
+        "codec": "opus16k",
+        "payload": "488ffc780e8510ff11743b9a2400a3179fa6031c81699ef74d3ce5ae8bf350215a2e956ea42dc185b484496b6c80be6b381fd770c63735360edf0d9449f2c28579fc503e3facaee7c5b115147ebcfc4a80",
+        "frame": "010000000275b1d19bda0fdb38105070efdbae227b5db6815f75b698bf3d6d1d0565a9d9f11d30fc3b73a26cd3562fa629138a34608c57341fd3d1d89b1d7af93e089f1d3ac3cc2146a3955b5c01a3345250d4c24f4da57d70be1e72142cf0ab963751c48ba4"
+      }
+    ]
+  },
+  "bad": [
+    {
+      "name": "signature altered",
+      "failure": "bad-signature",
+      "context": {
+        "conversationId": "4f1c7f7e-9b1a-4f0b-9a55-1f6a0c3e2d11",
+        "burstId": "8b0c6c52-3d0f-4b8e-a1f4-0d9e0f1a2b3c",
+        "codec": "opus16k",
+        "from": "u_aliceAliceAlice1",
+        "to": "u_bobBobBobBobBob1"
+      },
+      "now": 1791396000000,
+      "open": {
+        "deviceId": "9a8b7c6d-5e4f-4a3b-9c2d-1e0f9a8b7c6d",
+        "keys": {
+          "6800f47d32e25beb": "03dcce71a980aacbe1aa6166a6efab182b9777e57b1a28a1a8e5f126a2c250ec"
+        }
+      },
+      "bundle": {
+        "v": 1,
+        "sender": {
+          "deviceId": "0d1e2f3a-4b5c-4d6e-8f70-8192a3b4c5d6",
+          "phoneCert": "AAxvYW8tcGhvbmUtdjEAEnVfYWxpY2VBbGljZUFsaWNlMQAkNmM4ZjdlMmEtMWIzZC00ZTVmLTlhN2ItMGMxZDJlM2Y0YTViACBxj0+Knr69JfOkGf8r2FtK80Obpkpl1/woayPGBHt1gQAAAaCwhoEAkYyqWTm0l9txDwX955jXm7oIyeQCYUa7WkEJ8jublNVTnRNRVSNdtmAxfCT4hZXC0ERvS3SvjONRbI2DS38DAw==",
+          "deviceCert": "AA1vYW8tZGV2aWNlLXYxABJ1X2FsaWNlQWxpY2VBbGljZTEAJDBkMWUyZjNhLTRiNWMtNGQ2ZS04ZjcwLTgxOTJhM2I0YzVkNgAHd2F0Y2hvcwAgy1tUL8h02l6VRxg8SsYqH8qUhIICw3ZlD2pQlSAkQ/gAIHGPT4qevr0l86QZ/yvYW0rzQ5umSmXX/ChrI8YEe3WBAAABoLCGgQBNYj8fMe5YVwUV5X3s36mO3zynkzCuiyza5MLxwasASdzWu1Z+Ar0uoGUrLGshgiXEyo/SN0npgE5M3uiN1NMA"
+        },
+        "keys": [
+          {
+            "deviceId": "9a8b7c6d-5e4f-4a3b-9c2d-1e0f9a8b7c6d",
+            "keyId": "6800f47d32e25beb",
+            "enc": "5mfj1HxWy+2lo5VbZvnV7yVlZ4J3/0puRwAxmkMCggs=",
+            "ct": "+lO6GTAJmVPB3JpBu4sItFN2TxPlayTxiYUffK4E4BAvfzaNarNKNGy8BM/k/PMu"
+          },
+          {
+            "deviceId": "1f2e3d4c-5b6a-4978-8695-a4b3c2d1e0f9",
+            "keyId": "2bdfad3524085e05",
+            "enc": "Z0mieY+MCiUY274Kqa+G5pQPpdJEEA4KbYoNhN/3fEg=",
+            "ct": "bqGS87YHF8t+Tq+zryM4U063GBRUVD1hz9sCpBojcMTEIIWo/mZHOBT5zHDE4tL5"
+          }
+        ],
+        "sentAt": 1791395995000,
+        "sig": "0xMGW2O6K+fG7X0PhGh/6kKx35KFNg0kXL+hFK1RDi+UF7l4pzPqU/ylf9lsy7sUVt6H/cKzNKn0ykqFGbcsCQ=="
+      }
+    },
+    {
+      "name": "another burst",
+      "failure": "bad-signature",
+      "context": {
+        "conversationId": "4f1c7f7e-9b1a-4f0b-9a55-1f6a0c3e2d11",
+        "burstId": "c0ffee00-0000-4000-8000-000000000001",
+        "codec": "opus16k",
+        "from": "u_aliceAliceAlice1",
+        "to": "u_bobBobBobBobBob1"
+      },
+      "now": 1791396000000,
+      "open": {
+        "deviceId": "9a8b7c6d-5e4f-4a3b-9c2d-1e0f9a8b7c6d",
+        "keys": {
+          "6800f47d32e25beb": "03dcce71a980aacbe1aa6166a6efab182b9777e57b1a28a1a8e5f126a2c250ec"
+        }
+      },
+      "bundle": {
+        "v": 1,
+        "sender": {
+          "deviceId": "0d1e2f3a-4b5c-4d6e-8f70-8192a3b4c5d6",
+          "phoneCert": "AAxvYW8tcGhvbmUtdjEAEnVfYWxpY2VBbGljZUFsaWNlMQAkNmM4ZjdlMmEtMWIzZC00ZTVmLTlhN2ItMGMxZDJlM2Y0YTViACBxj0+Knr69JfOkGf8r2FtK80Obpkpl1/woayPGBHt1gQAAAaCwhoEAkYyqWTm0l9txDwX955jXm7oIyeQCYUa7WkEJ8jublNVTnRNRVSNdtmAxfCT4hZXC0ERvS3SvjONRbI2DS38DAw==",
+          "deviceCert": "AA1vYW8tZGV2aWNlLXYxABJ1X2FsaWNlQWxpY2VBbGljZTEAJDBkMWUyZjNhLTRiNWMtNGQ2ZS04ZjcwLTgxOTJhM2I0YzVkNgAHd2F0Y2hvcwAgy1tUL8h02l6VRxg8SsYqH8qUhIICw3ZlD2pQlSAkQ/gAIHGPT4qevr0l86QZ/yvYW0rzQ5umSmXX/ChrI8YEe3WBAAABoLCGgQBNYj8fMe5YVwUV5X3s36mO3zynkzCuiyza5MLxwasASdzWu1Z+Ar0uoGUrLGshgiXEyo/SN0npgE5M3uiN1NMA"
+        },
+        "keys": [
+          {
+            "deviceId": "9a8b7c6d-5e4f-4a3b-9c2d-1e0f9a8b7c6d",
+            "keyId": "6800f47d32e25beb",
+            "enc": "5mfj1HxWy+2lo5VbZvnV7yVlZ4J3/0puRwAxmkMCggs=",
+            "ct": "+lO6GTAJmVPB3JpBu4sItFN2TxPlayTxiYUffK4E4BAvfzaNarNKNGy8BM/k/PMu"
+          },
+          {
+            "deviceId": "1f2e3d4c-5b6a-4978-8695-a4b3c2d1e0f9",
+            "keyId": "2bdfad3524085e05",
+            "enc": "Z0mieY+MCiUY274Kqa+G5pQPpdJEEA4KbYoNhN/3fEg=",
+            "ct": "bqGS87YHF8t+Tq+zryM4U063GBRUVD1hz9sCpBojcMTEIIWo/mZHOBT5zHDE4tL5"
+          }
+        ],
+        "sentAt": 1791395995000,
+        "sig": "0hMGW2O6K+fG7X0PhGh/6kKx35KFNg0kXL+hFK1RDi+UF7l4pzPqU/ylf9lsy7sUVt6H/cKzNKn0ykqFGbcsCQ=="
+      }
+    },
+    {
+      "name": "another conversation",
+      "failure": "bad-signature",
+      "context": {
+        "conversationId": "c0ffee00-0000-4000-8000-000000000002",
+        "burstId": "8b0c6c52-3d0f-4b8e-a1f4-0d9e0f1a2b3c",
+        "codec": "opus16k",
+        "from": "u_aliceAliceAlice1",
+        "to": "u_bobBobBobBobBob1"
+      },
+      "now": 1791396000000,
+      "open": {
+        "deviceId": "9a8b7c6d-5e4f-4a3b-9c2d-1e0f9a8b7c6d",
+        "keys": {
+          "6800f47d32e25beb": "03dcce71a980aacbe1aa6166a6efab182b9777e57b1a28a1a8e5f126a2c250ec"
+        }
+      },
+      "bundle": {
+        "v": 1,
+        "sender": {
+          "deviceId": "0d1e2f3a-4b5c-4d6e-8f70-8192a3b4c5d6",
+          "phoneCert": "AAxvYW8tcGhvbmUtdjEAEnVfYWxpY2VBbGljZUFsaWNlMQAkNmM4ZjdlMmEtMWIzZC00ZTVmLTlhN2ItMGMxZDJlM2Y0YTViACBxj0+Knr69JfOkGf8r2FtK80Obpkpl1/woayPGBHt1gQAAAaCwhoEAkYyqWTm0l9txDwX955jXm7oIyeQCYUa7WkEJ8jublNVTnRNRVSNdtmAxfCT4hZXC0ERvS3SvjONRbI2DS38DAw==",
+          "deviceCert": "AA1vYW8tZGV2aWNlLXYxABJ1X2FsaWNlQWxpY2VBbGljZTEAJDBkMWUyZjNhLTRiNWMtNGQ2ZS04ZjcwLTgxOTJhM2I0YzVkNgAHd2F0Y2hvcwAgy1tUL8h02l6VRxg8SsYqH8qUhIICw3ZlD2pQlSAkQ/gAIHGPT4qevr0l86QZ/yvYW0rzQ5umSmXX/ChrI8YEe3WBAAABoLCGgQBNYj8fMe5YVwUV5X3s36mO3zynkzCuiyza5MLxwasASdzWu1Z+Ar0uoGUrLGshgiXEyo/SN0npgE5M3uiN1NMA"
+        },
+        "keys": [
+          {
+            "deviceId": "9a8b7c6d-5e4f-4a3b-9c2d-1e0f9a8b7c6d",
+            "keyId": "6800f47d32e25beb",
+            "enc": "5mfj1HxWy+2lo5VbZvnV7yVlZ4J3/0puRwAxmkMCggs=",
+            "ct": "+lO6GTAJmVPB3JpBu4sItFN2TxPlayTxiYUffK4E4BAvfzaNarNKNGy8BM/k/PMu"
+          },
+          {
+            "deviceId": "1f2e3d4c-5b6a-4978-8695-a4b3c2d1e0f9",
+            "keyId": "2bdfad3524085e05",
+            "enc": "Z0mieY+MCiUY274Kqa+G5pQPpdJEEA4KbYoNhN/3fEg=",
+            "ct": "bqGS87YHF8t+Tq+zryM4U063GBRUVD1hz9sCpBojcMTEIIWo/mZHOBT5zHDE4tL5"
+          }
+        ],
+        "sentAt": 1791395995000,
+        "sig": "0hMGW2O6K+fG7X0PhGh/6kKx35KFNg0kXL+hFK1RDi+UF7l4pzPqU/ylf9lsy7sUVt6H/cKzNKn0ykqFGbcsCQ=="
+      }
+    },
+    {
+      "name": "another codec",
+      "failure": "bad-signature",
+      "context": {
+        "conversationId": "4f1c7f7e-9b1a-4f0b-9a55-1f6a0c3e2d11",
+        "burstId": "8b0c6c52-3d0f-4b8e-a1f4-0d9e0f1a2b3c",
+        "codec": "pcm16le16k",
+        "from": "u_aliceAliceAlice1",
+        "to": "u_bobBobBobBobBob1"
+      },
+      "now": 1791396000000,
+      "open": {
+        "deviceId": "9a8b7c6d-5e4f-4a3b-9c2d-1e0f9a8b7c6d",
+        "keys": {
+          "6800f47d32e25beb": "03dcce71a980aacbe1aa6166a6efab182b9777e57b1a28a1a8e5f126a2c250ec"
+        }
+      },
+      "bundle": {
+        "v": 1,
+        "sender": {
+          "deviceId": "0d1e2f3a-4b5c-4d6e-8f70-8192a3b4c5d6",
+          "phoneCert": "AAxvYW8tcGhvbmUtdjEAEnVfYWxpY2VBbGljZUFsaWNlMQAkNmM4ZjdlMmEtMWIzZC00ZTVmLTlhN2ItMGMxZDJlM2Y0YTViACBxj0+Knr69JfOkGf8r2FtK80Obpkpl1/woayPGBHt1gQAAAaCwhoEAkYyqWTm0l9txDwX955jXm7oIyeQCYUa7WkEJ8jublNVTnRNRVSNdtmAxfCT4hZXC0ERvS3SvjONRbI2DS38DAw==",
+          "deviceCert": "AA1vYW8tZGV2aWNlLXYxABJ1X2FsaWNlQWxpY2VBbGljZTEAJDBkMWUyZjNhLTRiNWMtNGQ2ZS04ZjcwLTgxOTJhM2I0YzVkNgAHd2F0Y2hvcwAgy1tUL8h02l6VRxg8SsYqH8qUhIICw3ZlD2pQlSAkQ/gAIHGPT4qevr0l86QZ/yvYW0rzQ5umSmXX/ChrI8YEe3WBAAABoLCGgQBNYj8fMe5YVwUV5X3s36mO3zynkzCuiyza5MLxwasASdzWu1Z+Ar0uoGUrLGshgiXEyo/SN0npgE5M3uiN1NMA"
+        },
+        "keys": [
+          {
+            "deviceId": "9a8b7c6d-5e4f-4a3b-9c2d-1e0f9a8b7c6d",
+            "keyId": "6800f47d32e25beb",
+            "enc": "5mfj1HxWy+2lo5VbZvnV7yVlZ4J3/0puRwAxmkMCggs=",
+            "ct": "+lO6GTAJmVPB3JpBu4sItFN2TxPlayTxiYUffK4E4BAvfzaNarNKNGy8BM/k/PMu"
+          },
+          {
+            "deviceId": "1f2e3d4c-5b6a-4978-8695-a4b3c2d1e0f9",
+            "keyId": "2bdfad3524085e05",
+            "enc": "Z0mieY+MCiUY274Kqa+G5pQPpdJEEA4KbYoNhN/3fEg=",
+            "ct": "bqGS87YHF8t+Tq+zryM4U063GBRUVD1hz9sCpBojcMTEIIWo/mZHOBT5zHDE4tL5"
+          }
+        ],
+        "sentAt": 1791395995000,
+        "sig": "0hMGW2O6K+fG7X0PhGh/6kKx35KFNg0kXL+hFK1RDi+UF7l4pzPqU/ylf9lsy7sUVt6H/cKzNKn0ykqFGbcsCQ=="
+      }
+    },
+    {
+      "name": "sent back to its sender",
+      "failure": "bad-certificate",
+      "context": {
+        "conversationId": "4f1c7f7e-9b1a-4f0b-9a55-1f6a0c3e2d11",
+        "burstId": "8b0c6c52-3d0f-4b8e-a1f4-0d9e0f1a2b3c",
+        "codec": "opus16k",
+        "from": "u_bobBobBobBobBob1",
+        "to": "u_aliceAliceAlice1"
+      },
+      "now": 1791396000000,
+      "open": {
+        "deviceId": "9a8b7c6d-5e4f-4a3b-9c2d-1e0f9a8b7c6d",
+        "keys": {
+          "6800f47d32e25beb": "03dcce71a980aacbe1aa6166a6efab182b9777e57b1a28a1a8e5f126a2c250ec"
+        }
+      },
+      "bundle": {
+        "v": 1,
+        "sender": {
+          "deviceId": "0d1e2f3a-4b5c-4d6e-8f70-8192a3b4c5d6",
+          "phoneCert": "AAxvYW8tcGhvbmUtdjEAEnVfYWxpY2VBbGljZUFsaWNlMQAkNmM4ZjdlMmEtMWIzZC00ZTVmLTlhN2ItMGMxZDJlM2Y0YTViACBxj0+Knr69JfOkGf8r2FtK80Obpkpl1/woayPGBHt1gQAAAaCwhoEAkYyqWTm0l9txDwX955jXm7oIyeQCYUa7WkEJ8jublNVTnRNRVSNdtmAxfCT4hZXC0ERvS3SvjONRbI2DS38DAw==",
+          "deviceCert": "AA1vYW8tZGV2aWNlLXYxABJ1X2FsaWNlQWxpY2VBbGljZTEAJDBkMWUyZjNhLTRiNWMtNGQ2ZS04ZjcwLTgxOTJhM2I0YzVkNgAHd2F0Y2hvcwAgy1tUL8h02l6VRxg8SsYqH8qUhIICw3ZlD2pQlSAkQ/gAIHGPT4qevr0l86QZ/yvYW0rzQ5umSmXX/ChrI8YEe3WBAAABoLCGgQBNYj8fMe5YVwUV5X3s36mO3zynkzCuiyza5MLxwasASdzWu1Z+Ar0uoGUrLGshgiXEyo/SN0npgE5M3uiN1NMA"
+        },
+        "keys": [
+          {
+            "deviceId": "9a8b7c6d-5e4f-4a3b-9c2d-1e0f9a8b7c6d",
+            "keyId": "6800f47d32e25beb",
+            "enc": "5mfj1HxWy+2lo5VbZvnV7yVlZ4J3/0puRwAxmkMCggs=",
+            "ct": "+lO6GTAJmVPB3JpBu4sItFN2TxPlayTxiYUffK4E4BAvfzaNarNKNGy8BM/k/PMu"
+          },
+          {
+            "deviceId": "1f2e3d4c-5b6a-4978-8695-a4b3c2d1e0f9",
+            "keyId": "2bdfad3524085e05",
+            "enc": "Z0mieY+MCiUY274Kqa+G5pQPpdJEEA4KbYoNhN/3fEg=",
+            "ct": "bqGS87YHF8t+Tq+zryM4U063GBRUVD1hz9sCpBojcMTEIIWo/mZHOBT5zHDE4tL5"
+          }
+        ],
+        "sentAt": 1791395995000,
+        "sig": "0hMGW2O6K+fG7X0PhGh/6kKx35KFNg0kXL+hFK1RDi+UF7l4pzPqU/ylf9lsy7sUVt6H/cKzNKn0ykqFGbcsCQ=="
+      }
+    },
+    {
+      "name": "send time altered",
+      "failure": "bad-signature",
+      "context": {
+        "conversationId": "4f1c7f7e-9b1a-4f0b-9a55-1f6a0c3e2d11",
+        "burstId": "8b0c6c52-3d0f-4b8e-a1f4-0d9e0f1a2b3c",
+        "codec": "opus16k",
+        "from": "u_aliceAliceAlice1",
+        "to": "u_bobBobBobBobBob1"
+      },
+      "now": 1791396000000,
+      "open": {
+        "deviceId": "9a8b7c6d-5e4f-4a3b-9c2d-1e0f9a8b7c6d",
+        "keys": {
+          "6800f47d32e25beb": "03dcce71a980aacbe1aa6166a6efab182b9777e57b1a28a1a8e5f126a2c250ec"
+        }
+      },
+      "bundle": {
+        "v": 1,
+        "sender": {
+          "deviceId": "0d1e2f3a-4b5c-4d6e-8f70-8192a3b4c5d6",
+          "phoneCert": "AAxvYW8tcGhvbmUtdjEAEnVfYWxpY2VBbGljZUFsaWNlMQAkNmM4ZjdlMmEtMWIzZC00ZTVmLTlhN2ItMGMxZDJlM2Y0YTViACBxj0+Knr69JfOkGf8r2FtK80Obpkpl1/woayPGBHt1gQAAAaCwhoEAkYyqWTm0l9txDwX955jXm7oIyeQCYUa7WkEJ8jublNVTnRNRVSNdtmAxfCT4hZXC0ERvS3SvjONRbI2DS38DAw==",
+          "deviceCert": "AA1vYW8tZGV2aWNlLXYxABJ1X2FsaWNlQWxpY2VBbGljZTEAJDBkMWUyZjNhLTRiNWMtNGQ2ZS04ZjcwLTgxOTJhM2I0YzVkNgAHd2F0Y2hvcwAgy1tUL8h02l6VRxg8SsYqH8qUhIICw3ZlD2pQlSAkQ/gAIHGPT4qevr0l86QZ/yvYW0rzQ5umSmXX/ChrI8YEe3WBAAABoLCGgQBNYj8fMe5YVwUV5X3s36mO3zynkzCuiyza5MLxwasASdzWu1Z+Ar0uoGUrLGshgiXEyo/SN0npgE5M3uiN1NMA"
+        },
+        "keys": [
+          {
+            "deviceId": "9a8b7c6d-5e4f-4a3b-9c2d-1e0f9a8b7c6d",
+            "keyId": "6800f47d32e25beb",
+            "enc": "5mfj1HxWy+2lo5VbZvnV7yVlZ4J3/0puRwAxmkMCggs=",
+            "ct": "+lO6GTAJmVPB3JpBu4sItFN2TxPlayTxiYUffK4E4BAvfzaNarNKNGy8BM/k/PMu"
+          },
+          {
+            "deviceId": "1f2e3d4c-5b6a-4978-8695-a4b3c2d1e0f9",
+            "keyId": "2bdfad3524085e05",
+            "enc": "Z0mieY+MCiUY274Kqa+G5pQPpdJEEA4KbYoNhN/3fEg=",
+            "ct": "bqGS87YHF8t+Tq+zryM4U063GBRUVD1hz9sCpBojcMTEIIWo/mZHOBT5zHDE4tL5"
+          }
+        ],
+        "sentAt": 1791395995001,
+        "sig": "0hMGW2O6K+fG7X0PhGh/6kKx35KFNg0kXL+hFK1RDi+UF7l4pzPqU/ylf9lsy7sUVt6H/cKzNKn0ykqFGbcsCQ=="
+      }
+    },
+    {
+      "name": "sealed key altered",
+      "failure": "bad-signature",
+      "context": {
+        "conversationId": "4f1c7f7e-9b1a-4f0b-9a55-1f6a0c3e2d11",
+        "burstId": "8b0c6c52-3d0f-4b8e-a1f4-0d9e0f1a2b3c",
+        "codec": "opus16k",
+        "from": "u_aliceAliceAlice1",
+        "to": "u_bobBobBobBobBob1"
+      },
+      "now": 1791396000000,
+      "open": {
+        "deviceId": "9a8b7c6d-5e4f-4a3b-9c2d-1e0f9a8b7c6d",
+        "keys": {
+          "6800f47d32e25beb": "03dcce71a980aacbe1aa6166a6efab182b9777e57b1a28a1a8e5f126a2c250ec"
+        }
+      },
+      "bundle": {
+        "v": 1,
+        "sender": {
+          "deviceId": "0d1e2f3a-4b5c-4d6e-8f70-8192a3b4c5d6",
+          "phoneCert": "AAxvYW8tcGhvbmUtdjEAEnVfYWxpY2VBbGljZUFsaWNlMQAkNmM4ZjdlMmEtMWIzZC00ZTVmLTlhN2ItMGMxZDJlM2Y0YTViACBxj0+Knr69JfOkGf8r2FtK80Obpkpl1/woayPGBHt1gQAAAaCwhoEAkYyqWTm0l9txDwX955jXm7oIyeQCYUa7WkEJ8jublNVTnRNRVSNdtmAxfCT4hZXC0ERvS3SvjONRbI2DS38DAw==",
+          "deviceCert": "AA1vYW8tZGV2aWNlLXYxABJ1X2FsaWNlQWxpY2VBbGljZTEAJDBkMWUyZjNhLTRiNWMtNGQ2ZS04ZjcwLTgxOTJhM2I0YzVkNgAHd2F0Y2hvcwAgy1tUL8h02l6VRxg8SsYqH8qUhIICw3ZlD2pQlSAkQ/gAIHGPT4qevr0l86QZ/yvYW0rzQ5umSmXX/ChrI8YEe3WBAAABoLCGgQBNYj8fMe5YVwUV5X3s36mO3zynkzCuiyza5MLxwasASdzWu1Z+Ar0uoGUrLGshgiXEyo/SN0npgE5M3uiN1NMA"
+        },
+        "keys": [
+          {
+            "deviceId": "9a8b7c6d-5e4f-4a3b-9c2d-1e0f9a8b7c6d",
+            "keyId": "6800f47d32e25beb",
+            "enc": "5mfj1HxWy+2lo5VbZvnV7yVlZ4J3/0puRwAxmkMCggs=",
+            "ct": "+1O6GTAJmVPB3JpBu4sItFN2TxPlayTxiYUffK4E4BAvfzaNarNKNGy8BM/k/PMu"
+          },
+          {
+            "deviceId": "1f2e3d4c-5b6a-4978-8695-a4b3c2d1e0f9",
+            "keyId": "2bdfad3524085e05",
+            "enc": "Z0mieY+MCiUY274Kqa+G5pQPpdJEEA4KbYoNhN/3fEg=",
+            "ct": "bqGS87YHF8t+Tq+zryM4U063GBRUVD1hz9sCpBojcMTEIIWo/mZHOBT5zHDE4tL5"
+          }
+        ],
+        "sentAt": 1791395995000,
+        "sig": "0hMGW2O6K+fG7X0PhGh/6kKx35KFNg0kXL+hFK1RDi+UF7l4pzPqU/ylf9lsy7sUVt6H/cKzNKn0ykqFGbcsCQ=="
+      }
+    },
+    {
+      "name": "too old",
+      "failure": "too-old",
+      "context": {
+        "conversationId": "4f1c7f7e-9b1a-4f0b-9a55-1f6a0c3e2d11",
+        "burstId": "8b0c6c52-3d0f-4b8e-a1f4-0d9e0f1a2b3c",
+        "codec": "opus16k",
+        "from": "u_aliceAliceAlice1",
+        "to": "u_bobBobBobBobBob1"
+      },
+      "now": 1791396175001,
+      "open": {
+        "deviceId": "9a8b7c6d-5e4f-4a3b-9c2d-1e0f9a8b7c6d",
+        "keys": {
+          "6800f47d32e25beb": "03dcce71a980aacbe1aa6166a6efab182b9777e57b1a28a1a8e5f126a2c250ec"
+        }
+      },
+      "bundle": {
+        "v": 1,
+        "sender": {
+          "deviceId": "0d1e2f3a-4b5c-4d6e-8f70-8192a3b4c5d6",
+          "phoneCert": "AAxvYW8tcGhvbmUtdjEAEnVfYWxpY2VBbGljZUFsaWNlMQAkNmM4ZjdlMmEtMWIzZC00ZTVmLTlhN2ItMGMxZDJlM2Y0YTViACBxj0+Knr69JfOkGf8r2FtK80Obpkpl1/woayPGBHt1gQAAAaCwhoEAkYyqWTm0l9txDwX955jXm7oIyeQCYUa7WkEJ8jublNVTnRNRVSNdtmAxfCT4hZXC0ERvS3SvjONRbI2DS38DAw==",
+          "deviceCert": "AA1vYW8tZGV2aWNlLXYxABJ1X2FsaWNlQWxpY2VBbGljZTEAJDBkMWUyZjNhLTRiNWMtNGQ2ZS04ZjcwLTgxOTJhM2I0YzVkNgAHd2F0Y2hvcwAgy1tUL8h02l6VRxg8SsYqH8qUhIICw3ZlD2pQlSAkQ/gAIHGPT4qevr0l86QZ/yvYW0rzQ5umSmXX/ChrI8YEe3WBAAABoLCGgQBNYj8fMe5YVwUV5X3s36mO3zynkzCuiyza5MLxwasASdzWu1Z+Ar0uoGUrLGshgiXEyo/SN0npgE5M3uiN1NMA"
+        },
+        "keys": [
+          {
+            "deviceId": "9a8b7c6d-5e4f-4a3b-9c2d-1e0f9a8b7c6d",
+            "keyId": "6800f47d32e25beb",
+            "enc": "5mfj1HxWy+2lo5VbZvnV7yVlZ4J3/0puRwAxmkMCggs=",
+            "ct": "+lO6GTAJmVPB3JpBu4sItFN2TxPlayTxiYUffK4E4BAvfzaNarNKNGy8BM/k/PMu"
+          },
+          {
+            "deviceId": "1f2e3d4c-5b6a-4978-8695-a4b3c2d1e0f9",
+            "keyId": "2bdfad3524085e05",
+            "enc": "Z0mieY+MCiUY274Kqa+G5pQPpdJEEA4KbYoNhN/3fEg=",
+            "ct": "bqGS87YHF8t+Tq+zryM4U063GBRUVD1hz9sCpBojcMTEIIWo/mZHOBT5zHDE4tL5"
+          }
+        ],
+        "sentAt": 1791395995000,
+        "sig": "0hMGW2O6K+fG7X0PhGh/6kKx35KFNg0kXL+hFK1RDi+UF7l4pzPqU/ylf9lsy7sUVt6H/cKzNKn0ykqFGbcsCQ=="
+      }
+    },
+    {
+      "name": "from the future",
+      "failure": "from-the-future",
+      "context": {
+        "conversationId": "4f1c7f7e-9b1a-4f0b-9a55-1f6a0c3e2d11",
+        "burstId": "8b0c6c52-3d0f-4b8e-a1f4-0d9e0f1a2b3c",
+        "codec": "opus16k",
+        "from": "u_aliceAliceAlice1",
+        "to": "u_bobBobBobBobBob1"
+      },
+      "now": 1791395934999,
+      "open": {
+        "deviceId": "9a8b7c6d-5e4f-4a3b-9c2d-1e0f9a8b7c6d",
+        "keys": {
+          "6800f47d32e25beb": "03dcce71a980aacbe1aa6166a6efab182b9777e57b1a28a1a8e5f126a2c250ec"
+        }
+      },
+      "bundle": {
+        "v": 1,
+        "sender": {
+          "deviceId": "0d1e2f3a-4b5c-4d6e-8f70-8192a3b4c5d6",
+          "phoneCert": "AAxvYW8tcGhvbmUtdjEAEnVfYWxpY2VBbGljZUFsaWNlMQAkNmM4ZjdlMmEtMWIzZC00ZTVmLTlhN2ItMGMxZDJlM2Y0YTViACBxj0+Knr69JfOkGf8r2FtK80Obpkpl1/woayPGBHt1gQAAAaCwhoEAkYyqWTm0l9txDwX955jXm7oIyeQCYUa7WkEJ8jublNVTnRNRVSNdtmAxfCT4hZXC0ERvS3SvjONRbI2DS38DAw==",
+          "deviceCert": "AA1vYW8tZGV2aWNlLXYxABJ1X2FsaWNlQWxpY2VBbGljZTEAJDBkMWUyZjNhLTRiNWMtNGQ2ZS04ZjcwLTgxOTJhM2I0YzVkNgAHd2F0Y2hvcwAgy1tUL8h02l6VRxg8SsYqH8qUhIICw3ZlD2pQlSAkQ/gAIHGPT4qevr0l86QZ/yvYW0rzQ5umSmXX/ChrI8YEe3WBAAABoLCGgQBNYj8fMe5YVwUV5X3s36mO3zynkzCuiyza5MLxwasASdzWu1Z+Ar0uoGUrLGshgiXEyo/SN0npgE5M3uiN1NMA"
+        },
+        "keys": [
+          {
+            "deviceId": "9a8b7c6d-5e4f-4a3b-9c2d-1e0f9a8b7c6d",
+            "keyId": "6800f47d32e25beb",
+            "enc": "5mfj1HxWy+2lo5VbZvnV7yVlZ4J3/0puRwAxmkMCggs=",
+            "ct": "+lO6GTAJmVPB3JpBu4sItFN2TxPlayTxiYUffK4E4BAvfzaNarNKNGy8BM/k/PMu"
+          },
+          {
+            "deviceId": "1f2e3d4c-5b6a-4978-8695-a4b3c2d1e0f9",
+            "keyId": "2bdfad3524085e05",
+            "enc": "Z0mieY+MCiUY274Kqa+G5pQPpdJEEA4KbYoNhN/3fEg=",
+            "ct": "bqGS87YHF8t+Tq+zryM4U063GBRUVD1hz9sCpBojcMTEIIWo/mZHOBT5zHDE4tL5"
+          }
+        ],
+        "sentAt": 1791395995000,
+        "sig": "0hMGW2O6K+fG7X0PhGh/6kKx35KFNg0kXL+hFK1RDi+UF7l4pzPqU/ylf9lsy7sUVt6H/cKzNKn0ykqFGbcsCQ=="
+      }
+    },
+    {
+      "name": "not sealed to this device",
+      "failure": "no-key",
+      "context": {
+        "conversationId": "4f1c7f7e-9b1a-4f0b-9a55-1f6a0c3e2d11",
+        "burstId": "8b0c6c52-3d0f-4b8e-a1f4-0d9e0f1a2b3c",
+        "codec": "opus16k",
+        "from": "u_aliceAliceAlice1",
+        "to": "u_bobBobBobBobBob1"
+      },
+      "now": 1791396000000,
+      "open": {
+        "deviceId": "2b3c4d5e-6f70-4182-93a4-b5c6d7e8f901",
+        "keys": {
+          "f7eef93143b750fa": "3d9363de5886eb45f3d320ca2041066fa1dea8f6cab972518f36bd316ab06873"
+        }
+      },
+      "bundle": {
+        "v": 1,
+        "sender": {
+          "deviceId": "0d1e2f3a-4b5c-4d6e-8f70-8192a3b4c5d6",
+          "phoneCert": "AAxvYW8tcGhvbmUtdjEAEnVfYWxpY2VBbGljZUFsaWNlMQAkNmM4ZjdlMmEtMWIzZC00ZTVmLTlhN2ItMGMxZDJlM2Y0YTViACBxj0+Knr69JfOkGf8r2FtK80Obpkpl1/woayPGBHt1gQAAAaCwhoEAkYyqWTm0l9txDwX955jXm7oIyeQCYUa7WkEJ8jublNVTnRNRVSNdtmAxfCT4hZXC0ERvS3SvjONRbI2DS38DAw==",
+          "deviceCert": "AA1vYW8tZGV2aWNlLXYxABJ1X2FsaWNlQWxpY2VBbGljZTEAJDBkMWUyZjNhLTRiNWMtNGQ2ZS04ZjcwLTgxOTJhM2I0YzVkNgAHd2F0Y2hvcwAgy1tUL8h02l6VRxg8SsYqH8qUhIICw3ZlD2pQlSAkQ/gAIHGPT4qevr0l86QZ/yvYW0rzQ5umSmXX/ChrI8YEe3WBAAABoLCGgQBNYj8fMe5YVwUV5X3s36mO3zynkzCuiyza5MLxwasASdzWu1Z+Ar0uoGUrLGshgiXEyo/SN0npgE5M3uiN1NMA"
+        },
+        "keys": [
+          {
+            "deviceId": "9a8b7c6d-5e4f-4a3b-9c2d-1e0f9a8b7c6d",
+            "keyId": "6800f47d32e25beb",
+            "enc": "5mfj1HxWy+2lo5VbZvnV7yVlZ4J3/0puRwAxmkMCggs=",
+            "ct": "+lO6GTAJmVPB3JpBu4sItFN2TxPlayTxiYUffK4E4BAvfzaNarNKNGy8BM/k/PMu"
+          },
+          {
+            "deviceId": "1f2e3d4c-5b6a-4978-8695-a4b3c2d1e0f9",
+            "keyId": "2bdfad3524085e05",
+            "enc": "Z0mieY+MCiUY274Kqa+G5pQPpdJEEA4KbYoNhN/3fEg=",
+            "ct": "bqGS87YHF8t+Tq+zryM4U063GBRUVD1hz9sCpBojcMTEIIWo/mZHOBT5zHDE4tL5"
+          }
+        ],
+        "sentAt": 1791395995000,
+        "sig": "0hMGW2O6K+fG7X0PhGh/6kKx35KFNg0kXL+hFK1RDi+UF7l4pzPqU/ylf9lsy7sUVt6H/cKzNKn0ykqFGbcsCQ=="
+      }
+    },
+    {
+      "name": "this device's key isn't known",
+      "failure": "no-key",
+      "context": {
+        "conversationId": "4f1c7f7e-9b1a-4f0b-9a55-1f6a0c3e2d11",
+        "burstId": "8b0c6c52-3d0f-4b8e-a1f4-0d9e0f1a2b3c",
+        "codec": "opus16k",
+        "from": "u_aliceAliceAlice1",
+        "to": "u_bobBobBobBobBob1"
+      },
+      "now": 1791396000000,
+      "open": {
+        "deviceId": "9a8b7c6d-5e4f-4a3b-9c2d-1e0f9a8b7c6d",
+        "keys": {}
+      },
+      "bundle": {
+        "v": 1,
+        "sender": {
+          "deviceId": "0d1e2f3a-4b5c-4d6e-8f70-8192a3b4c5d6",
+          "phoneCert": "AAxvYW8tcGhvbmUtdjEAEnVfYWxpY2VBbGljZUFsaWNlMQAkNmM4ZjdlMmEtMWIzZC00ZTVmLTlhN2ItMGMxZDJlM2Y0YTViACBxj0+Knr69JfOkGf8r2FtK80Obpkpl1/woayPGBHt1gQAAAaCwhoEAkYyqWTm0l9txDwX955jXm7oIyeQCYUa7WkEJ8jublNVTnRNRVSNdtmAxfCT4hZXC0ERvS3SvjONRbI2DS38DAw==",
+          "deviceCert": "AA1vYW8tZGV2aWNlLXYxABJ1X2FsaWNlQWxpY2VBbGljZTEAJDBkMWUyZjNhLTRiNWMtNGQ2ZS04ZjcwLTgxOTJhM2I0YzVkNgAHd2F0Y2hvcwAgy1tUL8h02l6VRxg8SsYqH8qUhIICw3ZlD2pQlSAkQ/gAIHGPT4qevr0l86QZ/yvYW0rzQ5umSmXX/ChrI8YEe3WBAAABoLCGgQBNYj8fMe5YVwUV5X3s36mO3zynkzCuiyza5MLxwasASdzWu1Z+Ar0uoGUrLGshgiXEyo/SN0npgE5M3uiN1NMA"
+        },
+        "keys": [
+          {
+            "deviceId": "9a8b7c6d-5e4f-4a3b-9c2d-1e0f9a8b7c6d",
+            "keyId": "6800f47d32e25beb",
+            "enc": "5mfj1HxWy+2lo5VbZvnV7yVlZ4J3/0puRwAxmkMCggs=",
+            "ct": "+lO6GTAJmVPB3JpBu4sItFN2TxPlayTxiYUffK4E4BAvfzaNarNKNGy8BM/k/PMu"
+          },
+          {
+            "deviceId": "1f2e3d4c-5b6a-4978-8695-a4b3c2d1e0f9",
+            "keyId": "2bdfad3524085e05",
+            "enc": "Z0mieY+MCiUY274Kqa+G5pQPpdJEEA4KbYoNhN/3fEg=",
+            "ct": "bqGS87YHF8t+Tq+zryM4U063GBRUVD1hz9sCpBojcMTEIIWo/mZHOBT5zHDE4tL5"
+          }
+        ],
+        "sentAt": 1791395995000,
+        "sig": "0hMGW2O6K+fG7X0PhGh/6kKx35KFNg0kXL+hFK1RDi+UF7l4pzPqU/ylf9lsy7sUVt6H/cKzNKn0ykqFGbcsCQ=="
+      }
+    },
+    {
+      "name": "device certificate from another phone",
+      "failure": "bad-certificate",
+      "context": {
+        "conversationId": "4f1c7f7e-9b1a-4f0b-9a55-1f6a0c3e2d11",
+        "burstId": "8b0c6c52-3d0f-4b8e-a1f4-0d9e0f1a2b3c",
+        "codec": "opus16k",
+        "from": "u_aliceAliceAlice1",
+        "to": "u_bobBobBobBobBob1"
+      },
+      "now": 1791396000000,
+      "open": {
+        "deviceId": "9a8b7c6d-5e4f-4a3b-9c2d-1e0f9a8b7c6d",
+        "keys": {
+          "6800f47d32e25beb": "03dcce71a980aacbe1aa6166a6efab182b9777e57b1a28a1a8e5f126a2c250ec"
+        }
+      },
+      "bundle": {
+        "v": 1,
+        "sender": {
+          "deviceId": "0d1e2f3a-4b5c-4d6e-8f70-8192a3b4c5d6",
+          "phoneCert": "AAxvYW8tcGhvbmUtdjEAEnVfYWxpY2VBbGljZUFsaWNlMQAkNmM4ZjdlMmEtMWIzZC00ZTVmLTlhN2ItMGMxZDJlM2Y0YTViACBxj0+Knr69JfOkGf8r2FtK80Obpkpl1/woayPGBHt1gQAAAaCwhoEAkYyqWTm0l9txDwX955jXm7oIyeQCYUa7WkEJ8jublNVTnRNRVSNdtmAxfCT4hZXC0ERvS3SvjONRbI2DS38DAw==",
+          "deviceCert": "AA1vYW8tZGV2aWNlLXYxABJ1X2FsaWNlQWxpY2VBbGljZTEAJDBkMWUyZjNhLTRiNWMtNGQ2ZS04ZjcwLTgxOTJhM2I0YzVkNgAHd2F0Y2hvcwAgy1tUL8h02l6VRxg8SsYqH8qUhIICw3ZlD2pQlSAkQ/gAIHNhJqRM8Vo4rBqBxC9YN9O7t5G+nSWtMVzjFOc3/D5NAAABoRJfVQD+vzJcTg7aJlwatMmkekRy4PMrXIKkEqRxNOxzF7Psldug11DDUywfB0NA/n6t4/xwXtuA3ozds7QpnNVefCAM"
+        },
+        "keys": [
+          {
+            "deviceId": "9a8b7c6d-5e4f-4a3b-9c2d-1e0f9a8b7c6d",
+            "keyId": "6800f47d32e25beb",
+            "enc": "5mfj1HxWy+2lo5VbZvnV7yVlZ4J3/0puRwAxmkMCggs=",
+            "ct": "+lO6GTAJmVPB3JpBu4sItFN2TxPlayTxiYUffK4E4BAvfzaNarNKNGy8BM/k/PMu"
+          },
+          {
+            "deviceId": "1f2e3d4c-5b6a-4978-8695-a4b3c2d1e0f9",
+            "keyId": "2bdfad3524085e05",
+            "enc": "Z0mieY+MCiUY274Kqa+G5pQPpdJEEA4KbYoNhN/3fEg=",
+            "ct": "bqGS87YHF8t+Tq+zryM4U063GBRUVD1hz9sCpBojcMTEIIWo/mZHOBT5zHDE4tL5"
+          }
+        ],
+        "sentAt": 1791395995000,
+        "sig": "0hMGW2O6K+fG7X0PhGh/6kKx35KFNg0kXL+hFK1RDi+UF7l4pzPqU/ylf9lsy7sUVt6H/cKzNKn0ykqFGbcsCQ=="
+      }
+    },
+    {
+      "name": "sealed key altered and signed again",
+      "failure": "decrypt",
+      "context": {
+        "conversationId": "4f1c7f7e-9b1a-4f0b-9a55-1f6a0c3e2d11",
+        "burstId": "8b0c6c52-3d0f-4b8e-a1f4-0d9e0f1a2b3c",
+        "codec": "opus16k",
+        "from": "u_aliceAliceAlice1",
+        "to": "u_bobBobBobBobBob1"
+      },
+      "now": 1791396000000,
+      "open": {
+        "deviceId": "9a8b7c6d-5e4f-4a3b-9c2d-1e0f9a8b7c6d",
+        "keys": {
+          "6800f47d32e25beb": "03dcce71a980aacbe1aa6166a6efab182b9777e57b1a28a1a8e5f126a2c250ec"
+        }
+      },
+      "bundle": {
+        "v": 1,
+        "sender": {
+          "deviceId": "0d1e2f3a-4b5c-4d6e-8f70-8192a3b4c5d6",
+          "phoneCert": "AAxvYW8tcGhvbmUtdjEAEnVfYWxpY2VBbGljZUFsaWNlMQAkNmM4ZjdlMmEtMWIzZC00ZTVmLTlhN2ItMGMxZDJlM2Y0YTViACBxj0+Knr69JfOkGf8r2FtK80Obpkpl1/woayPGBHt1gQAAAaCwhoEAkYyqWTm0l9txDwX955jXm7oIyeQCYUa7WkEJ8jublNVTnRNRVSNdtmAxfCT4hZXC0ERvS3SvjONRbI2DS38DAw==",
+          "deviceCert": "AA1vYW8tZGV2aWNlLXYxABJ1X2FsaWNlQWxpY2VBbGljZTEAJDBkMWUyZjNhLTRiNWMtNGQ2ZS04ZjcwLTgxOTJhM2I0YzVkNgAHd2F0Y2hvcwAgy1tUL8h02l6VRxg8SsYqH8qUhIICw3ZlD2pQlSAkQ/gAIHGPT4qevr0l86QZ/yvYW0rzQ5umSmXX/ChrI8YEe3WBAAABoLCGgQBNYj8fMe5YVwUV5X3s36mO3zynkzCuiyza5MLxwasASdzWu1Z+Ar0uoGUrLGshgiXEyo/SN0npgE5M3uiN1NMA"
+        },
+        "keys": [
+          {
+            "deviceId": "9a8b7c6d-5e4f-4a3b-9c2d-1e0f9a8b7c6d",
+            "keyId": "6800f47d32e25beb",
+            "enc": "5mfj1HxWy+2lo5VbZvnV7yVlZ4J3/0puRwAxmkMCggs=",
+            "ct": "+lO6GTAImVPB3JpBu4sItFN2TxPlayTxiYUffK4E4BAvfzaNarNKNGy8BM/k/PMu"
+          },
+          {
+            "deviceId": "1f2e3d4c-5b6a-4978-8695-a4b3c2d1e0f9",
+            "keyId": "2bdfad3524085e05",
+            "enc": "Z0mieY+MCiUY274Kqa+G5pQPpdJEEA4KbYoNhN/3fEg=",
+            "ct": "bqGS87YHF8t+Tq+zryM4U063GBRUVD1hz9sCpBojcMTEIIWo/mZHOBT5zHDE4tL5"
+          }
+        ],
+        "sentAt": 1791395995000,
+        "sig": "jpVfgTYUGh9gJ19C5DB5ddpI3S+toY1IyH/Sm8wjKyLEJBj8MXExdGUI48oyvYpPsQqs0GnckapALY+PnrtTBQ=="
+      }
+    },
+    {
+      "name": "unknown version",
+      "failure": "bad-bundle",
+      "context": {
+        "conversationId": "4f1c7f7e-9b1a-4f0b-9a55-1f6a0c3e2d11",
+        "burstId": "8b0c6c52-3d0f-4b8e-a1f4-0d9e0f1a2b3c",
+        "codec": "opus16k",
+        "from": "u_aliceAliceAlice1",
+        "to": "u_bobBobBobBobBob1"
+      },
+      "now": 1791396000000,
+      "open": {
+        "deviceId": "9a8b7c6d-5e4f-4a3b-9c2d-1e0f9a8b7c6d",
+        "keys": {
+          "6800f47d32e25beb": "03dcce71a980aacbe1aa6166a6efab182b9777e57b1a28a1a8e5f126a2c250ec"
+        }
+      },
+      "bundle": {
+        "v": 2,
+        "sender": {
+          "deviceId": "0d1e2f3a-4b5c-4d6e-8f70-8192a3b4c5d6",
+          "phoneCert": "AAxvYW8tcGhvbmUtdjEAEnVfYWxpY2VBbGljZUFsaWNlMQAkNmM4ZjdlMmEtMWIzZC00ZTVmLTlhN2ItMGMxZDJlM2Y0YTViACBxj0+Knr69JfOkGf8r2FtK80Obpkpl1/woayPGBHt1gQAAAaCwhoEAkYyqWTm0l9txDwX955jXm7oIyeQCYUa7WkEJ8jublNVTnRNRVSNdtmAxfCT4hZXC0ERvS3SvjONRbI2DS38DAw==",
+          "deviceCert": "AA1vYW8tZGV2aWNlLXYxABJ1X2FsaWNlQWxpY2VBbGljZTEAJDBkMWUyZjNhLTRiNWMtNGQ2ZS04ZjcwLTgxOTJhM2I0YzVkNgAHd2F0Y2hvcwAgy1tUL8h02l6VRxg8SsYqH8qUhIICw3ZlD2pQlSAkQ/gAIHGPT4qevr0l86QZ/yvYW0rzQ5umSmXX/ChrI8YEe3WBAAABoLCGgQBNYj8fMe5YVwUV5X3s36mO3zynkzCuiyza5MLxwasASdzWu1Z+Ar0uoGUrLGshgiXEyo/SN0npgE5M3uiN1NMA"
+        },
+        "keys": [
+          {
+            "deviceId": "9a8b7c6d-5e4f-4a3b-9c2d-1e0f9a8b7c6d",
+            "keyId": "6800f47d32e25beb",
+            "enc": "5mfj1HxWy+2lo5VbZvnV7yVlZ4J3/0puRwAxmkMCggs=",
+            "ct": "+lO6GTAJmVPB3JpBu4sItFN2TxPlayTxiYUffK4E4BAvfzaNarNKNGy8BM/k/PMu"
+          },
+          {
+            "deviceId": "1f2e3d4c-5b6a-4978-8695-a4b3c2d1e0f9",
+            "keyId": "2bdfad3524085e05",
+            "enc": "Z0mieY+MCiUY274Kqa+G5pQPpdJEEA4KbYoNhN/3fEg=",
+            "ct": "bqGS87YHF8t+Tq+zryM4U063GBRUVD1hz9sCpBojcMTEIIWo/mZHOBT5zHDE4tL5"
+          }
+        ],
+        "sentAt": 1791395995000,
+        "sig": "0hMGW2O6K+fG7X0PhGh/6kKx35KFNg0kXL+hFK1RDi+UF7l4pzPqU/ylf9lsy7sUVt6H/cKzNKn0ykqFGbcsCQ=="
+      }
+    }
+  ],
+  "badFrames": [
+    {
+      "name": "sequence number altered",
+      "failure": "decrypt",
+      "frame": "01000000004200bceba4057435060f83c4d9e81e8484cac9a74a2425e44938e74d1fe30bb1092590533fae2654a03d34c852b60ca2df6816294e7fb4c2a908cb341238e17f4e494797a9ec6732dfed1fcf01086555bd25431e67cbcbbea98084784a1d25"
+    },
+    {
+      "name": "codec altered",
+      "failure": "decrypt",
+      "frame": "0200000000264396d58ac1f63c76bda3a17203cc7fe72266d5dacaf3dae2a5a1acd34c99b78b6d1e110ea67a4173edb9905dd485e6fc55e9fd7bd27020dfc4789c704158bc39a1318de41d6bb7a3"
+    },
+    {
+      "name": "tag altered",
+      "failure": "decrypt",
+      "frame": "010000000275b1d19bda0fdb38105070efdbae227b5db6815f75b698bf3d6d1d0565a9d9f11d30fc3b73a26cd3562fa629138a34608c57341fd3d1d89b1d7af93e089f1d3ac3cc2146a3955b5c01a3345250d4c24f4da57d70be1e72142cf0ab963751c48ba5"
+    },
+    {
+      "name": "from another burst",
+      "failure": "decrypt",
+      "frame": "0100000000264396d58ac1f63c76bda3a17203cc7fe72266d5dacaf3dae2a5a1acd34c99b78b6d1e110ea67a4173edb9905dd485e6fc55e9fd7bd27020dfedc1b8fc8cb8514e9b5b7c39d5796993"
+    }
+  ]
+}
