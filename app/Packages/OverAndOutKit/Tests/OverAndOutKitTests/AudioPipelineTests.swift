@@ -73,16 +73,34 @@ struct AudioPipelineTests {
         audio.stopEngineForTesting()
         let stoppedAt = Date()
         audio.restartAfterConfigurationChange()
-        let deadline = Date().addingTimeInterval(3)
-        while drainedAt == nil, Date() < deadline {
-            try await Task.sleep(nanoseconds: 10_000_000)
+        func waitForDrain() async throws {
+            let deadline = Date().addingTimeInterval(3)
+            while drainedAt == nil, Date() < deadline {
+                try await Task.sleep(nanoseconds: 10_000_000)
+            }
         }
+        try await waitForDrain()
+        // All 25 frames go to the new engine again, not only what was left of them.
         #expect(restarts.count == 1)
         #expect(restarts.first?.hasPrefix("engine restarted: replaying 25") == true)
         let drained = try #require(drainedAt)
-        // All 500 ms again after the stop, not only what was left of it.
-        #expect(drained.timeIntervalSince(stoppedAt) >= 0.45)
+        let replayTook = drained.timeIntervalSince(stoppedAt)
         #expect(drained.timeIntervalSince(started) < 2)
+
+        // And the speaker drains only once they've played: 500 ms again after the stop. Only a
+        // device that plays in real time can show that. A CI runner's virtual device can play
+        // faster, and its speed can change when the engine is replaced (PR #52's CI run: slow
+        // before the stop, the replay drained in 20 ms after it). So time the same 500 ms on the
+        // new engine, and check the replay only if this device took about that long.
+        drainedAt = nil
+        let timingStarted = Date()
+        audio.beginPlayback()
+        for frame in frames { audio.enqueue(frame) }
+        audio.endPlayback()
+        try await waitForDrain()
+        let fiveHundredMsTook = try #require(drainedAt).timeIntervalSince(timingStarted)
+        guard fiveHundredMsTook >= 0.45 else { return }
+        #expect(replayTook >= 0.45)
     }
 
     /// Run 94: a conversation's message arrived but its audio never started, and it played at the
