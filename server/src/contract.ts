@@ -6,7 +6,7 @@ import { Codec } from "./protocol.ts";
 
 export const API_VERSIONS = [2] as const;
 export const RELAY_PROTOCOLS = [2] as const;
-export const AUDIO_FORMATS = [1] as const;
+export const AUDIO_FORMATS = [1, 2] as const;
 
 export const CLIENT_KINDS = ["ios", "watchos", "android", "wearos"] as const;
 export type ClientKind = (typeof CLIENT_KINDS)[number];
@@ -239,6 +239,7 @@ export interface Admission {
   clientVersion?: string;
   protocol: 2;
   decode: CodecName[];
+  audioFormats: number[];
   encode: CodecName[];
 }
 
@@ -258,10 +259,13 @@ export function parseAdmission(header: (name: string) => string | undefined, min
     throw new ContractError(409, "client-upgrade-required", "Update Over&Out to keep talking.", { minimumBuild: minimum });
   }
   const decode = parseCodecList(header("x-oao-decode")) ?? [...DEFAULT_CAPABILITIES.decode];
+  const claimedFormats = header("x-oao-audio-formats");
+  const audioFormats = claimedFormats === undefined ? [1] : AUDIO_FORMATS.filter((f) => claimedFormats.split(",").includes(String(f)));
+  if (!audioFormats.length) throw new ContractError(409, "unsupported-codec", "no audio format in common");
   if (!decode.length) throw new ContractError(409, "unsupported-codec", "no codec in common", { supported: { codecs: CODEC_NAMES } });
   const encode = parseCodecList(header("x-oao-encode")) ?? [...DEFAULT_CAPABILITIES.encode];
   const clientVersion = header("x-oao-client-version");
-  return { clientKind, build, ...(clientVersion ? { clientVersion: clientVersion.slice(0, 32) } : {}), protocol: 2, decode, encode };
+  return { clientKind, build, ...(clientVersion ? { clientVersion: clientVersion.slice(0, 32) } : {}), protocol: 2, decode, encode, audioFormats };
 }
 
 // MINIMUM_BUILDS: {"ios": 170, "watchos": 170}. Unknown kinds and non-numbers are refused, so a

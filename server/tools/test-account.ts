@@ -49,9 +49,11 @@ import { Accounts } from "../src/accounts.ts";
 import { Firestore, gcloudAccessToken } from "../src/firestore.ts";
 import { SessionSigner, parseSigningKey } from "../src/session.ts";
 import { CANARY_DEVICE } from "../src/canary.ts";
+import { localEndpointKeys, openEndpointSecrets, type EndpointSecrets } from "../src/endpoint-keys.ts";
 
 // OAO_BOT_TOKEN_FILE keeps a local bot (simulator testing) apart from the Google Cloud one.
 export const BOT_TOKEN_FILE = process.env.OAO_BOT_TOKEN_FILE ?? join(import.meta.dirname, "..", "data", "bot-token.json");
+export const BOT_KEYS_FILE = process.env.OAO_BOT_KEYS_FILE ?? join(dirname(BOT_TOKEN_FILE), "test-bot-keys.json");
 const BOT_APPLE_SUB = "test-bot.overandout";
 const CANARY_APPLE_SUB = "canary.overandout";
 const BOT_DEVICE = "test-bot";
@@ -63,6 +65,12 @@ const BOT_REGISTRATION = {
   availability: { enabled: true, notifications: "authorized" as const },
   capabilities: { relayProtocols: [2], audioFormats: [1], decode: ["opus16k" as const, "pcm16le16k" as const], encode: ["opus16k" as const], features: [] },
 };
+
+function botRegistration(userId: string) {
+  if (!existsSync(BOT_KEYS_FILE)) return BOT_REGISTRATION;
+  const keys = openEndpointSecrets(JSON.parse(readFileSync(BOT_KEYS_FILE, "utf8")) as EndpointSecrets, userId, BOT_DEVICE);
+  return { ...BOT_REGISTRATION, capabilities: { ...BOT_REGISTRATION.capabilities, audioFormats: [1, 2] }, e2ee: keys.registration };
+}
 
 export interface BotSession {
   api: string;
@@ -104,7 +112,24 @@ if (import.meta.main) {
   const local = new URL(base).hostname === "localhost" || new URL(base).hostname === "127.0.0.1";
   const [command, arg] = positionals;
 
-  if (command === "create") {
+  if (command === "keys") {
+    const userId = process.env.TEST_BOT_USER_ID || (existsSync(BOT_TOKEN_FILE) ? loadBotSession().userId : "");
+    if (!userId) throw new Error("create the Test Bot account first or set TEST_BOT_USER_ID");
+    const path = arg ?? BOT_KEYS_FILE;
+    mkdirSync(dirname(path), { recursive: true });
+    localEndpointKeys(path, userId, BOT_DEVICE, "watchos");
+    console.log(`Test Bot keys are saved at ${path}. Keep this file private; configure TEST_BOT_E2EE_SECRET before the encrypted rollout.`);
+  } else if (command === "register-keys") {
+    const session = loadBotSession();
+    const reg = botRegistration(session.userId);
+    if (!("e2ee" in reg)) throw new Error(`create ${BOT_KEYS_FILE} with the keys command first`);
+    if (local) await api(base, session.token, "PUT", "/v2/me/device", reg);
+    else {
+      const accounts = new Accounts(new Firestore({ projectId: project, accessToken: gcloudAccessToken() }));
+      await accounts.registerDevice(session.userId, BOT_DEVICE, reg);
+    }
+    console.log("Test Bot certificates registered; the private keys remain in the local file.");
+  } else if (command === "create") {
     let session: BotSession;
     if (local) {
       const res = await api(base, null, "POST", "/v2/auth/apple", {
@@ -115,7 +140,7 @@ if (import.meta.main) {
         clientKind: "watchos",
       });
       session = { api: base, userId: res.user.id, name: res.user.name, token: res.token, expiresAt: res.expiresAt };
-      await api(base, session.token, "PUT", "/v2/me/device", BOT_REGISTRATION);
+      await api(base, session.token, "PUT", "/v2/me/device", botRegistration(session.userId));
     } else {
       // Straight to Firestore and Secret Manager, as the signed-in gcloud user.
       const accounts = new Accounts(new Firestore({ projectId: project, accessToken: gcloudAccessToken() }));
@@ -128,7 +153,7 @@ if (import.meta.main) {
       const sid = await accounts.createSession(user.id, BOT_DEVICE, "watchos");
       const { token, expiresAt } = signer.issue({ sub: user.id, sid, dev: BOT_DEVICE });
       session = { api: base, userId: user.id, name: user.name, token, expiresAt };
-      await accounts.registerDevice(user.id, BOT_DEVICE, BOT_REGISTRATION);
+      await accounts.registerDevice(user.id, BOT_DEVICE, botRegistration(user.id));
     }
     save(session);
     console.log(`Test Bot is ${session.userId} ("${session.name}"); its token is in ${BOT_TOKEN_FILE}.`);
@@ -197,7 +222,7 @@ if (import.meta.main) {
     save(session);
     console.log(`${session.name} is an Android account ${session.userId} (Google dev identity); its token is in ${BOT_TOKEN_FILE}.`);
   } else {
-    console.error("usage: node tools/test-account.ts create | accept <invite link or code> | invite | friends | photo [file.jpg] | canary | android <name>");
+    console.error("usage: node tools/test-account.ts keys [path] | register-keys | create | accept <invite link or code> | invite | friends | photo [file.jpg] | canary | android <name>");
     process.exit(2);
   }
 }

@@ -23,6 +23,8 @@ import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { Codec, FRAME_HEADER_BYTES, FRAME_MS, type ServerMessage } from "./protocol.ts";
+import { openBundle, sealBundle, usableKeys, type FrameCipher, type FriendKeysJSON } from "./e2ee.ts";
+import type { EndpointKeys } from "./endpoint-keys.ts";
 import type { Peer, Relay } from "./relay.ts";
 import type { MetricsStore } from "./store.ts";
 
@@ -50,6 +52,8 @@ export interface TestBotOptions {
   minEchoFrames?: number;
   // Rings beyond this many conversations at once aren't answered.
   maxConversations?: number;
+  keys?: EndpointKeys;
+  recipientKeys?: (userId: string) => Promise<FriendKeysJSON>;
 }
 
 interface BotConversation {
@@ -59,6 +63,10 @@ interface BotConversation {
   joined: boolean;
   // The caller's burst in progress, as it arrives; null while they're quiet.
   hearing: Buffer[] | null;
+  hearingCipher: FrameCipher | null;
+  seenSeq: Set<number>;
+  format: 1 | 2;
+  staleRetries: number;
   // Bursts waiting to be said: frames with their headers.
   queue: Buffer[][];
   // The bot's burst the relay may still refuse (floor-denied), to say again later.
@@ -71,11 +79,11 @@ interface BotConversation {
 export class TestBot {
   private relay: Relay;
   private metrics: MetricsStore;
-  private opts: Required<TestBotOptions>;
+  private opts: Required<Omit<TestBotOptions, "keys" | "recipientKeys">> & Pick<TestBotOptions, "keys" | "recipientKeys">;
   private lobby: Peer;
   private conversations = new Map<string, BotConversation>();
   private answering = new Set<string>();
-  private speaking: { conversation: BotConversation; burstId: string; frames: Buffer[]; next: number; startedAt: number; timer: NodeJS.Timeout | null } | null = null;
+  private speaking: { conversation: BotConversation; burstId: string; frames: Buffer[]; next: number; startedAt: number; cipher: FrameCipher | null; timer: NodeJS.Timeout | null } | null = null;
   private nextPeer = 1;
   private timers = new Set<NodeJS.Timeout>();
   private closed = false;
@@ -84,7 +92,7 @@ export class TestBot {
     this.relay = relay;
     this.metrics = metrics;
     this.opts = {
-      deviceId: "relay-bot",
+      deviceId: "test-bot",
       answerDelayMs: 500,
       replyDelayMs: 400,
       frameMs: FRAME_MS,
@@ -97,6 +105,8 @@ export class TestBot {
     this.lobby = {
       userId: this.opts.userId,
       deviceId: this.opts.deviceId,
+      e2eeDeviceId: this.opts.deviceId,
+      audioFormats: this.opts.keys ? [1, 2] : [1],
       noRings: true,
       sendJSON: (m) => {
         if (m.type === "ring") this.later(0, () => this.ringed(m.conversationId, m.from, m.ringId));
@@ -151,6 +161,10 @@ export class TestBot {
         peer: null as unknown as Peer,
         joined: false,
         hearing: null,
+        hearingCipher: null,
+        seenSeq: new Set(),
+        format: 1,
+        staleRetries: 0,
         queue: [],
         lastSaid: null,
         idleTimer: null,
@@ -165,6 +179,8 @@ export class TestBot {
       conversation.peer = {
         userId: this.opts.userId,
         deviceId: `${this.opts.deviceId}.${this.nextPeer++}`,
+        e2eeDeviceId: this.opts.deviceId,
+        audioFormats: this.opts.keys ? [1, 2] : [1],
         noRings: true,
         sendJSON: (m) => deliver(m),
         sendBinary: (frame) => deliver(Buffer.from(frame)),
@@ -187,7 +203,19 @@ export class TestBot {
   }
 
   private heard(conversation: BotConversation, frame: Buffer): void {
-    if (conversation.hearing && conversation.hearing.length < this.opts.maxEchoFrames) conversation.hearing.push(frame);
+    if (!conversation.hearing || conversation.hearing.length >= this.opts.maxEchoFrames) return;
+    if (!conversation.hearingCipher) {
+      conversation.hearing.push(frame);
+      return;
+    }
+    try {
+      const opened = conversation.hearingCipher.open(frame);
+      if (conversation.seenSeq.has(opened.seq)) return;
+      conversation.seenSeq.add(opened.seq);
+      conversation.hearing.push(makeFrame(opened.codec, opened.seq, opened.payload));
+    } catch {
+      // A corrupt encrypted packet cannot enter the echo.
+    }
   }
 
   private handle(conversation: BotConversation, m: ServerMessage): void {
@@ -201,12 +229,27 @@ export class TestBot {
       case "burst-start":
         if (m.conversationId !== conversation.id || m.from !== conversation.caller) break;
         conversation.hearing = [];
+        conversation.hearingCipher = null;
+        conversation.seenSeq.clear();
+        conversation.format = m.format === 2 ? 2 : 1;
+        if (m.format === 2) {
+          if (!this.opts.keys || !m.e2ee || !m.codec) { conversation.hearing = null; break; }
+          try {
+            conversation.hearingCipher = openBundle(m.e2ee,
+              { conversationId: conversation.id, burstId: m.burstId, codec: m.codec, from: m.from, to: this.opts.userId },
+              { deviceId: this.opts.deviceId, keys: this.opts.keys.encryption }, Date.now()).cipher;
+          } catch {
+            conversation.hearing = null;
+            break;
+          }
+        }
         this.resetIdle(conversation);
         break;
       case "burst-end": {
         if (m.conversationId !== conversation.id || !conversation.hearing) break;
         const heard = conversation.hearing;
         conversation.hearing = null;
+        conversation.hearingCipher = null;
         if (heard.length >= this.opts.minEchoFrames) conversation.queue.push(heard);
         this.resetIdle(conversation);
         break;
@@ -220,7 +263,10 @@ export class TestBot {
         }
         break;
       case "floor-granted":
-        if (conversation.lastSaid?.burstId === m.burstId) conversation.lastSaid = null;
+        if (conversation.lastSaid?.burstId === m.burstId) {
+          conversation.lastSaid = null;
+          conversation.staleRetries = 0;
+        }
         break;
       // The caller left, or they may no longer talk (a block, an unfriending, a deleted
       // account), or the caller left just as the bot started talking (talk-refused
@@ -232,6 +278,12 @@ export class TestBot {
         if (m.conversationId === conversation.id) this.end(conversation, false);
         break;
       case "talk-refused":
+        if (m.reason === "keys-stale" && conversation.lastSaid?.burstId === m.burstId && conversation.staleRetries++ < 2) {
+          conversation.queue.unshift(conversation.lastSaid.frames);
+          conversation.lastSaid = null;
+          if (this.speaking?.burstId === m.burstId) this.stopSpeaking();
+          break;
+        }
       case "moved":
         this.end(conversation, false);
         break;
@@ -253,7 +305,7 @@ export class TestBot {
       // To the back of the line.
       this.conversations.delete(conversation.id);
       this.conversations.set(conversation.id, conversation);
-      const talk = { conversation, burstId, frames, next: 0, startedAt: 0, timer: null as NodeJS.Timeout | null };
+      const talk = { conversation, burstId, frames, next: 0, startedAt: 0, cipher: null as FrameCipher | null, timer: null as NodeJS.Timeout | null };
       this.speaking = talk;
       conversation.lastSaid = { burstId, frames };
       talk.timer = this.later(this.opts.replyDelayMs, () => {
@@ -266,13 +318,38 @@ export class TestBot {
           return this.stopSpeaking();
         }
         // The burst's own codec: the greeting is Opus, and an echo is said back as it came.
-        const codec = frames[0]?.[0] === Codec.pcm16le16k ? Codec.pcm16le16k : Codec.opus16k;
-        this.relay.handleMessage(conversation.peer, { type: "talk-start", to: conversation.caller, burstId, codec });
-        talk.startedAt = performance.now();
-        this.sendFrames();
+        void this.startTalk(talk);
       });
       return;
     }
+  }
+
+  private async startTalk(talk: NonNullable<TestBot["speaking"]>): Promise<void> {
+    const { conversation, frames, burstId } = talk;
+    if (this.speaking !== talk) return;
+    const codec = frames[0]?.[0] === Codec.pcm16le16k ? Codec.pcm16le16k : Codec.opus16k;
+    if (conversation.format === 2) {
+      if (!this.opts.keys || !this.opts.recipientKeys) return this.end(conversation, true);
+      try {
+        const directory = await this.opts.recipientKeys(conversation.caller);
+        const recipients = usableKeys(conversation.caller, directory, Date.now()).recipients;
+        if (this.speaking !== talk) return;
+        if (!recipients.length) return this.end(conversation, true);
+        const { bundle, cipher } = sealBundle(
+          { conversationId: conversation.id, burstId, codec: codec === Codec.opus16k ? "opus16k" : "pcm16le16k", from: this.opts.userId, to: conversation.caller },
+          this.opts.keys.sender, recipients, Date.now());
+        talk.cipher = cipher;
+        this.relay.handleMessage(conversation.peer, { type: "talk-start", to: conversation.caller, burstId, codec,
+          format: 2, conversationId: conversation.id, e2ee: bundle });
+      } catch (err) {
+        console.error(`[test-bot] cannot seal reply: ${(err as Error).message}`);
+        return this.end(conversation, true);
+      }
+    } else {
+      this.relay.handleMessage(conversation.peer, { type: "talk-start", to: conversation.caller, burstId, codec });
+    }
+    talk.startedAt = performance.now();
+    this.sendFrames();
   }
 
   // Real time: each frame when it's due, catching up after a late timer.
@@ -289,7 +366,9 @@ export class TestBot {
         });
         return;
       }
-      this.relay.handleAudio(conversation.peer, withSeq(frames[talk.next], talk.next));
+      const plain = withSeq(frames[talk.next], talk.next);
+      this.relay.handleAudio(conversation.peer, talk.cipher
+        ? talk.cipher.seal(plain[0]!, talk.next, plain.subarray(FRAME_HEADER_BYTES)) : plain);
       talk.next++;
     }
     this.relay.handleMessage(conversation.peer, { type: "talk-end", burstId: talk.burstId });

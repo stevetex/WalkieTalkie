@@ -253,10 +253,29 @@ export function createApi(options: ApiOptions): ApiHandler {
     }],
     ["PUT", /^\/me\/device$/, async (req) => {
       const claims = await authorize(req);
-      const { clientKind, delivery, availability, capabilities, clientVersion, build } = await readBody(req);
+      const { clientKind, delivery, availability, capabilities, clientVersion, build, e2ee } = await readBody(req);
       if (!isClientKind(clientKind)) throw new AccountError(400, "bad-request", "clientKind is required");
       if (clientKind !== claims.session.clientKind) {
         throw new ContractError(400, "client-kind-mismatch", `this session is for a ${claims.session.clientKind} device`);
+      }
+      let keys: { phoneCert: string; deviceCert: string; encCert: string } | undefined;
+      if (e2ee !== undefined) {
+        const value = e2ee as Record<string, unknown>;
+        const certificate = (v: unknown): v is string => typeof v === "string" && v.length > 0 && v.length <= 2048 &&
+          /^[A-Za-z0-9+/]+={0,2}$/.test(v) && Buffer.from(v, "base64").toString("base64") === v;
+        if (!value || typeof value !== "object" || Array.isArray(value) || !certificate(value.deviceCert) || !certificate(value.encCert)) {
+          throw new ContractError(400, "bad-certificate", "e2ee certificates are required");
+        }
+        let phoneCert = value.phoneCert;
+        if (claims.session.parentDeviceId) {
+          const parent = await accounts.device(claims.sub, claims.session.parentDeviceId);
+          if (!parent?.e2ee?.phoneCert || (phoneCert !== undefined && phoneCert !== parent.e2ee.phoneCert)) {
+            throw new ContractError(400, "bad-certificate", "the companion's phone certificate is unavailable");
+          }
+          phoneCert = parent.e2ee.phoneCert;
+        }
+        if (!certificate(phoneCert)) throw new ContractError(400, "bad-certificate", "phone certificate is required");
+        keys = { phoneCert, deviceCert: value.deviceCert, encCert: value.encCert };
       }
       const device = await accounts.registerDevice(claims.sub, claims.dev, {
         clientKind,
@@ -265,6 +284,7 @@ export function createApi(options: ApiOptions): ApiHandler {
         capabilities: parseCapabilities(capabilities),
         ...(typeof clientVersion === "string" && clientVersion ? { clientVersion: clientVersion.slice(0, 32) } : {}),
         ...(typeof build === "string" && build ? { build: build.slice(0, 32) } : {}),
+        ...(keys ? { e2ee: keys } : {}),
       });
       // Never the token itself; "inApp" is a phone reachable only while the app is open.
       telemetry.write({
@@ -552,6 +572,7 @@ function deviceJSON(device: AccountDevice): Record<string, unknown> {
     capabilities: device.capabilities,
     ...(device.clientVersion ? { clientVersion: device.clientVersion } : {}),
     ...(device.build ? { build: device.build } : {}),
+    ...(device.e2ee ? { e2ee: { phoneCert: device.e2ee.phoneCert, deviceCert: device.e2ee.deviceCert, encCert: device.e2ee.encCert } } : {}),
   };
 }
 

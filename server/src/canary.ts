@@ -11,6 +11,8 @@
 import { randomUUID } from "node:crypto";
 import type { Docs } from "./docs.ts";
 import { Codec, type ServerMessage } from "./protocol.ts";
+import { openBundle, sealBundle, usableKeys, type FriendKeysJSON } from "./e2ee.ts";
+import type { EndpointKeys } from "./endpoint-keys.ts";
 import { SessionSigner, parseSigningKey } from "./session.ts";
 
 export const CANARY_DEVICE = "canary";
@@ -38,6 +40,8 @@ export interface CanaryOptions {
   relayUrl: string;
   token: string;
   botUserId: string;
+  keys?: EndpointKeys;
+  botKeys?: FriendKeysJSON;
   timeoutMs?: number;
   now?: () => number;
 }
@@ -64,13 +68,14 @@ export async function runCanary(options: CanaryOptions): Promise<CanaryResult> {
         "x-oao-relay-protocol": "2",
         "x-oao-decode": "opus16k,pcm16le16k",
         "x-oao-encode": "pcm16le16k",
+        "x-oao-audio-formats": options.keys ? "1,2" : "1",
       },
     } as unknown as string[]);
     ws.binaryType = "arraybuffer";
-    const inbox: Array<ServerMessage | "frame"> = [];
+    const inbox: Array<ServerMessage | Buffer> = [];
     let wake: (() => void) | null = null;
     ws.onmessage = (event) => {
-      inbox.push(typeof event.data === "string" ? (JSON.parse(event.data) as ServerMessage) : "frame");
+      inbox.push(typeof event.data === "string" ? (JSON.parse(event.data) as ServerMessage) : Buffer.from(event.data as ArrayBuffer));
       wake?.();
     };
     const closed = new Promise<never>((_, reject) => {
@@ -80,7 +85,7 @@ export async function runCanary(options: CanaryOptions): Promise<CanaryResult> {
     // Closing at the end rejects it too, with nobody waiting.
     closed.catch(() => {});
     const deadline = t0 + timeoutMs;
-    const next = async (match: (m: ServerMessage | "frame") => boolean): Promise<ServerMessage | "frame"> => {
+    const next = async (match: (m: ServerMessage | Buffer) => boolean): Promise<ServerMessage | Buffer> => {
       for (;;) {
         const i = inbox.findIndex(match);
         if (i >= 0) return inbox.splice(i, 1)[0];
@@ -91,27 +96,44 @@ export async function runCanary(options: CanaryOptions): Promise<CanaryResult> {
     };
     await Promise.race([closed, new Promise<void>((resolve) => { ws!.onopen = () => resolve(); })]);
     ws.send(JSON.stringify({ type: "hello", clientTime: Date.now() }));
-    await next((m) => m !== "frame" && m.type === "hello-ack");
+    await next((m) => !Buffer.isBuffer(m) && m.type === "hello-ack");
     result.connectMs = Math.round(now() - t0);
 
     stage = "go-ahead";
     const burstId = randomUUID();
+    const conversationId = randomUUID();
+    const recipients = options.keys && options.botKeys ? usableKeys(options.botUserId, options.botKeys, Date.now()).recipients : [];
+    if (options.keys && !recipients.length) throw new Error("the Test Bot has no current encryption key");
+    const sealed = options.keys ? sealBundle(
+      { conversationId, burstId, codec: "pcm16le16k", from: options.keys.secrets.userId, to: options.botUserId },
+      options.keys.sender, recipients, Date.now()) : null;
     const t1 = now();
-    ws.send(JSON.stringify({ type: "talk-start", to: options.botUserId, burstId, codec: "pcm16le16k" }));
-    const decision = await next((m) => m !== "frame" && (m.type === "floor-granted" || m.type === "floor-denied" || m.type === "talk-refused" || m.type === "error"));
-    if (decision === "frame" || decision.type !== "floor-granted") throw new Error(decision === "frame" ? "unexpected frame" : `${decision.type}${"reason" in decision ? ` ${decision.reason}` : ""}`);
+    ws.send(JSON.stringify({ type: "talk-start", to: options.botUserId, burstId, codec: "pcm16le16k",
+      ...(sealed ? { format: 2, conversationId, e2ee: sealed.bundle } : {}) }));
+    const decision = await next((m) => !Buffer.isBuffer(m) && (m.type === "floor-granted" || m.type === "floor-denied" || m.type === "talk-refused" || m.type === "error"));
+    if (Buffer.isBuffer(decision) || decision.type !== "floor-granted") throw new Error(Buffer.isBuffer(decision) ? "unexpected frame" : `${decision.type}${"reason" in decision ? ` ${decision.reason}` : ""}`);
     result.goAheadMs = Math.round(now() - t1);
     // Half a second of silence, so the bot has something to answer.
     for (let seq = 0; seq < 25; seq++) {
       const frame = Buffer.alloc(5 + 640);
       frame[0] = Codec.pcm16le16k;
       frame.writeUInt32BE(seq, 1);
-      ws.send(frame);
+      ws.send(sealed ? sealed.cipher.seal(Codec.pcm16le16k, seq, frame.subarray(5)) : frame);
     }
     ws.send(JSON.stringify({ type: "talk-end", burstId }));
 
     stage = "the bot's greeting";
-    await next((m) => m === "frame");
+    if (options.keys) {
+      const start = await next((m) => !Buffer.isBuffer(m) && m.type === "burst-start" && m.from === options.botUserId);
+      if (Buffer.isBuffer(start) || start.type !== "burst-start" || start.format !== 2 || !start.e2ee || !start.codec) throw new Error("the Test Bot sent plaintext");
+      const opened = openBundle(start.e2ee,
+        { conversationId: decision.conversationId, burstId: start.burstId, codec: start.codec, from: options.botUserId, to: options.keys.secrets.userId },
+        { deviceId: options.keys.secrets.deviceId, keys: options.keys.encryption }, Date.now());
+      const frame = await next((m) => Buffer.isBuffer(m));
+      opened.cipher.open(frame as Buffer);
+    } else {
+      await next((m) => Buffer.isBuffer(m));
+    }
     result.firstFrameMs = Math.round(now() - t1);
     result.ok = true;
     ws.send(JSON.stringify({ type: "leave", conversationId: decision.conversationId }));

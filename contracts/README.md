@@ -423,7 +423,11 @@ key, base64); the phone's reply adds the watch's `deviceCert` and the phone's `p
 
 ### The key bundle
 
-A message (burst) has its own random 32-byte message key. `talk-start` carries `"format": 2`
+A message (burst) has its own random 32-byte message key. For the first encrypted Talk in a
+conversation the sender chooses a random UUID for `conversationId`; the relay uses it. For later
+Talks the sender uses the ID already given in `floor-granted` or `joined`. A different ID for an
+existing conversation is refused. This lets the sender sign the conversation ID before sending
+the bundle. `talk-start` carries `"format": 2`, `conversationId`,
 and the bundle in `e2ee`; the relay passes the bundle to listeners in `burst-start` (`format`,
 `e2ee`), wherever it sends one: live, replayed, resumed, and in `GET /v2/rings/audio`.
 

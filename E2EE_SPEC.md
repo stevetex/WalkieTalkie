@@ -144,6 +144,9 @@ At `talk-start` the sender attaches a bundle:
   sender and recipient account IDs, and every `keys` entry. It stops the relay from moving a
   message to another conversation, relabelling it with another burst ID or time, sending it
   back to its sender, or swapping keys.
+- For a new conversation, the sender chooses a random conversation UUID at `talk-start` so it
+  can sign that ID before the relay grants the floor. It uses the established ID on later Talks;
+  the relay refuses a mismatched ID.
 - **Replays:** a listener plays a message only if `sentAt` is at most about 3 minutes old by its
   own clock: the longest a real message waits before its start is heard (a 35 s ring, a 30 s
   join grace, queued bursts of up to 60 s, and a 30 s resume), plus a minute for clock drift:
@@ -256,7 +259,9 @@ The relay passes ciphertext through. Specifically:
   It opens what friends send it and seals its echo and greeting to their devices. The keys must
   survive node replacement, or every tester sees "Test Bot's security code changed" each month:
   production keeps them in a Secret Manager secret (ask Steve first), and local runs keep them
-  in `DATA_DIR`.
+  in `DATA_DIR`. The private encryption key and certificate rotate together: the production
+  secret version must be updated within the certificate's 30 days, retaining the prior key for
+  the seven-day grace. Local relay startup rotates its private file after seven days.
 - **Canary** (the rolling job): makes fresh keys each run and registers them with its device.
   Its pass still measures talk-start → the bot's first frame, now including the crypto.
 - **`bot.ts`, `client.ts`, `test-account.ts`:** keys beside their token files.

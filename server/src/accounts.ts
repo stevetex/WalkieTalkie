@@ -49,6 +49,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { PreconditionFailed, type FirestoreData, type TransactionGet, type Write } from "./firestore.ts";
 import type { Docs } from "./docs.ts";
 import { nameAllowed } from "./name-filter.ts";
+import { ENC_CERT_LIFETIME_MS, parseDeviceCertificate, parseEncryptionKeyCertificate, parsePhoneCertificate, type FriendKeysJSON } from "./e2ee.ts";
 import {
   DEFAULT_CAPABILITIES,
   companionKindOf,
@@ -119,6 +120,7 @@ export interface Friend {
   favorite?: boolean;
   // When this friend last talked to the user (ms).
   lastMessageAt?: number;
+  keys?: FriendKeysJSON;
 }
 
 export interface BlockedUser {
@@ -146,6 +148,8 @@ export interface AccountDevice {
   capabilities: Capabilities;
   clientVersion?: string;
   build?: string;
+  e2ee?: { phoneCert: string; deviceCert: string; encCert: string };
+  previousEncCert?: { encCert: string; until: number };
   // When the person last used it (the relay records talks and joins); orders devices of a kind.
   lastActiveAt: number;
   updatedAt: number;
@@ -161,6 +165,7 @@ export interface DeviceRegistration {
   capabilities: Capabilities;
   clientVersion?: string;
   build?: string;
+  e2ee?: { phoneCert: string; deviceCert: string; encCert: string };
 }
 
 // A device's current session.
@@ -472,6 +477,23 @@ export class Accounts {
     const path = `users/${userId}/devices/${deviceId}`;
     const pointers = tokenPointers(reg.delivery);
     const now = this.opts.now();
+    if (reg.capabilities.audioFormats.includes(2) !== (reg.e2ee !== undefined)) {
+      throw new AccountError(400, "bad-certificate", "format 2 capability and device certificates must be registered together");
+    }
+    if (reg.e2ee) {
+      try {
+        const phone = parsePhoneCertificate(Buffer.from(reg.e2ee.phoneCert, "base64"));
+        const device = parseDeviceCertificate(Buffer.from(reg.e2ee.deviceCert, "base64"), phone);
+        const enc = parseEncryptionKeyCertificate(Buffer.from(reg.e2ee.encCert, "base64"), device);
+        if (phone.userId !== userId || device.userId !== userId || device.deviceId !== deviceId ||
+            device.clientKind !== reg.clientKind || enc.issuedAt > now + 60_000 ||
+            enc.notAfter !== enc.issuedAt + ENC_CERT_LIFETIME_MS || enc.notAfter <= now) {
+          throw new Error("certificate does not match this registration");
+        }
+      } catch {
+        throw new AccountError(400, "bad-certificate", "invalid device encryption certificates");
+      }
+    }
     return this.docs.transaction(async (get) => {
       const [user, previous, ...owners] = await get([`users/${userId}`, path, ...pointers]);
       if (!user) throw new AccountError(404, "no-account");
@@ -499,6 +521,13 @@ export class Accounts {
       if (previous) writes.push(...(await this.pointerDeletes(userId, [{ id: deviceId, data: previous }], pointers)));
       const lastActiveAt = previous ? millis(previous.lastActiveAt ?? previous.updatedAt) || now : now;
       const data = deviceData(reg, now, lastActiveAt);
+      const old = previous?.e2ee as AccountDevice["e2ee"] | undefined;
+      if (reg.e2ee && old && old.encCert !== reg.e2ee.encCert && old.deviceCert === reg.e2ee.deviceCert) {
+        data.previousEncCert = { encCert: old.encCert, until: now + 7 * DAY_MS };
+      } else if (reg.e2ee && previous?.previousEncCert) {
+        const previousKey = previous.previousEncCert as AccountDevice["previousEncCert"];
+        if (previousKey && previousKey.until > now) data.previousEncCert = previousKey;
+      }
       writes.push(
         { set: path, data },
         ...pointers.map((p): Write => ({ set: p, data: { userId, deviceId, scope: tokenScope(reg.delivery), updatedAt: now } })),
@@ -558,9 +587,21 @@ export class Accounts {
     return (await this.docs.list(`users/${requireUserId(userId)}/devices`)).flatMap((d) => toDevice(d.id, d.data) ?? []);
   }
 
+  async device(userId: string, deviceId: string): Promise<AccountDevice | null> {
+    const [row] = await this.docs.getAll([`users/${requireUserId(userId)}/devices/${deviceId}`]);
+    return row ? toDevice(deviceId, row) : null;
+  }
+
+  async friendKeys(userId: string): Promise<FriendKeysJSON> {
+    const devices = await this.devices(userId);
+    const phones = [...new Set(devices.flatMap((d) => d.e2ee?.phoneCert ? [d.e2ee.phoneCert] : []))];
+    return { phones, devices: devices.flatMap((d) => d.e2ee ? [{ deviceId: d.id, clientKind: d.clientKind, deviceCert: d.e2ee.deviceCert, encCert: d.e2ee.encCert }] : []) };
+  }
+
   async friends(userId: string): Promise<Friend[]> {
     const rows = await this.docs.list(`users/${requireUserId(userId)}/friends`);
     const users = await this.docs.getAll(rows.map((r) => `users/${r.id}`));
+    const keys = await Promise.all(rows.map((r) => this.friendKeys(r.id)));
     return rows
       .flatMap((r, i) => {
         const user = users[i];
@@ -570,6 +611,7 @@ export class Accounts {
         if (isAvatar(user.avatar)) friend.avatar = user.avatar;
         if (r.data.favorite === true) friend.favorite = true;
         if (r.data.lastMessageAt !== undefined) friend.lastMessageAt = millis(r.data.lastMessageAt);
+        friend.keys = keys[i];
         return [friend];
       })
       .sort((a, b) => a.name.localeCompare(b.name));
@@ -1043,6 +1085,7 @@ export function deviceData(reg: DeviceRegistration, now: number, lastActiveAt: n
     capabilities: structuredClone(reg.capabilities),
     ...(reg.clientVersion ? { clientVersion: reg.clientVersion } : {}),
     ...(reg.build ? { build: reg.build } : {}),
+    ...(reg.e2ee ? { e2ee: reg.e2ee } : {}),
     lastActiveAt: new Date(lastActiveAt),
     updatedAt: now,
     schemaVersion: SCHEMA_VERSION,
@@ -1109,6 +1152,8 @@ export function toDevice(id: string, data: FirestoreData): AccountDevice | null 
   };
   if (typeof data.clientVersion === "string") device.clientVersion = data.clientVersion;
   if (typeof data.build === "string") device.build = data.build;
+  if (data.e2ee && typeof data.e2ee === "object") device.e2ee = data.e2ee as AccountDevice["e2ee"];
+  if (data.previousEncCert && typeof data.previousEncCert === "object") device.previousEncCert = data.previousEncCert as AccountDevice["previousEncCert"];
   return device;
 }
 
