@@ -169,7 +169,7 @@ struct SignInView: View {
                     .padding(.top, 12)
                 }
                 #endif
-                Text("Your screen name is shown to the friends you invite. We never see your email.")
+                Text("Sign in with Apple gives us an identifier for your account. We don’t store your email address. Friends you invite can see your screen name.")
                     .font(.footnote)
                     .foregroundStyle(Brand.secondary)
                     .multilineTextAlignment(.center)
