@@ -1192,6 +1192,12 @@ final class ConversationController: NSObject, ObservableObject {
         prepare(for: friendId)
     }
 
+    /// The crown on a Talk screen (diagnostics for Helen's Series 9, where it never reached the
+    /// app): a mark in the conversation's timeline while there is one.
+    func markCrown(_ name: String, detail: String) {
+        conversation?.timeline.mark(name, detail: detail, once: false)
+    }
+
     /// Opens the relay stream while a Talk screen shows, so the first press doesn't wait for
     /// a cold connection. It closes when the screen goes, the app goes to the background, or
     /// after `preconnectIdle` with no conversation.
