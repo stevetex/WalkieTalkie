@@ -24,8 +24,11 @@ final class WatchAccount: NSObject, ObservableObject {
     /// Called whenever the session appears or changes hands, so the push token can be
     /// registered under the account.
     var onSessionChanged: ((AccountSession?) -> Void)?
+    var onRefreshed: (() -> Void)?
 
     let deviceId = DeviceIdentity.id()
+    let e2ee = E2EEKeyStore(accessGroup: Bundle.main.object(forInfoDictionaryKey: "OAOAppGroup") as? String)
+    let trust = E2EETrust()
     let client: AccountClient?
     private let store: SessionStoring
     /// The request for a session the iPhone is answering, so asking again (by message, user
@@ -103,6 +106,7 @@ final class WatchAccount: NSObject, ObservableObject {
                 let loaded = try await client.friends()
                 session = store.load()
                 setFriends(loaded)
+                onRefreshed?()
                 await Self.whileIdle(client: client, friends: loaded)
             } catch {
                 print("[oao] account refresh failed: \(error.localizedDescription)")
@@ -148,6 +152,15 @@ final class WatchAccount: NSObject, ObservableObject {
     private func setFriends(_ loaded: [Friend]) {
         // Favorites (starred on the iPhone) first in the friends list.
         friends = Friend.favoritesFirst(loaded)
+        if let account = session?.userId {
+            for friend in loaded {
+                if let keys = friend.keys, trust.update(account: account, friend: friend.id, keys: keys, now: Int64(Clock.nowMs())) {
+                    Telemetry.shared.event("keyChanged", ["friend": friend.id])
+                } else if friend.keys == nil {
+                    trust.missingKeys(account: account, friend: friend.id)
+                }
+            }
+        }
         friendsLoaded = true
         if let data = try? JSONEncoder().encode(loaded) { UserDefaults.standard.set(data, forKey: Key.friends) }
     }
@@ -170,6 +183,7 @@ final class WatchAccount: NSObject, ObservableObject {
 
     private func signedOut(askPhone: Bool) {
         let hadSession = session != nil
+        if let old = session { e2ee.signOut(userId: old.userId, keepPhoneIdentity: false) }
         store.clear()
         // Messages the notification extension downloaded for this account.
         Prefetched.removeAll()
@@ -190,8 +204,10 @@ final class WatchAccount: NSObject, ObservableObject {
         guard WCSession.default.isReachable else { return }
         let requestId = sessionRequestId ?? UUID().uuidString.lowercased()
         sessionRequestId = requestId
-        let request: [String: Any] = [WatchLink.request: WatchLink.sessionRequest, WatchLink.deviceId: deviceId,
+        let signingKey = try? e2ee.watchSigningKey(deviceId: deviceId)
+        var request: [String: Any] = [WatchLink.request: WatchLink.sessionRequest, WatchLink.deviceId: deviceId,
                                       WatchLink.requestId: requestId, WatchLink.schemaVersion: WatchLink.currentSchemaVersion]
+        request[WatchLink.signingKey] = signingKey
         // Both handlers run on a WatchConnectivity queue, so they're @Sendable, not main-actor.
         WCSession.default.sendMessage(request) { @Sendable [weak self] reply in
             let message = PhoneMessage(reply)
@@ -203,12 +219,25 @@ final class WatchAccount: NSObject, ObservableObject {
 
     private func updateContext() {
         guard WCSession.isSupported(), WCSession.default.activationState == .activated else { return }
-        try? WCSession.default.updateApplicationContext([WatchLink.deviceId: deviceId, WatchLink.needsSession: session == nil,
-                                                         WatchLink.schemaVersion: WatchLink.currentSchemaVersion])
+        var context: [String: Any] = [WatchLink.deviceId: deviceId, WatchLink.needsSession: session == nil,
+                                      WatchLink.schemaVersion: WatchLink.currentSchemaVersion]
+        context[WatchLink.signingKey] = try? e2ee.watchSigningKey(deviceId: deviceId)
+        try? WCSession.default.updateApplicationContext(context)
     }
 
     private func handle(_ message: PhoneMessage) {
         if let new = message.session, new.deviceId == deviceId {
+            guard let phone = message.phoneCert, let device = message.deviceCert else {
+                askPhoneForSession()
+                return
+            }
+            do {
+                _ = try e2ee.prepareWatch(userId: new.userId, deviceId: deviceId, phoneCert: phone,
+                                          deviceCert: device, now: Int64(Clock.nowMs()))
+            } catch {
+                print("[oao] watch key provisioning failed: \(error)")
+                return
+            }
             adopt(new)
         } else if message.signedOut {
             phoneSignedIn = false
@@ -227,10 +256,14 @@ final class WatchAccount: NSObject, ObservableObject {
 private struct PhoneMessage: Sendable {
     let session: AccountSession?
     let signedOut: Bool
+    let phoneCert: Data?
+    let deviceCert: Data?
 
     init(_ payload: [String: Any]) {
         session = (payload[WatchLink.session] as? Data).flatMap(WatchLink.decode)
         signedOut = payload[WatchLink.signedOut] as? Bool == true
+        phoneCert = payload[WatchLink.phoneCert] as? Data
+        deviceCert = payload[WatchLink.deviceCert] as? Data
     }
 }
 

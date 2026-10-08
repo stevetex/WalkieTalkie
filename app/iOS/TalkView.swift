@@ -9,6 +9,7 @@ struct TalkView: View {
     @EnvironmentObject private var talk: TalkController
     @EnvironmentObject private var ptt: PushToTalkChannel
     let friend: Friend
+    @State private var showSecurityNotice = false
 
     /// This screen's friend is in the conversation (or nobody is).
     private var isCurrent: Bool { talk.peerId == nil || talk.peerId == friend.id }
@@ -99,6 +100,11 @@ struct TalkView: View {
                     Text(friend.name)
                         .font(.headline)
                         .lineLimit(1)
+                    if talk.securityMark {
+                        Image(systemName: "exclamationmark.shield.fill")
+                            .foregroundStyle(Brand.orange)
+                            .accessibilityLabel("Security code changed")
+                    }
                 }
                 .foregroundStyle(Brand.ivory)
                 .accessibilityElement(children: .combine)
@@ -114,6 +120,19 @@ struct TalkView: View {
             }
         }
         .task { await model.requestMicrophone() }
+        .onAppear(perform: checkSecurityNotice)
+        .onChange(of: model.friends) { _, _ in checkSecurityNotice() }
+        .onChange(of: talk.securityNoticeVersion) { _, _ in checkSecurityNotice() }
+        .alert("\(friend.name)'s security code changed", isPresented: $showSecurityNotice) {
+            Button("OK") {}
+        } message: {
+            Text("This happens when they sign in on a new iPhone.")
+        }
+    }
+
+    private func checkSecurityNotice() {
+        guard let account = model.session?.userId else { return }
+        showSecurityNotice = model.trust.markNoticeRead(account: account, friend: friend.id, now: Int64(Clock.nowMs()))
     }
 
     private var inConversation: Bool { talk.phase != .idle && isCurrent }

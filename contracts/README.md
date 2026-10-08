@@ -410,13 +410,18 @@ encCert}` (`phoneCert` from phones). Friends see them in `GET /v2/friends`, on e
 ```json
 "keys": {
   "phones": ["<phoneCert>"],
+  "allDevicesHaveKeys": true,
   "devices": [{ "deviceId": "…", "clientKind": "watchos", "deviceCert": "<base64>", "encCert": "<base64>" }]
 }
 ```
 
-A sender seals to every device of the friend whose chain checks out (the device certificate from
-one of the friend's phones, the encryption key from the device) and whose key hasn't expired,
-and leaves out any that don't, rather than failing the message.
+`allDevicesHaveKeys` is false while any registered device has not published certificates.
+During PR C the apps do not start an encrypted burst in that state. A friend whose keys have
+already been seen cannot be downgraded to format 1.
+
+A PR C sender starts format 2 only when every registered recipient device has a valid,
+unexpired key and seals to all of them. Missing or invalid keys stop the encrypted Talk;
+once this sender has seen keys for the friend, it cannot fall back to format 1.
 
 Over WatchConnectivity, the watch's session request adds `signingKey` (its raw Ed25519 public
 key, base64); the phone's reply adds the watch's `deviceCert` and the phone's `phoneCert`.

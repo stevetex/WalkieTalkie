@@ -72,6 +72,8 @@ final class ConversationController: NSObject, ObservableObject {
     @Published private(set) var peerId: String?
     @Published private(set) var isTalking = false
     @Published private(set) var remoteTalking = false
+    @Published private(set) var securityMark = false
+    @Published private(set) var securityNoticeVersion = 0
     /// In a conversation and able to record right now (audio on). What's said before the
     /// relay stream opens is held and sent when it does, so the go-ahead doesn't wait for a
     /// cold connection (2.1 s in run 66). The mouth shows the hourglass until then.
@@ -124,11 +126,19 @@ final class ConversationController: NSObject, ObservableObject {
     // The watch's microphone arrives quiet and unleveled (build 140: speech peaking at −35 dBFS),
     // and its small speaker needs received speech louder (2026-10-02: held to the ear to hear).
     private let audio = AudioPipeline(autoGain: true, playbackGain: true)
+    private lazy var e2ee = E2EEFlow(store: account.e2ee, trust: account.trust, deviceId: account.deviceId,
+                                     userId: { [weak self] in self?.account.session?.userId })
+    private var acceptingBurst = true
 
     private var started = false
     private var conversation: Conversation?
     private var talkHeld = false
     private var burstId: String?
+    private var pendingFrames: [Data] = []
+    private var pendingBurstId: String?
+    private var burstFinished = false
+    private var staleRetries = 0
+    private var awaitingFloor = false
     private var sentFirstFrame = false
     private var idleTimer: Timer?
     private var incomingRingTimer: Timer?
@@ -183,17 +193,24 @@ final class ConversationController: NSObject, ObservableObject {
         relay.onReady = { [unowned self] offset in relayReady(clockOffsetMs: offset, helloAckArrivedAt: relay.lastArrivalMs) }
         relay.onMessage = { [unowned self] message in handle(message) }
         relay.onFrame = { [unowned self] frame in
-            // Already played from the prefetch download.
-            let seq = VoiceFrame.decode(frame)?.seq
-            if let seq { nextIncomingSeq = max(nextIncomingSeq, seq + 1) }
-            if let burst = incomingBurstId, let played = prefetchedFrames[burst],
-               let seq, seq < played { return }
+            guard acceptingBurst, let burst = incomingBurstId else { return }
+            let opened: Data
+            do {
+                guard let decrypted = try e2ee.open(frame, burstId: burst, now: Int64(Clock.nowMs())) else { return }
+                opened = decrypted
+            } catch {
+                Telemetry.shared.event("e2eeFailed", ["reason": "decrypt"])
+                return
+            }
+            if let seq = VoiceFrame.decode(opened)?.seq {
+                nextIncomingSeq = max(nextIncomingSeq, seq == UInt32.max ? seq : seq + 1)
+            }
             if conversation?.timeline.has("firstFrameReceived") == false {
                 conversation?.timeline.mark("firstFrameArrived", at: relay.lastArrivalMs)
                 conversation?.timeline.mark("firstFrameReceived")
             }
             speakerIdle = false
-            audio.enqueue(frame)
+            audio.enqueue(opened)
         }
         relay.onClose = { [unowned self] reason in
             guard let current = conversation else {
@@ -298,6 +315,7 @@ final class ConversationController: NSObject, ObservableObject {
                 if conversation != nil { finish() }
             }
         }
+        account.onRefreshed = { [weak self] in self?.registerPushToken() }
         account.activate()
         scheduleAccountRefresh()
         registerForRings()
@@ -365,10 +383,27 @@ final class ConversationController: NSObject, ObservableObject {
             return
         }
         let delivery: DeviceRegistration.Delivery = token.map { .alert(token: $0, environment: AppSettings.apnsEnvironment) } ?? .foreground
-        let registration = DeviceRegistration(delivery: delivery, notifications: notifications)
+        let keys: E2EEKeyStore.Registration?
+        do {
+            keys = try account.e2ee.registration(userId: account.session!.userId, deviceId: account.deviceId, phone: false, now: Int64(Clock.nowMs()))
+        } catch {
+            Telemetry.shared.event("e2eeFailed", ["reason": "key-storage"])
+            return
+        }
+        let registration = DeviceRegistration(delivery: delivery, notifications: notifications, e2ee: keys)
         Task { @MainActor in
             do {
                 try await account.registerDevice(registration)
+                if let group = Prefetched.appGroup, let defaults = UserDefaults(suiteName: group) {
+                    defaults.set(["token": token ?? "", "environment": AppSettings.apnsEnvironment,
+                                  "notifications": notifications.rawValue], forKey: "e2eeWatchRegistration")
+                    if let keys {
+                        let last = defaults.string(forKey: "e2eeWatchEncCert")
+                        let current = keys.encCert.base64EncodedString()
+                        if last != nil && last != current { Telemetry.shared.event("keysRotated", [:]) }
+                        defaults.set(current, forKey: "e2eeWatchEncCert")
+                    }
+                }
                 registrationStatus = "Registered" + (note.map { ", \($0)" } ?? "")
             } catch {
                 registrationStatus = "Registration failed: \(error.localizedDescription)"
@@ -412,6 +447,7 @@ final class ConversationController: NSObject, ObservableObject {
         }
         // Flush the last partial frame before telling the relay the burst is over.
         audio.endCapture { [self] in
+            burstFinished = true
             relay.send(["type": "talk-end", "burstId": id])
             if burstId == id { burstId = nil }
             resetIdleTimer()
@@ -542,10 +578,35 @@ final class ConversationController: NSObject, ObservableObject {
         remoteTalking = true
         // Queued before the audio session is up: the pipeline holds frames until it starts.
         for burst in prefetched.bursts where !burst.frames.isEmpty {
-            prefetchedFrames[burst.burstId] = burst.frames.count
+            guard let conversationId = burst.start.conversationId else { continue }
+            let startedAt = Clock.nowMs()
+            do {
+                _ = try e2ee.receive(burst.start, peer: ring.from, conversationId: conversationId, now: Int64(startedAt))
+                securityMark = e2ee.changedSender
+                if e2ee.justChanged {
+                    securityNoticeVersion += 1
+                    Telemetry.shared.event("keyChanged", ["friend": ring.from])
+                }
+                if burst.start.format == Int(E2EE.audioFormat) {
+                    conversation?.timeline.mark("bundleOpened", detail: "prefetch \(Int(Clock.nowMs() - startedAt)) ms", once: false)
+                }
+            } catch {
+                Telemetry.shared.event("e2eeFailed", ["reason": (error as? E2EE.Failure)?.rawValue
+                    ?? (error as? E2EEFlow.FlowError)?.rawValue ?? "bad-bundle"])
+                continue
+            }
             audio.beginPlayback()
             speakerIdle = false
-            for frame in burst.frames { audio.enqueue(frame) }
+            var played = 0
+            for frame in burst.frames {
+                do {
+                    if let opened = try e2ee.open(frame, burstId: burst.burstId, now: Int64(Clock.nowMs())) {
+                        audio.enqueue(opened)
+                        played += 1
+                    }
+                } catch { Telemetry.shared.event("e2eeFailed", ["reason": "decrypt"]) }
+            }
+            prefetchedFrames[burst.burstId] = played
             if burst.ended { audio.endPlayback() }
         }
     }
@@ -819,14 +880,29 @@ final class ConversationController: NSObject, ObservableObject {
         let name = conversation?.peerName ?? "Your friend"
         switch message.type {
         case "floor-granted":
+            guard awaitingFloor, message.burstId == pendingBurstId else { break }
             conversation?.conversationId = message.conversationId
+            if message.burstId == pendingBurstId {
+                awaitingFloor = false
+                pendingFrames = []
+                pendingBurstId = nil
+            }
             conversation?.timeline.mark("floorGranted", detail: message.pushed == true ? "rang recipient" : "recipient live")
+            if talkHeld { startBurstIfReady() }
         case "floor-denied":
+            guard awaitingFloor, message.burstId == pendingBurstId else { break }
             // Your press was refused because they're talking (the mouth shows them talking).
             WKInterfaceDevice.current().play(.failure)
             audio.endCapture {}
             burstId = nil
+            pendingFrames = []
+            pendingBurstId = nil
+            awaitingFloor = false
+            e2ee.endSending()
         case "talk-refused":
+            guard awaitingFloor, message.burstId == pendingBurstId else { break }
+            if message.reason == "keys-stale", message.burstId == pendingBurstId,
+               let keys = message.keys, retryWithKeys(keys) { break }
             // No longer friends (removed or blocked): nobody was rung.
             WKInterfaceDevice.current().play(.failure)
             audio.endCapture {}
@@ -848,11 +924,31 @@ final class ConversationController: NSObject, ObservableObject {
                 // (run 103: the mouth stayed on "listening" until End).
                 conversation?.timeline.mark("prefetchedRestLost")
                 incomingBurstEnded = true
+                e2ee.endReceiving()
+                securityMark = false
                 audio.endPlayback()
                 friendStoppedTalkingIfDone()
                 resetIdleTimer()
             }
         case "burst-start":
+            guard let peer = conversation?.peerId, let conversationId = message.conversationId else { return }
+            let openedAt = Clock.nowMs()
+            do {
+                acceptingBurst = try e2ee.receive(message, peer: peer, conversationId: conversationId, now: Int64(openedAt))
+                securityMark = e2ee.changedSender
+                if e2ee.justChanged {
+                    securityNoticeVersion += 1
+                    Telemetry.shared.event("keyChanged", ["friend": peer])
+                }
+                if message.format == Int(E2EE.audioFormat) {
+                    conversation?.timeline.mark("bundleOpened", detail: "\(Int(Clock.nowMs() - openedAt)) ms", once: false)
+                }
+            } catch {
+                acceptingBurst = false
+                Telemetry.shared.event("e2eeFailed", ["reason": (error as? E2EE.Failure)?.rawValue
+                    ?? (error as? E2EEFlow.FlowError)?.rawValue ?? "bad-bundle"])
+                return
+            }
             let resumed = message.resumed == true && message.burstId == incomingBurstId
             if !resumed { nextIncomingSeq = 0 }
             incomingBurstId = message.burstId
@@ -867,6 +963,9 @@ final class ConversationController: NSObject, ObservableObject {
             // A prefetched or resumed burst is already playing; resetting the decoder would glitch it.
             if prefetched == nil, !resumed { audio.beginPlayback() }
         case "burst-end":
+            guard message.burstId == incomingBurstId else { break }
+            e2ee.endReceiving()
+            securityMark = false
             // Still talking until the speaker has played it all.
             incomingBurstEnded = true
             audio.endPlayback()
@@ -935,12 +1034,33 @@ final class ConversationController: NSObject, ObservableObject {
 
     /// Doesn't wait for the relay stream: talk-start and the frames queue until it opens.
     private func startBurstIfReady() {
-        guard talkHeld, burstId == nil, let current = conversation, current.audioActive else { return }
+        guard talkHeld, burstId == nil, !awaitingFloor, let current = conversation, current.audioActive else { return }
         let id = UUID().uuidString
         burstId = id
+        pendingFrames = []
+        pendingBurstId = id
+        burstFinished = false
+        staleRetries = 0
+        awaitingFloor = true
         sentFirstFrame = false
         postsThisBurst = 0
-        relay.send(["type": "talk-start", "to": current.peerId, "burstId": id, "codec": audio.codecName])
+        do {
+            let startedAt = Clock.nowMs()
+            let fresh = account.friends.first { $0.id == current.peerId }?.keys
+            if let sealed = try e2ee.start(peer: current.peerId, conversationId: current.conversationId,
+                                            burstId: id, codec: audio.codecName, keys: fresh, now: Int64(startedAt)) {
+                conversation?.conversationId = sealed.conversationId
+                relay.send(sealed.control)
+                conversation?.timeline.mark("bundleSealed", detail: "\(Int(Clock.nowMs() - startedAt)) ms", once: false)
+            } else {
+                relay.send(["type": "talk-start", "to": current.peerId, "burstId": id, "codec": audio.codecName])
+            }
+        } catch {
+            Telemetry.shared.event("e2eeFailed", ["reason": (error as? E2EEFlow.FlowError)?.rawValue ?? "seal"])
+            burstId = nil
+            finish(outcome: .unreachable)
+            return
+        }
         conversation?.timeline.mark("captureStarted", once: false)
         audio.beginCapture()
         // Signal "go ahead" only once the mic is live: anything said before this isn't captured.
@@ -949,10 +1069,34 @@ final class ConversationController: NSObject, ObservableObject {
 
     private func sendCaptured(_ frame: Data) {
         guard burstId != nil else { return }
-        relay.send(frame: frame)
+        if awaitingFloor { pendingFrames.append(frame) }
+        do { relay.send(frame: try e2ee.send(frame)) }
+        catch { Telemetry.shared.event("e2eeFailed", ["reason": "encrypt"]); return }
         if !sentFirstFrame {
             sentFirstFrame = true
             conversation?.timeline.mark(relay.isReady ? "firstFrameSent" : "firstFrameQueued")
+        }
+    }
+
+    private func retryWithKeys(_ keys: FriendKeys) -> Bool {
+        guard awaitingFloor, staleRetries < 2, let current = conversation,
+              let userId = account.session?.userId else { return false }
+        staleRetries += 1
+        _ = account.trust.update(account: userId, friend: current.peerId, keys: keys, now: Int64(Clock.nowMs()))
+        guard let id = pendingBurstId else { return false }
+        do {
+            guard let sealed = try e2ee.start(peer: current.peerId, conversationId: current.conversationId,
+                                               burstId: id, codec: audio.codecName, keys: keys,
+                                               now: Int64(Clock.nowMs())) else { return false }
+            if !burstFinished { burstId = id }
+            conversation?.conversationId = sealed.conversationId
+            relay.send(sealed.control)
+            for frame in pendingFrames { relay.send(frame: try e2ee.send(frame)) }
+            if burstFinished { relay.send(["type": "talk-end", "burstId": id]) }
+            return true
+        } catch {
+            Telemetry.shared.event("e2eeFailed", ["reason": "stale-key"])
+            return false
         }
     }
 
@@ -1086,12 +1230,18 @@ final class ConversationController: NSObject, ObservableObject {
         reconnecting = nil
         nextIncomingSeq = 0
         incomingBurstId = nil
+        e2ee.endReceiving()
+        e2ee.endSending()
+        pendingFrames = []
+        pendingBurstId = nil
+        awaitingFloor = false
         incomingBurstEnded = false
         speakerIdle = true
         talkReady = false
         talkHeld = false
         isTalking = false
         remoteTalking = false
+        securityMark = false
         burstId = nil
         idleTimer?.invalidate()
         stallMarks = 0

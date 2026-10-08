@@ -56,6 +56,9 @@ public struct RelayMessage: Decodable, Sendable {
     public var code: String?
     /// burst-start: the burst's codec.
     public var codec: String?
+    public var format: Int?
+    public var e2ee: KeyBundle?
+    public var keys: FriendKeys?
 }
 
 /// Record framing shared with server/src/records.ts:

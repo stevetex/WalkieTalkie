@@ -29,6 +29,12 @@ struct InviteAcceptView: View {
             Text("You and \(friend.name) are friends")
                 .font(.title2.bold())
                 .multilineTextAlignment(.center)
+            if let account = model.session?.userId,
+               model.trust.state(account: account, friend: friend.id).inviteMismatch {
+                Text("Couldn't confirm \(friend.name)'s security code")
+                    .foregroundStyle(Brand.accent)
+                    .multilineTextAlignment(.center)
+            }
             Text("Ring \(friend.name) from Over&Out on your watch.")
                 .foregroundStyle(Brand.secondary)
             primary("Done") { dismiss() }

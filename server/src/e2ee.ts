@@ -246,6 +246,8 @@ export function parseEncryptionKeyCertificate(raw: Buffer, device: DeviceCertifi
 export interface FriendKeysJSON {
   phones: string[];
   devices: Array<{ deviceId: string; clientKind: string; deviceCert: string; encCert: string }>;
+  /** False while a registered device still has no certified encryption key. */
+  allDevicesHaveKeys?: boolean;
 }
 
 export interface RecipientKey { deviceId: string; keyId: string; encKey: Buffer; notAfter: number }

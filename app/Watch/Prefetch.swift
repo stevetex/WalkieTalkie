@@ -10,6 +10,7 @@ import OverAndOutKit
 struct Prefetched {
     struct Burst {
         let burstId: String
+        let start: RelayMessage
         var frames: [Data] = []
         var ended = false
     }
@@ -59,7 +60,7 @@ struct Prefetched {
                 if !prefetched.bursts.isEmpty { prefetched.bursts[prefetched.bursts.count - 1].frames.append(record.payload) }
             } else if let message = try? JSONDecoder().decode(RelayMessage.self, from: record.payload) {
                 if message.type == "burst-start", let burstId = message.burstId {
-                    prefetched.bursts.append(Burst(burstId: burstId))
+                    prefetched.bursts.append(Burst(burstId: burstId, start: message))
                 } else if message.type == "burst-end", message.burstId == prefetched.bursts.last?.burstId {
                     prefetched.bursts[prefetched.bursts.count - 1].ended = true
                 }

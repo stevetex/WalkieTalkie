@@ -253,8 +253,8 @@ public struct EncryptionKeyCertificate: Sendable, Equatable {
 // MARK: A friend's keys
 
 /// A friend's keys as the friends list (and a keys-stale refusal) gives them.
-public struct FriendKeys: Codable, Sendable, Equatable {
-    public struct Device: Codable, Sendable, Equatable {
+public struct FriendKeys: Codable, Sendable, Equatable, Hashable {
+    public struct Device: Codable, Sendable, Equatable, Hashable {
         public var deviceId: String
         public var clientKind: String
         public var deviceCert: Data
@@ -263,6 +263,13 @@ public struct FriendKeys: Codable, Sendable, Equatable {
 
     public var phones: [Data]
     public var devices: [Device]
+    public var allDevicesHaveKeys: Bool?
+
+    public init(phones: [Data], devices: [Device], allDevicesHaveKeys: Bool? = nil) {
+        self.phones = phones
+        self.devices = devices
+        self.allDevicesHaveKeys = allDevicesHaveKeys
+    }
 }
 
 /// A device a message key can be sealed to.

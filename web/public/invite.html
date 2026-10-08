@@ -49,6 +49,8 @@
     <p><a class="button" aria-disabled="true">Coming soon to the App Store</a></p>
     <!-- /app-store -->
     <p class="muted">Already have the app? Tap the link in Messages rather than opening it in Safari. Invites work once and expire after 7 days.</p>
+    <p><button class="button" type="button" id="copy-invite">Copy this invite link</button></p>
+    <p class="muted" id="copy-status" role="status"></p>
 
     <footer>
       <a href="/privacy">Privacy</a>
@@ -57,5 +59,18 @@
       <p>© 2026 Cypress Oak Studios LLC</p>
     </footer>
   </main>
+  <script>
+    // The fragment contains the inviter's public-key fingerprint. It never goes to the
+    // server, so copy the browser's full URL instead of reconstructing it from the path.
+    document.getElementById('copy-invite').addEventListener('click', async () => {
+      const status = document.getElementById('copy-status');
+      try {
+        await navigator.clipboard.writeText(window.location.href);
+        status.textContent = 'Invite link copied. Send it in Messages, then tap it after installing Over&Out.';
+      } catch {
+        status.textContent = 'Copy the full address from your browser, including the part after #.';
+      }
+    });
+  </script>
 </body>
 </html>

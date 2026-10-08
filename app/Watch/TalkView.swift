@@ -16,6 +16,7 @@ struct TalkView: View {
     /// Presses this soon after the screen opens are ignored: the second tap of a double tap on
     /// the friend's row lands on the mouth, and would end a conversation with someone else.
     @State private var openedAt = Date.distantFuture
+    @State private var showSecurityNotice = false
     private static let settleTime: TimeInterval = 0.5
 
     init(controller: ConversationController, account: WatchAccount, friend: Friend) {
@@ -111,10 +112,23 @@ struct TalkView: View {
         }
         .onAppear {
             openedAt = Date()
+            checkSecurityNotice()
             // Opens the relay stream now, so a press doesn't wait for it.
             controller.talkScreenShown(friend.id)
         }
+        .onChange(of: account.friends) { _, _ in checkSecurityNotice() }
+        .onChange(of: controller.securityNoticeVersion) { _, _ in checkSecurityNotice() }
+        .alert("\(friend.name)'s security code changed", isPresented: $showSecurityNotice) {
+            Button("OK") {}
+        } message: {
+            Text("This happens when they sign in on a new iPhone.")
+        }
         .onDisappear { controller.stopPreparing(for: friend.id) }
+    }
+
+    private func checkSecurityNotice() {
+        guard let userId = account.session?.userId else { return }
+        showSecurityNotice = account.trust.markNoticeRead(account: userId, friend: friend.id, now: Int64(Clock.nowMs()))
     }
 
     /// Apple Watch SE and Series 4–6 40mm, Series 7–9 41mm: 176 pt wide or less.
@@ -128,6 +142,11 @@ struct TalkView: View {
             Text(friend.name)
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
+            if controller.securityMark {
+                Image(systemName: "exclamationmark.shield.fill")
+                    .foregroundStyle(Brand.orange)
+                    .accessibilityLabel("Security code changed")
+            }
         }
         .font(.footnote.weight(.semibold))
         .foregroundStyle(Brand.ivory)

@@ -33,11 +33,27 @@ for (const transport of ["ws", "http"] as const) test(`validated registration an
     await befriend(h, alice, bob);
     const ak = await encryptedDevice(h, alice);
     const bk = await encryptedDevice(h, bob);
+    const partial = await call(h.url, "GET", "/v2/friends", alice.token);
+    const partialKeys = partial.body.friends.find((f: { id: string }) => f.id === bob.id).keys;
+    assert.equal(partialKeys.allDevicesHaveKeys, false);
+    const partialClient = alice.client({ audioFormats: [1, 2], transport });
+    await partialClient.connect();
+    const partialId = randomUUID();
+    const partialBurst = randomUUID();
+    const partialSealed = sealBundle({ conversationId: partialId, burstId: partialBurst, codec: "opus16k",
+      from: alice.id, to: bob.id }, ak.sender, usableKeys(bob.id, partialKeys, Date.now()).recipients, Date.now());
+    partialClient.send({ type: "talk-start", to: bob.id, burstId: partialBurst, codec: "opus16k",
+      format: 2, conversationId: partialId, e2ee: partialSealed.bundle });
+    const partialRefusal = await partialClient.waitFor("talk-refused");
+    assert.equal(partialRefusal.reason, "keys-stale");
+    assert.equal(partialRefusal.keys?.allDevicesHaveKeys, false);
+    partialClient.close();
     await encryptedDevice(h, bobWatch);
     const listed = await call(h.url, "GET", "/v2/friends", alice.token);
     assert.equal(listed.status, 200);
     const directory = listed.body.friends.find((f: { id: string }) => f.id === bob.id).keys;
     assert.equal(directory.devices.length, 2);
+    assert.equal(directory.allDevicesHaveKeys, true);
     assert.equal(directory.phones.length, 2);
     const bad = await call(h.url, "PUT", "/v2/me/device", alice.token, {
       ...registration("ios", { apns: "pushtotalk", token: "old" }), e2ee: { ...ak.registration, encCert: bk.registration.encCert },
