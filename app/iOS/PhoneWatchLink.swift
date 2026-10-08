@@ -27,15 +27,18 @@ final class PhoneWatchLink: NSObject, ObservableObject {
         let sessionFor: String?
         /// The watch's request (v2), so a retry gets the same session.
         let requestId: String?
+        let signingKey: Data?
 
         init(_ payload: [String: Any]) {
             sessionFor = payload[WatchLink.request] as? String == WatchLink.sessionRequest ? payload[WatchLink.deviceId] as? String : nil
             requestId = payload[WatchLink.requestId] as? String
+            signingKey = payload[WatchLink.signingKey] as? Data
         }
     }
 
     /// Makes a session for the watch's device ID with this request ID; nil when signed out.
     var makeSession: ((_ deviceId: String, _ requestId: String) async throws -> AccountSession?)?
+    var certifyWatch: ((_ deviceId: String, _ signingKey: Data) throws -> (phone: Data, device: Data))?
 
     /// Every payload says which version of the link it is.
     private static func payload(_ fields: [String: Any]) -> [String: Any] {
@@ -50,6 +53,7 @@ final class PhoneWatchLink: NSObject, ObservableObject {
     /// once (in flight) and reused for a minute.
     private var making: [String: Task<AccountSession?, Error>] = [:]
     private var recent: [String: (madeAt: Date, session: AccountSession)] = [:]
+    private var recentCerts: [String: (signingKey: Data, phone: Data, device: Data)] = [:]
 
     func activate(signedIn: Bool) {
         self.signedIn = signedIn
@@ -62,6 +66,7 @@ final class PhoneWatchLink: NSObject, ObservableObject {
         self.signedIn = signedIn
         answered = []
         recent = [:]
+        recentCerts = [:]
         guard WCSession.isSupported(), WCSession.default.activationState == .activated else { return }
         let session = WCSession.default
         try? session.updateApplicationContext(Self.payload([WatchLink.signedIn: signedIn]))
@@ -80,19 +85,20 @@ final class PhoneWatchLink: NSObject, ObservableObject {
         guard let deviceId = context[WatchLink.deviceId] as? String else { return }
         answered.remove(deviceId)
         recent[deviceId] = nil
-        send(to: deviceId, reply: nil)
+        recentCerts[deviceId] = nil
+        send(to: deviceId, signingKey: context[WatchLink.signingKey] as? Data, reply: nil)
     }
 
     private func answerWaitingWatch() {
         let context = WCSession.default.receivedApplicationContext
         guard let deviceId = context[WatchLink.deviceId] as? String,
               context[WatchLink.needsSession] as? Bool == true else { return }
-        send(to: deviceId, reply: nil)
+        send(to: deviceId, signingKey: context[WatchLink.signingKey] as? Data, reply: nil)
     }
 
     /// Replies directly if the watch is waiting on a reply, or queues user info otherwise.
     /// `requestId`: the watch's own (v2), or one made here for a watch that sent none.
-    private func send(to deviceId: String, requestId: String? = nil, reply: Reply?) {
+    private func send(to deviceId: String, requestId: String? = nil, signingKey: Data? = nil, reply: Reply?) {
         guard signedIn, let makeSession else {
             reply?(Self.payload([WatchLink.signedOut: true]))
             return
@@ -107,10 +113,24 @@ final class PhoneWatchLink: NSObject, ObservableObject {
                     reply?(Self.payload([WatchLink.signedOut: true]))
                     return
                 }
+                var fields: [String: Any] = [WatchLink.session: data]
+                if let signingKey {
+                    let certs: (phone: Data, device: Data)?
+                    if let cached = recentCerts[deviceId], cached.signingKey == signingKey {
+                        certs = (cached.phone, cached.device)
+                    } else {
+                        certs = try certifyWatch?(deviceId, signingKey)
+                        if let certs { recentCerts[deviceId] = (signingKey, certs.phone, certs.device) }
+                    }
+                    if let certs {
+                        fields[WatchLink.phoneCert] = certs.phone
+                        fields[WatchLink.deviceCert] = certs.device
+                    }
+                }
                 if let reply {
-                    reply(Self.payload([WatchLink.session: data]))
+                    reply(Self.payload(fields))
                 } else {
-                    WCSession.default.transferUserInfo(Self.payload([WatchLink.session: data]))
+                    WCSession.default.transferUserInfo(Self.payload(fields))
                 }
                 lastSentAt = Date()
             } catch {
@@ -140,7 +160,7 @@ final class PhoneWatchLink: NSObject, ObservableObject {
     private func handleRequest(_ request: Request, reply: Reply?) {
         if let deviceId = request.sessionFor {
             answered.remove(deviceId)
-            send(to: deviceId, requestId: request.requestId, reply: reply)
+            send(to: deviceId, requestId: request.requestId, signingKey: request.signingKey, reply: reply)
         } else {
             reply?([:])
         }

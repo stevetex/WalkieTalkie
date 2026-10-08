@@ -773,6 +773,7 @@ export class Relay {
   private async checkRecipientKeys(to: string, bundle: KeyBundle): Promise<FriendKeysJSON | null> {
     if (!this.opts.accounts.friendKeys || !this.opts.accounts.devices) throw new Error("key directory unavailable");
     const [keys, devices] = await Promise.all([this.opts.accounts.friendKeys(to), this.opts.accounts.devices(to)]);
+    if (devices.some((device) => !device.e2ee)) return keys;
     const current = usableKeys(to, keys, this.opts.now()).recipients;
     if (!current.length) return keys;
     for (const recipient of current) {

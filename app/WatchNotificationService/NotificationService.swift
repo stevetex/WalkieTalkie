@@ -1,4 +1,5 @@
 import Foundation
+import OverAndOutKit
 import os
 import Security
 import UserNotifications
@@ -30,6 +31,8 @@ final class NotificationService: UNNotificationServiceExtension {
         var meta: [String: any Sendable] = [:]
         var files: (records: URL, meta: URL)?
         var conversationId = ""
+        var fetchComplete = false
+        var registrationPending = false
     }
 
     /// The system's content handler and the content to deliver.
@@ -66,6 +69,11 @@ final class NotificationService: UNNotificationServiceExtension {
               let url = Self.audioURL(group: group, conversationId: conversationId, ringId: ringId)
         else { return finish() }
 
+        // The extension can run while the watch app is suspended for weeks. Publish a new
+        // certificate in parallel with the prefetch, and keep the extension alive until both
+        // finish so the registration task is not discarded when contentHandler returns.
+        Self.rotateIfNeeded(group: group, session: session, state: state, requestId: requestId)
+
         let directory = container.appendingPathComponent("prefetch", isDirectory: true)
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let files = (records: directory.appendingPathComponent("\(ringId).records"),
@@ -89,7 +97,8 @@ final class NotificationService: UNNotificationServiceExtension {
                     state.meta["frames"] = Int(http?.value(forHTTPHeaderField: "x-frames") ?? "") ?? 0
                     try? data.write(to: files.records, options: .atomic)
                 }
-                return Self.take(&state, requestId: requestId)
+                state.fetchComplete = true
+                return state.registrationPending ? nil : Self.take(&state, requestId: requestId)
             }
             delivery?.deliver()
         }
@@ -170,12 +179,53 @@ final class NotificationService: UNNotificationServiceExtension {
             "X-OAO-Client-Version": info["CFBundleShortVersionString"] as? String ?? "0",
             "X-OAO-Build": info["CFBundleVersion"] as? String ?? "0",
             "X-OAO-Relay-Protocol": "2",
+            "X-OAO-Audio-Formats": "1,2",
             "X-OAO-Decode": "opus16k,pcm16le16k",
             "X-OAO-Encode": "opus16k,pcm16le16k",
         ]
     }
 
     private static func nowMs() -> Double { Date().timeIntervalSince1970 * 1000 }
+
+    private static func rotateIfNeeded(group: String,
+                                       session: (token: String, userId: String, deviceId: String, expiresAt: Double),
+                                       state: OSAllocatedUnfairLock<State>, requestId: String) {
+        guard let defaults = UserDefaults(suiteName: group),
+              let saved = defaults.dictionary(forKey: "e2eeWatchRegistration") as? [String: String] else { return }
+        let keys: E2EEKeyStore.Registration
+        do {
+            guard let found = try E2EEKeyStore(accessGroup: group).registration(
+                userId: session.userId, deviceId: session.deviceId, phone: false, now: Int64(nowMs())) else { return }
+            keys = found
+        } catch { return }
+        let encoded = keys.encCert.base64EncodedString()
+        guard defaults.string(forKey: "e2eeWatchEncCert") != encoded,
+              let host = Bundle.main.object(forInfoDictionaryKey: "OAOApiHost") as? String,
+              let base = AccountClient.baseURL(host: host) else { return }
+        let delivery: DeviceRegistration.Delivery = (saved["token"] ?? "").isEmpty
+            ? .foreground : .alert(token: saved["token"]!, environment: saved["environment"] ?? "production")
+        let notifications = DeviceRegistration.Notifications(rawValue: saved["notifications"] ?? "unknown") ?? .unknown
+        let registration = DeviceRegistration(delivery: delivery, notifications: notifications, e2ee: keys)
+        let account = AccountSession(token: session.token, expiresAt: Date(timeIntervalSince1970: session.expiresAt / 1000),
+                                     userId: session.userId, name: "", deviceId: session.deviceId, clientKind: "watchos")
+        let info = Bundle.main.infoDictionary ?? [:]
+        let identity = ClientIdentity(kind: .watchos, version: info["CFBundleShortVersionString"] as? String ?? "0",
+                                      build: info["CFBundleVersion"] as? String ?? "0")
+        let client = AccountClient(baseURL: base, store: MemorySessionStore(account), identity: identity)
+        state.withLock { $0.registrationPending = true }
+        Task {
+            do {
+                try await client.registerDevice(registration)
+                defaults.set(encoded, forKey: "e2eeWatchEncCert")
+                diagnostics(["name": "keysRotated"], requestId: "", conversationId: "")
+            } catch { /* The app retries registration when it next runs. */ }
+            let delivery = state.withLock { state -> Delivery? in
+                state.registrationPending = false
+                return state.fetchComplete ? take(&state, requestId: requestId) : nil
+            }
+            delivery?.deliver()
+        }
+    }
 
     /// One line in the app group's diagnostics/extension.jsonl, which the watch app moves into
     /// its own log (Watch/WatchDiagnostics.swift). IDs and times only.
@@ -202,7 +252,7 @@ final class NotificationService: UNNotificationServiceExtension {
 
     /// The watch's session. An expired token is left to the app to refresh: without it the
     /// ring still works, just without the prefetch.
-    private static func session(accessGroup: String) -> (token: String, userId: String)? {
+    private static func session(accessGroup: String) -> (token: String, userId: String, deviceId: String, expiresAt: Double)? {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: "com.cypressoakstudios.overandout.session",
@@ -216,8 +266,9 @@ final class NotificationService: UNNotificationServiceExtension {
               let data = result as? Data,
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let token = json["token"] as? String, let userId = json["userId"] as? String,
+              let deviceId = json["deviceId"] as? String,
               let expiresAt = json["expiresAt"] as? Double, expiresAt > nowMs()
         else { return nil }
-        return (token, userId)
+        return (token, userId, deviceId, expiresAt)
     }
 }

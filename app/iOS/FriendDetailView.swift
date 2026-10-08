@@ -18,6 +18,7 @@ struct FriendDetailView: View {
     @State private var confirmingBlock = false
     @State private var confirmingRemove = false
     @State private var working = false
+    @State private var showChangedCode = false
 
     private var lastMessaged: String {
         guard let at = friend.lastMessageAt else { return "Not yet" }
@@ -59,6 +60,20 @@ struct FriendDetailView: View {
                 } footer: {
                     Text("Favorites are at the top of your friends list, on your iPhone and your watch.")
                 }
+                if let account = model.session?.userId {
+                    let security = model.trust.state(account: account, friend: friend.id)
+                    if security.inviteMismatch || showChangedCode {
+                        Section("Security") {
+                            if security.inviteMismatch {
+                                Label("Couldn't confirm \(friend.name)'s security code", systemImage: "exclamationmark.shield")
+                            }
+                            if showChangedCode {
+                                Label("\(friend.name)'s security code changed. This happens when they sign in on a new iPhone.",
+                                      systemImage: "exclamationmark.shield")
+                            }
+                        }
+                    }
+                }
                 Section {
                     Button("Report \(friend.name)…") { reporting = true }
                     // Red set by hand: the brand's foreground style would override the role's.
@@ -75,6 +90,8 @@ struct FriendDetailView: View {
         }
         .disabled(working)
         .task { await model.refreshFriends() }
+        .onAppear(perform: checkSecurityNotice)
+        .onChange(of: model.friends) { _, _ in checkSecurityNotice() }
         .brandScreen()
         .navigationTitle(friend.name)
         .navigationBarTitleDisplayMode(.inline)
@@ -91,6 +108,13 @@ struct FriendDetailView: View {
         .sheet(isPresented: $reporting) {
             ReportView(friend: friend) { dismiss() }
                 .environmentObject(model)
+        }
+    }
+
+    private func checkSecurityNotice() {
+        guard let account = model.session?.userId else { return }
+        if model.trust.markNoticeRead(account: account, friend: friend.id, now: Int64(Clock.nowMs())) {
+            showChangedCode = true
         }
     }
 

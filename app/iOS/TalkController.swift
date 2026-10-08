@@ -45,6 +45,8 @@ final class TalkController: ObservableObject {
     @Published private(set) var statusLine = ""
     @Published private(set) var isTalking = false
     @Published private(set) var remoteTalking = false
+    @Published private(set) var securityMark = false
+    @Published private(set) var securityNoticeVersion = 0
     /// Able to record right now; the mouth shows "waiting" until then.
     @Published private(set) var talkReady = false
     /// A ring over the open relay stream (in-app mode), waiting for Answer or Decline.
@@ -63,6 +65,8 @@ final class TalkController: ObservableObject {
     private var relayBaseURL: URL? { config.relayBaseURL }
     private let relay = RelayConnection()
     private let audio = AudioPipeline()
+    private let e2ee: E2EEFlow
+    private var acceptingBurst = true
 
     private struct Conversation {
         let outgoing: Bool
@@ -81,6 +85,11 @@ final class TalkController: ObservableObject {
     private var activatingAudio = false
     private var talkHeld = false
     private var burstId: String?
+    private var pendingFrames: [Data] = []
+    private var pendingBurstId: String?
+    private var burstFinished = false
+    private var staleRetries = 0
+    private var awaitingFloor = false
     private var sentFirstFrame = false
     private var idleTimer: Timer?
     private var incomingRingTimer: Timer?
@@ -100,10 +109,13 @@ final class TalkController: ObservableObject {
 
     private var usesPushToTalk: Bool { ptt.isJoined }
 
-    init(client: AccountClient, config: ServiceConfigStore, ptt: PushToTalkChannel) {
+    init(client: AccountClient, config: ServiceConfigStore, ptt: PushToTalkChannel,
+         e2ee keys: E2EEKeyStore, trust: E2EETrust, deviceId: String) {
         self.client = client
         self.config = config
         self.ptt = ptt
+        e2ee = E2EEFlow(store: keys, trust: trust, deviceId: deviceId,
+                        userId: { client.session?.userId })
         // Timelines left unsent when iOS ended a background launch go at the next flush.
         Telemetry.shared.sendTimeline = { [client, config] body in
             guard let token = client.session?.token, let base = config.relayBaseURL else { throw URLError(.userAuthenticationRequired) }
@@ -113,10 +125,18 @@ final class TalkController: ObservableObject {
         relay.onReady = { [unowned self] offset in relayReady(clockOffsetMs: offset) }
         relay.onMessage = { [unowned self] message in handle(message) }
         relay.onFrame = { [unowned self] frame in
-            if let seq = VoiceFrame.decode(frame)?.seq { nextIncomingSeq = max(nextIncomingSeq, seq + 1) }
-            if conversation?.timeline.has("firstFrameReceived") == false { conversation?.timeline.mark("firstFrameReceived") }
-            speakerIdle = false
-            audio.enqueue(frame)
+            guard acceptingBurst, let burst = incomingBurstId else { return }
+            do {
+                guard let opened = try e2ee.open(frame, burstId: burst, now: Int64(Clock.nowMs())) else { return }
+                if let seq = VoiceFrame.decode(opened)?.seq {
+                    nextIncomingSeq = max(nextIncomingSeq, seq == UInt32.max ? seq : seq + 1)
+                }
+                if conversation?.timeline.has("firstFrameReceived") == false { conversation?.timeline.mark("firstFrameReceived") }
+                speakerIdle = false
+                audio.enqueue(opened)
+            } catch {
+                Telemetry.shared.event("e2eeFailed", ["reason": "decrypt"])
+            }
         }
         relay.onRefused = { [unowned self] refusal in
             log("Relay refused: \(refusal.code)")
@@ -511,13 +531,24 @@ final class TalkController: ObservableObject {
                 }
             }
         case "floor-granted":
+            guard awaitingFloor, message.burstId == pendingBurstId else { break }
             conversation?.conversationId = message.conversationId
+            if message.burstId == pendingBurstId {
+                awaitingFloor = false
+                pendingFrames = []
+                pendingBurstId = nil
+            }
             conversation?.timeline.mark("floorGranted", detail: message.pushed == true ? "rang recipient" : "recipient live")
+            if talkHeld { startBurstIfReady() }
         case "floor-denied":
+            guard awaitingFloor, message.burstId == pendingBurstId else { break }
             UINotificationFeedbackGenerator().notificationOccurred(.error)
             statusLine = "\(name) is talking"
             cancelBurst()
         case "talk-refused":
+            guard awaitingFloor, message.burstId == pendingBurstId else { break }
+            if message.reason == "keys-stale", message.burstId == pendingBurstId,
+               let keys = message.keys, retryWithKeys(keys) { break }
             UINotificationFeedbackGenerator().notificationOccurred(.error)
             cancelBurst()
             unavailablePeer = conversation?.peerId
@@ -544,6 +575,24 @@ final class TalkController: ObservableObject {
             ptt.setServiceStatus(.ready)
             updateTalkReady()
         case "burst-start":
+            guard let peer = conversation?.peerId, let conversationId = message.conversationId else { return }
+            let openedAt = Clock.nowMs()
+            do {
+                acceptingBurst = try e2ee.receive(message, peer: peer, conversationId: conversationId, now: Int64(openedAt))
+                securityMark = e2ee.changedSender
+                if e2ee.justChanged {
+                    securityNoticeVersion += 1
+                    Telemetry.shared.event("keyChanged", ["friend": peer])
+                }
+                if message.format == Int(E2EE.audioFormat) {
+                    conversation?.timeline.mark("bundleOpened", detail: "\(Int(Clock.nowMs() - openedAt)) ms", once: false)
+                }
+            } catch {
+                acceptingBurst = false
+                Telemetry.shared.event("e2eeFailed", ["reason": (error as? E2EE.Failure)?.rawValue
+                    ?? (error as? E2EEFlow.FlowError)?.rawValue ?? "bad-bundle"])
+                return
+            }
             let resumed = message.resumed == true && message.burstId == incomingBurstId
             if !resumed { nextIncomingSeq = 0 }
             incomingBurstId = message.burstId
@@ -558,6 +607,9 @@ final class TalkController: ObservableObject {
             // PushToTalk: the system activates audio for the speaker (a push already did).
             if usesPushToTalk, !audioActive { ptt.setRemoteSpeaker(name) }
         case "burst-end":
+            guard message.burstId == incomingBurstId else { break }
+            e2ee.endReceiving()
+            securityMark = false
             incomingBurstEnded = true
             audio.endPlayback()
             friendStoppedTalkingIfDone()
@@ -607,11 +659,36 @@ final class TalkController: ObservableObject {
     // MARK: Talking
 
     private func startBurstIfReady() {
-        guard talkHeld, burstId == nil, relay.isReady, audioActive, let current = conversation else { return }
+        guard talkHeld, burstId == nil, !awaitingFloor, relay.isReady, audioActive,
+              let current = conversation else { return }
         let id = UUID().uuidString
         burstId = id
+        pendingFrames = []
+        pendingBurstId = id
+        burstFinished = false
+        staleRetries = 0
+        awaitingFloor = true
         sentFirstFrame = false
-        relay.send(["type": "talk-start", "to": current.peerId, "burstId": id, "codec": audio.codecName])
+        do {
+            let startedAt = Clock.nowMs()
+            let fresh = AppModel.shared.friends.first { $0.id == current.peerId }?.keys
+            if let sealed = try e2ee.start(peer: current.peerId, conversationId: current.conversationId,
+                                            burstId: id, codec: audio.codecName, keys: fresh, now: Int64(startedAt)) {
+                conversation?.conversationId = sealed.conversationId
+                relay.send(sealed.control)
+                conversation?.timeline.mark("bundleSealed", detail: "\(Int(Clock.nowMs() - startedAt)) ms", once: false)
+            } else {
+                relay.send(["type": "talk-start", "to": current.peerId, "burstId": id, "codec": audio.codecName])
+            }
+        } catch {
+            Telemetry.shared.event("e2eeFailed", ["reason": (error as? E2EEFlow.FlowError)?.rawValue ?? "seal"])
+            burstId = nil
+            pendingBurstId = nil
+            awaitingFloor = false
+            e2ee.endSending()
+            statusLine = "Can't reach \(current.peerName) right now"
+            return
+        }
         conversation?.timeline.mark("captureStarted", once: false)
         audio.beginCapture()
         // PushToTalk plays the system's own sound; in the app, a tap says "go ahead".
@@ -626,6 +703,7 @@ final class TalkController: ObservableObject {
         guard let id = burstId else { return resetIdleTimer() }
         // Flush the last partial frame before telling the relay the burst is over.
         audio.endCapture { [self] in
+            burstFinished = true
             relay.send(["type": "talk-end", "burstId": id])
             if burstId == id { burstId = nil }
             resetIdleTimer()
@@ -635,15 +713,43 @@ final class TalkController: ObservableObject {
     private func cancelBurst() {
         audio.endCapture {}
         burstId = nil
+        pendingFrames = []
+        pendingBurstId = nil
+        awaitingFloor = false
+        e2ee.endSending()
         if talkHeld, usesPushToTalk { ptt.stopTransmitting() }
     }
 
     private func sendCaptured(_ frame: Data) {
         guard burstId != nil else { return }
-        relay.send(frame: frame)
+        if awaitingFloor { pendingFrames.append(frame) }
+        do { relay.send(frame: try e2ee.send(frame)) }
+        catch { Telemetry.shared.event("e2eeFailed", ["reason": "encrypt"]); return }
         if !sentFirstFrame {
             sentFirstFrame = true
             conversation?.timeline.mark("firstFrameSent")
+        }
+    }
+
+    private func retryWithKeys(_ keys: FriendKeys) -> Bool {
+        guard awaitingFloor, staleRetries < 2, let current = conversation,
+              let userId = client.session?.userId else { return false }
+        staleRetries += 1
+        _ = AppModel.shared.trust.update(account: userId, friend: current.peerId, keys: keys, now: Int64(Clock.nowMs()))
+        guard let id = pendingBurstId else { return false }
+        do {
+            guard let sealed = try e2ee.start(peer: current.peerId, conversationId: current.conversationId,
+                                               burstId: id, codec: audio.codecName, keys: keys,
+                                               now: Int64(Clock.nowMs())) else { return false }
+            if !burstFinished { burstId = id }
+            conversation?.conversationId = sealed.conversationId
+            relay.send(sealed.control)
+            for frame in pendingFrames { relay.send(frame: try e2ee.send(frame)) }
+            if burstFinished { relay.send(["type": "talk-end", "burstId": id]) }
+            return true
+        } catch {
+            Telemetry.shared.event("e2eeFailed", ["reason": "stale-key"])
+            return false
         }
     }
 
@@ -801,6 +907,11 @@ final class TalkController: ObservableObject {
         conversation = nil
         incomingBurstEnded = false
         incomingBurstId = nil
+        e2ee.endReceiving()
+        e2ee.endSending()
+        pendingFrames = []
+        pendingBurstId = nil
+        awaitingFloor = false
         nextIncomingSeq = 0
         reconnecting = nil
         speakerIdle = true
@@ -808,6 +919,7 @@ final class TalkController: ObservableObject {
         talkHeld = false
         isTalking = false
         remoteTalking = false
+        securityMark = false
         burstId = nil
         idleTimer?.invalidate()
         phase = .idle

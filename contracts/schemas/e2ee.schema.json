@@ -42,6 +42,7 @@
       "required": ["phones", "devices"],
       "properties": {
         "phones": { "type": "array", "maxItems": 16, "items": { "$ref": "#/$defs/base64" } },
+        "allDevicesHaveKeys": { "type": "boolean" },
         "devices": {
           "type": "array",
           "maxItems": 32,

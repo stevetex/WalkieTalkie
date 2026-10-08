@@ -11,6 +11,7 @@
 		0AA000000000000000000042 /* OverAndOutKit in Frameworks */ = {isa = PBXBuildFile; productRef = 0AA000000000000000000052 /* OverAndOutKit */; };
 		0AA00000000000000000006C /* OverAndOutWatchNotificationService.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 0AA000000000000000000060 /* OverAndOutWatchNotificationService.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		0AA000000000000000000070 /* OverAndOutKit in Frameworks */ = {isa = PBXBuildFile; productRef = 0AA000000000000000000071 /* OverAndOutKit */; };
+		0AA000000000000000000080 /* OverAndOutKit in Frameworks */ = {isa = PBXBuildFile; productRef = 0AA000000000000000000081 /* OverAndOutKit */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -110,6 +111,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				0AA000000000000000000080 /* OverAndOutKit in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -224,6 +226,7 @@
 			);
 			name = OverAndOutWatchNotificationService;
 			packageProductDependencies = (
+				0AA000000000000000000081 /* OverAndOutKit */,
 			);
 			productName = OverAndOutWatchNotificationService;
 			productReference = 0AA000000000000000000060 /* OverAndOutWatchNotificationService.appex */;
@@ -608,6 +611,10 @@
 			productName = OverAndOutKit;
 		};
 		0AA000000000000000000071 /* OverAndOutKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = OverAndOutKit;
+		};
+		0AA000000000000000000081 /* OverAndOutKit */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = OverAndOutKit;
 		};

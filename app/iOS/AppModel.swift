@@ -10,6 +10,7 @@ import UserNotifications
 final class AppModel: ObservableObject {
     struct PendingInvite: Identifiable, Equatable {
         let code: String
+        let fingerprint: String?
         var info: InviteInfo?
         var error: String?
         var accepting = false
@@ -59,6 +60,8 @@ final class AppModel: ObservableObject {
     /// GET /v2/config's last good answer: the relay to use, and the lowest supported build.
     let config: ServiceConfigStore
     let watch = PhoneWatchLink()
+    let e2ee = E2EEKeyStore()
+    let trust = E2EETrust()
     let pushToTalk = PushToTalkChannel()
     let talk: TalkController
     let deviceId = DeviceIdentity.id()
@@ -94,7 +97,11 @@ final class AppModel: ObservableObject {
         session = client.session
         upgradeRequired = config.upgradeRequired
         TalkController.configureAudioSession()
-        talk = TalkController(client: client, config: config, ptt: pushToTalk)
+        talk = TalkController(client: client, config: config, ptt: pushToTalk,
+                              e2ee: e2ee, trust: trust, deviceId: deviceId)
+        if let session {
+            _ = try? e2ee.preparePhone(userId: session.userId, deviceId: deviceId, now: Int64(Clock.nowMs()))
+        }
         // Early, so the system can restore the channel and deliver its pushes.
         pushToTalk.onRegistrationChange = { [weak self] in
             guard let self else { return }
@@ -113,6 +120,11 @@ final class AppModel: ObservableObject {
         watch.makeSession = { [client] deviceId, requestId in
             guard client.session != nil else { return nil }
             return try await client.makeSession(forDevice: deviceId, requestId: requestId)
+        }
+        watch.certifyWatch = { [e2ee] deviceId, signingKey in
+            guard let session = self.client.session else { throw E2EEKeyStore.StoreError.notProvisioned }
+            return try e2ee.certifyWatch(userId: session.userId, phoneDeviceId: session.deviceId,
+                                         watchDeviceId: deviceId, signingKey: signingKey, now: Int64(Clock.nowMs()))
         }
         watch.activate(signedIn: session != nil)
         signedOutObserver = NotificationCenter.default.addObserver(
@@ -141,8 +153,8 @@ final class AppModel: ObservableObject {
             let result = try await client.signInWithApple(identityToken: identityToken, nonce: nonce, name: name, deviceId: deviceId)
             session = result.session
             if result.created { onboarded = false }
-            watch.signedInChanged(true)
             await registerDevice()
+            watch.signedInChanged(true)
             talk.appBecameActive()
             await refresh()
             if pendingInvite != nil { await loadPendingInvite() }
@@ -153,19 +165,23 @@ final class AppModel: ObservableObject {
 
     func signOut() async {
         watch.signedInChanged(false)
+        if let session { e2ee.signOut(userId: session.userId, keepPhoneIdentity: true) }
         await client.signOut()
         didSignOut()
     }
 
     /// `authorizationCode` is from a fresh Sign in with Apple, so the server can revoke it.
     func deleteAccount(authorizationCode: String) async throws {
+        let deleted = session
         try await client.deleteAccount(authorizationCode: authorizationCode)
+        if let deleted { e2ee.signOut(userId: deleted.userId, keepPhoneIdentity: false) }
         watch.signedInChanged(false)
         accountDeleted = true
         didSignOut()
     }
 
     private func didSignOut() {
+        if let session { e2ee.signOut(userId: session.userId, keepPhoneIdentity: true) }
         talk.signedOut()
         pushToTalk.turnOff()
         registered = nil
@@ -203,6 +219,15 @@ final class AppModel: ObservableObject {
             rollOver = user.rollOver ?? false
             formFactors = user.knownFormFactors
             friends = loadedFriends
+            if let account = session?.userId {
+                for friend in loadedFriends {
+                    if let keys = friend.keys, trust.update(account: account, friend: friend.id, keys: keys, now: Int64(Clock.nowMs())) {
+                        Telemetry.shared.event("keyChanged", ["friend": friend.id])
+                    } else if friend.keys == nil {
+                        trust.missingKeys(account: account, friend: friend.id)
+                    }
+                }
+            }
             blocks = loadedBlocks
             friendsLoaded = true
             askRingChoiceIfNeeded()
@@ -229,6 +254,15 @@ final class AppModel: ObservableObject {
     /// Only the friends list, for the check after an invite.
     func refreshFriends() async {
         guard session != nil, let loaded = try? await client.friends() else { return }
+        if let account = session?.userId {
+            for friend in loaded {
+                if let keys = friend.keys, trust.update(account: account, friend: friend.id, keys: keys, now: Int64(Clock.nowMs())) {
+                    Telemetry.shared.event("keyChanged", ["friend": friend.id])
+                } else if friend.keys == nil {
+                    trust.missingKeys(account: account, friend: friend.id)
+                }
+            }
+        }
         if loaded != friends { friends = loaded }
     }
 
@@ -345,10 +379,25 @@ final class AppModel: ObservableObject {
         while session != nil {
             let joined = pushToTalk.isJoined ? pushToTalk.pushToken : nil
             let delivery: DeviceRegistration.Delivery = joined.map { .pushToTalk(token: $0, environment: Self.apnsEnvironment) } ?? .foreground
-            let registration = DeviceRegistration(delivery: delivery, notifications: notificationPermission)
+            let keys: E2EEKeyStore.Registration?
+            do {
+                keys = try e2ee.preparePhone(userId: session!.userId, deviceId: deviceId, now: Int64(Clock.nowMs()))
+            } catch {
+                Telemetry.shared.event("e2eeFailed", ["reason": "key-storage"])
+                break
+            }
+            let registration = DeviceRegistration(delivery: delivery, notifications: notificationPermission, e2ee: keys)
             if registered == registration { break }
             do {
                 try await client.registerDevice(registration)
+                if let keys, let userId = session?.userId {
+                    let marker = "e2eePhoneEncCert-\(userId)"
+                    let current = keys.encCert.base64EncodedString()
+                    if let previous = UserDefaults.standard.string(forKey: marker), previous != current {
+                        Telemetry.shared.event("keysRotated", [:])
+                    }
+                    UserDefaults.standard.set(current, forKey: marker)
+                }
                 registered = registration
                 reachability = joined != nil ? "Walkie-talkie (PushToTalk)" : "Only while Over&Out is open"
             } catch {
@@ -422,7 +471,16 @@ final class AppModel: ObservableObject {
 
     func createInvite() async -> InviteLink? {
         do {
-            let link = try await client.createInvite()
+            guard let session, let sender = try e2ee.sender(userId: session.userId, deviceId: deviceId) else {
+                throw E2EEKeyStore.StoreError.notProvisioned
+            }
+            var link = try await client.createInvite()
+            guard var parts = URLComponents(url: link.url, resolvingAgainstBaseURL: false) else {
+                throw E2EEKeyStore.StoreError.notProvisioned
+            }
+            parts.fragment = "k=" + E2EE.fingerprint(sender.phoneCertificate.identityKey)
+            guard let url = parts.url else { throw E2EEKeyStore.StoreError.notProvisioned }
+            link.url = url
             lastInviteAt = Date()
             return link
         } catch {
@@ -485,8 +543,10 @@ final class AppModel: ObservableObject {
         guard url.host == linkDomain || url.host == "www.\(linkDomain)" else { return }
         let parts = url.pathComponents.filter { $0 != "/" }
         guard parts.count == 2, parts[0] == "i", !parts[1].isEmpty else { return }
-        if pendingInvite?.code == parts[1] { return }
-        pendingInvite = PendingInvite(code: parts[1])
+        let fragment = URLComponents(url: url, resolvingAgainstBaseURL: false)?.fragment
+        let fingerprint = fragment?.hasPrefix("k=") == true ? String(fragment!.dropFirst(2)) : nil
+        if pendingInvite?.code == parts[1], pendingInvite?.fingerprint == fingerprint { return }
+        pendingInvite = PendingInvite(code: parts[1], fingerprint: fingerprint)
         if session != nil { Task { await loadPendingInvite() } }
     }
 
@@ -501,16 +561,26 @@ final class AppModel: ObservableObject {
     }
 
     func acceptPendingInvite() async {
-        guard let code = pendingInvite?.code else { return }
+        guard let invite = pendingInvite, let account = session?.userId else { return }
+        let code = invite.code
         pendingInvite?.accepting = true
         do {
             let friend = try await client.acceptInvite(code: code)
-            pendingInvite?.accepted = friend
             await refresh()
+            if session?.userId == account {
+                trust.checkInvite(account: account, friend: friend.id, fingerprint: invite.fingerprint)
+            }
+            if pendingInvite?.code == code, pendingInvite?.fingerprint == invite.fingerprint {
+                pendingInvite?.accepted = friend
+            }
         } catch {
-            pendingInvite?.error = describe(error)
+            if pendingInvite?.code == code, pendingInvite?.fingerprint == invite.fingerprint {
+                pendingInvite?.error = describe(error)
+            }
         }
-        pendingInvite?.accepting = false
+        if pendingInvite?.code == code, pendingInvite?.fingerprint == invite.fingerprint {
+            pendingInvite?.accepting = false
+        }
     }
 
     /// A short, name-free code for telemetry: the API's error code, or the error's domain and code.

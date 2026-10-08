@@ -83,9 +83,11 @@ public struct Friend: Codable, Identifiable, Hashable, Sendable {
     public var favorite: Bool?
     /// When they last talked to you (ms since 1970), recorded by the relay.
     public let lastMessageAt: Double?
+    /// Certified public keys supplied by the key directory, when this friend has registered them.
+    public let keys: FriendKeys?
 
     public init(id: String, name: String, since: Double, photoVersion: Double? = nil, avatar: String? = nil,
-                favorite: Bool? = nil, lastMessageAt: Double? = nil) {
+                favorite: Bool? = nil, lastMessageAt: Double? = nil, keys: FriendKeys? = nil) {
         self.id = id
         self.name = name
         self.since = since
@@ -93,6 +95,7 @@ public struct Friend: Codable, Identifiable, Hashable, Sendable {
         self.avatar = avatar
         self.favorite = favorite
         self.lastMessageAt = lastMessageAt
+        self.keys = keys
     }
 
     public var isFavorite: Bool { favorite == true }
@@ -114,7 +117,7 @@ public struct BlockedUser: Codable, Identifiable, Hashable, Sendable {
 
 public struct InviteLink: Codable, Equatable, Sendable {
     public let code: String
-    public let url: URL
+    public var url: URL
     public let expiresAt: Double
 }
 
@@ -680,6 +683,9 @@ public enum WatchLink {
     /// iPhone → watch: ["session": Data], or ["signedOut": true]
     public static let session = "session"
     public static let signedOut = "signedOut"
+    public static let signingKey = "signingKey"
+    public static let phoneCert = "phoneCert"
+    public static let deviceCert = "deviceCert"
     /// Application context, both ways: iPhone ["signedIn": Bool]; watch ["deviceId": …, "needsSession": Bool]
     public static let signedIn = "signedIn"
     public static let needsSession = "needsSession"

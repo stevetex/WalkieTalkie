@@ -595,7 +595,8 @@ export class Accounts {
   async friendKeys(userId: string): Promise<FriendKeysJSON> {
     const devices = await this.devices(userId);
     const phones = [...new Set(devices.flatMap((d) => d.e2ee?.phoneCert ? [d.e2ee.phoneCert] : []))];
-    return { phones, devices: devices.flatMap((d) => d.e2ee ? [{ deviceId: d.id, clientKind: d.clientKind, deviceCert: d.e2ee.deviceCert, encCert: d.e2ee.encCert }] : []) };
+    return { phones, devices: devices.flatMap((d) => d.e2ee ? [{ deviceId: d.id, clientKind: d.clientKind, deviceCert: d.e2ee.deviceCert, encCert: d.e2ee.encCert }] : []),
+      allDevicesHaveKeys: devices.length > 0 && devices.every((d) => !!d.e2ee) };
   }
 
   async friends(userId: string): Promise<Friend[]> {
