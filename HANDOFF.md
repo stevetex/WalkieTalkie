@@ -4,6 +4,8 @@ Read this first. Over&Out: Watch Walkie Talkie replaces Apple's Watch Walkie-Tal
 
 ## Start here
 
+**Newest (2026-10-08): Public App Store copy accepted for now by Steve.** The proposed subtitle, promotional text, expanded description and keyword list are in `deploy/appstore/product-page-copy.md`. The watch bullet now says “When a friend starts a conversation,” per Steve. The positioning leads with close friends, per Steve. Counts and keyword choices were checked against Apple's current product-page guidance. Promotional text does not affect App Store search ranking; the keyword list avoids repeating the planned app name and proposed subtitle. Nothing was entered in App Store Connect.
+
 **Newest (2026-10-08): Steve approved the App Store header and search-results creative assets.** `deploy/appstore/creative-assets/compose.swift` deterministically composes the approved mascot and current App Store UI captures into `out/product-page-header.png` (3840 × 1646, 21:9) and `out/search-results.png` (3840 × 2560, 3:2). Both are RGB PNGs without alpha. Nothing was uploaded to App Store Connect. The header is the centered mascot over the indigo gradient with quiet radio rings; search shows the real iPhone talking and Watch listening screens beside “Walkie-talkie for iPhone + Apple Watch” and “Hold to talk. Hear them right away.” Checked: exact dimensions, no alpha, Swift type-check, and `git diff --check`.
 
 **Newest (2026-10-07, night): E2EE PR A, contract and crypto, on branch `e2ee-crypto`** (worktree `.claude/worktrees/e2ee-crypto`; not committed yet). No change in behaviour: nothing sends or accepts format 2 until PRs B and C. What it adds:
