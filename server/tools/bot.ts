@@ -68,7 +68,8 @@ const mode = positionals[0];
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 if (mode === "greeting") {
-  const text = values.say ?? "Hi, it's the Over and Out Test Bot. I'll say back whatever you say to me. Here's what you said.";
+  // "Now-za" so the speech synthesizer says it like "wowza".
+  const text = values.say ?? "Hi, it's the Now-za Test Bot. I'll say back whatever you say to me. Here's what you said.";
   const { frames } = encode(values.wav ? readPcm16Mono16k(values.wav) : synthesize(text), true);
   const packed = Buffer.concat(frames.flatMap((f) => [Buffer.from([f.length >> 8, f.length & 0xff]), f]));
   writeFileSync(GREETING_FILE, packed);

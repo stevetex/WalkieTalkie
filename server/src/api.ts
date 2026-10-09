@@ -1,6 +1,6 @@
 // The account API (design decision 2026-09-27): sign-in, sessions, the profile, friends,
 // invites, blocks, reports, push registration and account deletion. It runs as its own Cloud
-// Run service (api-main.ts), behind overandout.app/v2/* on Firebase Hosting, and locally inside
+// Run service (api-main.ts), behind nowza.app/v2/* on Firebase Hosting, and locally inside
 // the relay's server (main.ts with SERVE_API=1).
 //
 // The contract is contracts/README.md (Phase 0 of ANDROID_WEAR_OS_PLAN.md): provider-neutral
@@ -99,7 +99,7 @@ export interface ApiOptions {
   deliveryPolicy?: DeliveryPolicy;
   // What GET /v2/config says.
   config?: { relayBaseUrl: string; minimumBuilds?: MinimumBuilds; message?: string | null };
-  // Invite links are this plus the code, for example https://overandout.app/i/.
+  // Invite links are this plus the code, for example https://nowza.app/i/.
   inviteBaseUrl: string;
   log?: (line: string) => void;
   // Structured telemetry entries (oao.api, oao.event, …); stdout JSON by default (Cloud Run).
@@ -537,7 +537,7 @@ function configJSON(options: ApiOptions): unknown {
     schemaVersion: 1,
     api: { versions: [...API_VERSIONS] },
     relay: {
-      baseUrl: options.config?.relayBaseUrl ?? "https://relay-1.overandout.app",
+      baseUrl: options.config?.relayBaseUrl ?? "https://relay-1.nowza.app",
       protocols: [...RELAY_PROTOCOLS],
       audioFormats: [...AUDIO_FORMATS],
       codecs: [...CODEC_NAMES],

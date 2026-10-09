@@ -52,7 +52,7 @@ final class AppModel: ObservableObject {
     @Published var accountDeleted = false
     /// Notifications not yet asked for, so Friends offers them (the walkie-talkie off notice).
     @Published private(set) var notificationsUndetermined = false
-    /// Notifications turned off for Over&Out, so the walkie-talkie-off notice can't show.
+    /// Notifications turned off for Nowza, so the walkie-talkie-off notice can't show.
     @Published private(set) var notificationsDenied = false
     @AppStorage("onboarded") var onboarded = false
 
@@ -89,9 +89,9 @@ final class AppModel: ObservableObject {
     init() {
         let info = Bundle.main.infoDictionary ?? [:]
         let host = info["OAOApiHost"] as? String ?? ""
-        linkDomain = info["OAOLinkDomain"] as? String ?? "overandout.app"
+        linkDomain = info["OAOLinkDomain"] as? String ?? "nowza.app"
         isLocalServer = host.hasPrefix("localhost") || host.hasPrefix("127.0.0.1")
-        let base = AccountClient.baseURL(host: host) ?? URL(string: "https://overandout.app")!
+        let base = AccountClient.baseURL(host: host) ?? URL(string: "https://nowza.app")!
         client = AccountClient(baseURL: base, store: KeychainSessionStore())
         config = ServiceConfigStore(bundledRelay: AccountClient.baseURL(host: info["OAOServerHost"] as? String ?? ""))
         session = client.session
@@ -312,7 +312,7 @@ final class AppModel: ObservableObject {
     /// the watch if one is registered, else this iPhone.
     var ringsOn: FormFactor { preferredFormFactor ?? (formFactors.contains(.watch) ? .watch : .phone) }
 
-    /// A watch that can ring: paired with this iPhone, with Over&Out on it signed in.
+    /// A watch that can ring: paired with this iPhone, with Nowza on it signed in.
     var watchCanRing: Bool { watch.isPaired && formFactors.contains(.watch) }
 
     /// "When Friends Ring You" (design decision 2026-10-02): the server's preferredFormFactor
@@ -402,7 +402,7 @@ final class AppModel: ObservableObject {
                     UserDefaults.standard.set(current, forKey: marker)
                 }
                 registered = registration
-                reachability = joined != nil ? "Walkie-talkie (PushToTalk)" : "Only while Over&Out is open"
+                reachability = joined != nil ? "Walkie-talkie (PushToTalk)" : "Only while Nowza is open"
             } catch {
                 reachability = "Not registered: \(describe(error))"
                 print("[oao] Device registration failed: \(error)")
@@ -541,7 +541,7 @@ final class AppModel: ObservableObject {
 
     // MARK: Invite links
 
-    /// https://overandout.app/i/<code>, from Messages (a universal link) or anywhere else.
+    /// https://nowza.app/i/<code>, from Messages (a universal link) or anywhere else.
     func open(_ url: URL) {
         guard url.host == linkDomain || url.host == "www.\(linkDomain)" else { return }
         let parts = url.pathComponents.filter { $0 != "/" }
@@ -595,7 +595,7 @@ final class AppModel: ObservableObject {
 
     func describe(_ error: Error) -> String {
         if let urlError = error as? URLError {
-            return urlError.code == .notConnectedToInternet ? "You're offline." : "Couldn't reach Over&Out. Try again."
+            return urlError.code == .notConnectedToInternet ? "You're offline." : "Couldn't reach Nowza. Try again."
         }
         return (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
     }

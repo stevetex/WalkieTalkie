@@ -158,7 +158,7 @@ struct ReportView: View {
                     Section {
                         Toggle("Also block \(friend.name)", isOn: $alsoBlock)
                     } footer: {
-                        Text("We review every report. Over&Out doesn't record conversations, so describe what happened.")
+                        Text("We review every report. Nowza doesn't record conversations, so describe what happened.")
                     }
                 }
                 .listRowBackground(Brand.surface)

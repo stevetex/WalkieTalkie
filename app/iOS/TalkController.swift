@@ -149,7 +149,7 @@ final class TalkController: ObservableObject {
             log("Relay refused: \(refusal.code)")
             if refusal.requiresUpgrade {
                 NotificationCenter.default.post(name: ServiceContract.upgradeRequiredNotification, object: nil)
-                finish(status: "Update Over&Out to keep talking")
+                finish(status: "Update Nowza to keep talking")
             } else if refusal.endsSession {
                 // The account API confirms it and signs this iPhone out.
                 let client = client
@@ -912,7 +912,7 @@ final class TalkController: ObservableObject {
 
     private func finishInBackground() {
         if backgroundTask == .invalid {
-            backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "Over&Out conversation end") { [weak self] in
+            backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "Nowza conversation end") { [weak self] in
                 self?.endBackgroundTask()
             }
         }

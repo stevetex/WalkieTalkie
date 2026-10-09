@@ -54,7 +54,7 @@ async function withApi(
         return { sub: code.slice(5) };
       },
     },
-    inviteBaseUrl: "https://overandout.app/i/",
+    inviteBaseUrl: "https://nowza.app/i/",
     log: () => {},
     telemetry: { write: () => {}, flush: async () => {} },
   });
@@ -149,7 +149,7 @@ test("sign in, invite a friend, and ring them with session tokens", async () => 
 
     const bob = await signIn(url, "apple.bob", "Bob", "bob-phone");
     const invite = await call(url, "POST", "/v2/invites", alice.token);
-    assert.match(invite.body.url, /^https:\/\/overandout\.app\/i\/[\w-]{22}$/);
+    assert.match(invite.body.url, /^https:\/\/nowza\.app\/i\/[\w-]{22}$/);
     const preview = await call(url, "GET", `/v2/invites/${invite.body.code}`, bob.token);
     assert.deepEqual(preview.body.from, { id: alice.user.id, name: "Alice" });
     assert.equal((await call(url, "POST", `/v2/invites/${invite.body.code}/accept`, bob.token)).body.friend.name, "Alice");

@@ -57,7 +57,7 @@ trap 'rm -rf "$stage"' EXIT
 {
   if [ -n "${TEST_BOT_USER_ID:-}" ]; then echo "TEST_BOT_USER_ID: \"$TEST_BOT_USER_ID\""; fi
   if [ -n "${CANARY_USER_ID:-}" ]; then echo "CANARY_USER_ID: \"$CANARY_USER_ID\""; fi
-  echo "RELAY_NODES: \"${RELAY_NODES:-https://relay-1.overandout.app}\""
+  echo "RELAY_NODES: \"${RELAY_NODES:-https://relay-1.nowza.app}\""
   if [ -n "${MINIMUM_BUILDS:-}" ]; then echo "MINIMUM_BUILDS: '${MINIMUM_BUILDS}'"; fi
   # The relay's /admin/stats (the peaks), and the Canary's token.
   if gc secrets describe ops-stats-token >/dev/null 2>&1; then echo "OPS_STATS_TOKEN_SECRET: ops-stats-token"; fi
@@ -89,8 +89,8 @@ schedule() {
   gc scheduler jobs "$verb" http "$name" --location="$REGION" --schedule="$cron" --time-zone=UTC \
     --uri="$uri" --http-method=POST --oauth-service-account-email="$sa" --description="$description"
 }
-schedule stats-daily stats "30 0 * * *" "Over&Out daily usage rollup (stats/{date}) and the Ops reports"
-schedule stats-rolling stats-rolling "*/15 * * * *" "Over&Out Ops: today-so-far numbers (statsLive/{date}) and the Canary"
+schedule stats-daily stats "30 0 * * *" "Nowza daily usage rollup (stats/{date}) and the Ops reports"
+schedule stats-rolling stats-rolling "*/15 * * * *" "Nowza Ops: today-so-far numbers (statsLive/{date}) and the Canary"
 
 echo "Stats jobs ready: the rollup at 00:30 UTC, the rolling numbers every 15 minutes."
 echo "Read them with: node server/tools/beta.ts stats, or the Ops dashboard."

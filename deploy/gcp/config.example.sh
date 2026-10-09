@@ -29,7 +29,7 @@ FULL_TIMELINE_USERS=""
 
 # The always-on Test Bot (server/src/test-bot.ts), for App Review: its account ID (deploy-relay.sh:
 # the relay answers its rings), and its standing invite's code (deploy-api.sh: the link
-# https://overandout.app/i/<code> befriends the bot, any number of times). 12-64 letters, digits,
+# INVITE_BASE_URL plus <code> befriends the bot, any number of times). 12-64 letters, digits,
 # "_" or "-"; generate one with: openssl rand -hex 12. Change it to stop new people adding the bot.
 TEST_BOT_USER_ID=""
 TEST_BOT_INVITE=""
@@ -44,40 +44,44 @@ APPLE_TEAM_ID=""
 # for revocation.
 APPLE_AUDIENCES="com.cypressoakstudios.overandout"
 
-# overandout.app (deploy-web.sh): the contact address on the privacy and support pages.
+# Invite links (deploy-api.sh): INVITE_BASE_URL plus the code. Default https://nowza.app/i/.
+INVITE_BASE_URL=""
+
+# The website (deploy-web.sh; nowza.app): the contact address on the
+# privacy and support pages.
 SUPPORT_EMAIL=""
 # Optional, during the Beta: the public TestFlight link (App Store Connect → TestFlight →
 # an external group → Public Link), e.g. https://testflight.apple.com/join/AbCd1234. While
-# set, the invite page (overandout.app/i/<code>) offers "Join the beta on TestFlight";
+# set, the invite page (/i/<code>) offers "Join the beta on TestFlight";
 # empty, it shows "Coming soon to the App Store". Redeploy the site after changing it.
 TESTFLIGHT_URL=""
 
 # The contract's compatibility setting (contracts/README.md; Phase 0 of
 # ANDROID_WEAR_OS_PLAN.md), for deploy-api.sh and deploy-relay.sh:
 # MINIMUM_BUILDS: JSON of the lowest build of each client kind still admitted, e.g.
-# {"ios":170,"watchos":170}; older builds get "Update Over&Out". Empty = no minimum.
+# {"ios":170,"watchos":170}; older builds get "Update Nowza". Empty = no minimum.
 # E2EE's PR D: set both to the first TestFlight build that refuses format 1, and deploy the API
 # and relay with it (E2EE_SPEC.md, "PR D").
 MINIMUM_BUILDS=""
 
-# The relay GET /v2/config names (deploy-api.sh). It must be under overandout.app: the apps
-# ignore any other host and use the one they were built with. Default relay-1.overandout.app.
+# The relay GET /v2/config names (deploy-api.sh). It must be under nowza.app: the apps
+# ignore any other host and use the one they were built with. Default relay-1.nowza.app.
 RELAY_PUBLIC_HOST=""
 
 # The Ops dashboard (OPS_DASHBOARD_SPEC.md; setup-ops.sh, setup-stats.sh). CANARY_USER_ID is the
 # Canary account (node server/tools/test-account.ts canary prints it): every 15 minutes it talks
 # to the Test Bot over the live relay, and it's left out of every usage number and live count.
 # RELAY_NODES: the relay nodes the dashboard and the rolling job read /admin/stats from,
-# comma-separated base URLs (default https://relay-1.overandout.app). OPS_URL: the dashboard's
+# comma-separated base URLs (default https://relay-1.nowza.app). OPS_URL: the dashboard's
 # address once setup-ops.sh has deployed it (its run.app URL), for the links from the
-# "Over&Out Beta" Monitoring dashboard and the alert emails (telemetry-monitoring.ts).
+# "Nowza Beta" Monitoring dashboard and the alert emails (telemetry-monitoring.ts).
 CANARY_USER_ID=""
 RELAY_NODES=""
 OPS_URL=""
-# The dashboard's IAP OAuth client (setup-ops.sh): made in the console, under the "Over&Out"
+# The dashboard's IAP OAuth client (setup-ops.sh): made in the console, under the "Nowza"
 # consent screen (APIs & Services → Credentials → Web application).
 OPS_OAUTH_CLIENT_ID=""
 OPS_OAUTH_CLIENT_SECRET=""
-# The "Over&Out Beta" Monitoring dashboard, for the Ops header's "Service graphs" link
+# The "Nowza Beta" Monitoring dashboard, for the Ops header's "Service graphs" link
 # (setup-ops.sh; default: the project's dashboards list).
 MONITORING_DASHBOARD=""

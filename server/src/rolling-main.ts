@@ -10,7 +10,7 @@
 // removed by a TTL on expireAt after 14 days. WAU and MAU stay with the daily job.
 //
 //   STATS_LOCAL_DIR       a local relay's DATA_DIR instead of Google Cloud (job-env.ts)
-//   RELAY_NODES           relay base URLs (default https://relay-1.overandout.app); the Canary
+//   RELAY_NODES           relay base URLs (default https://relay-1.nowza.app); the Canary
 //                         uses the first
 //   OPS_STATS_TOKEN       the relay's /admin/stats token; OPS_STATS_TOKEN_SECRET names a secret
 //   TEST_BOT_USER_ID, CANARY_USER_ID

@@ -2,7 +2,7 @@
 # Uptime checks on each relay hostname's /healthz, and an email alert to ALERT_EMAIL when
 # one fails from two or more regions for 5 minutes. Safe to re-run.
 #
-#   deploy/gcp/setup-uptime.sh relay-1.overandout.app [more hosts…]
+#   deploy/gcp/setup-uptime.sh relay-1.nowza.app [more hosts…]
 set -euo pipefail
 
 here=$(cd "$(dirname "$0")" && pwd)

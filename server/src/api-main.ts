@@ -1,4 +1,4 @@
-// The account API as its own server: the Cloud Run service behind overandout.app/v2/*
+// The account API as its own server: the Cloud Run service behind nowza.app/v2/*
 // (design decision 2026-09-27). main.ts also mounts it for local runs (SERVE_API=1).
 //
 //   PORT                  listen port (default 8080; Cloud Run sets it)
@@ -11,7 +11,7 @@
 //                         (default com.cypressoakstudios.overandout)
 //   APPLE_TEAM_ID, APPLE_SIWA_KEY_ID, APPLE_SIWA_KEY (or APPLE_SIWA_KEY_SECRET), APPLE_CLIENT_ID
 //                         the Sign in with Apple key, for revoking on deletion (apple.ts)
-//   INVITE_BASE_URL       default https://overandout.app/i/
+//   INVITE_BASE_URL       default https://nowza.app/i/ (deploy-api.sh sets it)
 //   TEST_BOT_USER_ID, TEST_BOT_INVITE
 //                         the Test Bot's account and its standing invite: a code (12–64 letters,
 //                         digits, "_" or "-") that befriends the bot, and only the bot, any number
@@ -26,7 +26,7 @@
 //                         relay's stub, not sent). Local only
 //   TEST_DELIVERY         1 = registrations may name the test delivery (rung over any of the
 //                         account's relay connections, as a bot is). Local only
-//   RELAY_BASE_URL        the relay GET /v2/config names (default https://relay-1.overandout.app)
+//   RELAY_BASE_URL        the relay GET /v2/config names (default https://relay-1.nowza.app)
 //   MINIMUM_BUILDS        JSON {clientKind: build}, said in GET /v2/config (the relay enforces it)
 //   REVISION              the git commit, reported by /healthz
 
@@ -129,8 +129,8 @@ export function apiFromEnv(env: NodeJS.ProcessEnv, docs: Docs, dataDir: string |
     google,
     devSignIn: env.DEV_APPLE_SIGNIN === "1" || env.DEV_GOOGLE_SIGNIN === "1",
     deliveryPolicy,
-    config: { relayBaseUrl: env.RELAY_BASE_URL || "https://relay-1.overandout.app", minimumBuilds },
-    inviteBaseUrl: env.INVITE_BASE_URL || "https://overandout.app/i/",
+    config: { relayBaseUrl: env.RELAY_BASE_URL || "https://relay-1.nowza.app", minimumBuilds },
+    inviteBaseUrl: env.INVITE_BASE_URL || "https://nowza.app/i/",
     // Cloud Run turns JSON lines on stdout into structured entries; local runs keep a file.
     telemetry: dataDir ? new FileSink(dataDir) : new StdoutSink(),
   });

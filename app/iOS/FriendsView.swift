@@ -41,7 +41,7 @@ struct FriendsView: View {
                             }
                         }
                     } footer: {
-                        Text("Tap a friend, then hold the mascot's mouth to talk. You can also talk from Over&Out on your watch.")
+                        Text("Tap a friend, then hold the mascot's mouth to talk. You can also talk from Nowza on your watch.")
                     }
                 }
                 Section {
@@ -90,9 +90,9 @@ struct FriendsView: View {
     private var updateRequired: some View {
         Section {
             VStack(alignment: .leading, spacing: 10) {
-                Label("Update Over&Out", systemImage: "arrow.down.app")
+                Label("Update Nowza", systemImage: "arrow.down.app")
                     .font(.headline)
-                Text(model.config.upgradeMessage ?? "This version can't talk to friends any more. Update Over&Out from TestFlight or the App Store.")
+                Text(model.config.upgradeMessage ?? "This version can't talk to friends any more. Update Nowza from TestFlight or the App Store.")
                     .font(.callout)
                     .foregroundStyle(Brand.secondary)
             }
@@ -124,7 +124,7 @@ struct FriendsView: View {
         } else if ptt.isJoined, model.notificationsUndetermined {
             Section {
                 VStack(alignment: .leading, spacing: 10) {
-                    Text("Allow notifications so Over&Out can tell you if walkie-talkie turns off, for example after the Leave button next to Talk.")
+                    Text("Allow notifications so Nowza can tell you if walkie-talkie turns off, for example after the Leave button next to Talk.")
                         .font(.callout)
                         .foregroundStyle(Brand.secondary)
                     Button("Allow Notifications") { Task { await model.allowNotifications() } }
@@ -135,7 +135,7 @@ struct FriendsView: View {
         } else if ptt.isJoined, model.notificationsDenied, !notificationsOffDismissed {
             Section {
                 VStack(alignment: .leading, spacing: 10) {
-                    Text("Notifications are off, so Over&Out can't tell you if walkie-talkie turns off, for example after the Leave button next to Talk.")
+                    Text("Notifications are off, so Nowza can't tell you if walkie-talkie turns off, for example after the Leave button next to Talk.")
                         .font(.callout)
                         .foregroundStyle(Brand.secondary)
                     HStack {
@@ -224,11 +224,11 @@ final class InviteMessage: NSObject, UIActivityItemSource {
 
     func activityViewController(_ controller: UIActivityViewController, itemForActivityType activityType: UIActivity.ActivityType?) -> Any? {
         if activityType == .message || activityType == .copyToPasteboard { return link.url }
-        return "Let's talk on Over&Out, a walkie-talkie for Apple Watch: \(link.url.absoluteString)"
+        return "Let's talk on Nowza, a walkie-talkie for Apple Watch: \(link.url.absoluteString)"
     }
 
     func activityViewController(_ controller: UIActivityViewController, subjectForActivityType activityType: UIActivity.ActivityType?) -> String {
-        "\(from) invited you to Over&Out"
+        "\(from) invited you to Nowza"
     }
 }
 

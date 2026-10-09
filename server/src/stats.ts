@@ -1,5 +1,5 @@
 // Usage analytics (the Beta telemetry spec's "Usage analytics", approved 2026-09-29, and the
-// Over&Out Ops dashboard, OPS_DASHBOARD_SPEC.md): totals only, never names or lists of accounts.
+// Nowza Ops dashboard, OPS_DASHBOARD_SPEC.md): totals only, never names or lists of accounts.
 //
 //   usageSnapshot      what the accounts look like now, from Firestore: pictures, friends,
 //                      favorites, devices, Ring Me On, sign-in providers, reachability

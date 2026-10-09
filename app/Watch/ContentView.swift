@@ -86,7 +86,7 @@ struct SignInPrompt: View {
                     .font(.footnote)
                     .multilineTextAlignment(.center)
             } else {
-                Text("Open Over&Out on your iPhone and sign in")
+                Text("Open Nowza on your iPhone and sign in")
                     .font(.footnote)
                     .multilineTextAlignment(.center)
             }
@@ -102,7 +102,7 @@ struct NoFriendsYet: View {
     var body: some View {
         VStack(spacing: 8) {
             SmallMascot()
-            Text(loaded ? "Invite a friend from Over&Out on your iPhone" : "Loading friends…")
+            Text(loaded ? "Invite a friend from Nowza on your iPhone" : "Loading friends…")
                 .font(.footnote)
                 .multilineTextAlignment(.center)
         }

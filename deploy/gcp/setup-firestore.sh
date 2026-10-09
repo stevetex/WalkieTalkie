@@ -34,7 +34,7 @@ fi
 
 if ! gc iam service-accounts describe "$node_sa_email" >/dev/null 2>&1; then
   echo "Creating the $NODE_SA service account…"
-  gc iam service-accounts create "$NODE_SA" --display-name="Over&Out relay node"
+  gc iam service-accounts create "$NODE_SA" --display-name="Nowza relay node"
 fi
 
 # Firestore read/write, plus logs and metrics from the node's agents.

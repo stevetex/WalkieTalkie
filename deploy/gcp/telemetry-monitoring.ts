@@ -8,9 +8,9 @@
 //   node deploy/gcp/telemetry-monitoring.ts print        the definitions, as JSON
 //
 // PROJECT_ID and ALERT_EMAIL come from the environment (setup-telemetry.sh sources config.sh).
-// OPS_URL (the Over&Out Ops dashboard, setup-ops.sh), when set, links the two dashboards
+// OPS_URL (the Nowza Ops dashboard, setup-ops.sh), when set, links the two dashboards
 // (OPS_DASHBOARD_SPEC.md, "Linking with Cloud Monitoring"): a text widget across the top of this
-// one, and both links in every Over&Out alert policy's documentation, so alert emails carry them.
+// one, and both links in every Nowza alert policy's documentation, so alert emails carry them.
 //
 // Costs (read 2026-09-28): log-based metrics count against the free 150 MiB of chargeable
 // metrics a month; the dashboard is free; alerting is free until 1 September 2027, then
@@ -42,7 +42,7 @@ const LATENCY_BOUNDS = [100, 200, 300, 400, 500, 600, 700, 800, 900, 1000, 1200,
 const metrics: LogMetric[] = [
   {
     name: "oao_conversations",
-    description: "Over&Out conversations that rang someone, by outcome and the device kind rung (oao.conversation).",
+    description: "Nowza conversations that rang someone, by outcome and the device kind rung (oao.conversation).",
     filter: `${kind("oao.conversation")} AND jsonPayload.to:*`,
     labels: { outcome: "jsonPayload.outcome", ring_platform: "jsonPayload.ringPlatform" },
   },
@@ -244,22 +244,27 @@ const charts = [
 
 // With OPS_URL, a row across the top that opens the product dashboard.
 const opsTile = opsUrl
-  ? [{ xPos: 0, yPos: 0, width: 12, height: 1, widget: { text: { content: `[Open Over&Out Ops](${opsUrl}): engagement, rings, speed against targets, the live conversation list and the reports. This dashboard stays the place for service graphs and alerts.`, format: "MARKDOWN" } } }]
+  ? [{ xPos: 0, yPos: 0, width: 12, height: 1, widget: { text: { content: `[Open Nowza Ops](${opsUrl}): engagement, rings, speed against targets, the live conversation list and the reports. This dashboard stays the place for service graphs and alerts.`, format: "MARKDOWN" } } }]
   : [];
 
 const dashboard = {
-  displayName: "Over&Out Beta",
+  displayName: "Nowza Beta",
   mosaicLayout: {
     columns: 12,
     tiles: [...opsTile, ...charts.map((widget, i) => ({ xPos: (i % 2) * 6, yPos: opsTile.length + Math.floor(i / 2) * 4, width: 6, height: 4, widget }))],
   },
 };
 
+// The name a dashboard or policy had before the Nowza rename (2026-10-09): it's found under
+// either, and renamed in place.
+const oldName = (name: string) => name.replace(/^Nowza\b/, "Over&Out");
+const named = (displayName: string | undefined, name: string) => displayName === name || displayName === oldName(name);
+
 // The two dashboards, for alert emails.
 const LINKS_HEADING = "\n\n**Dashboards:** ";
 function withLinks(doc: string, dashboardUrl: string | null): string {
   const base = doc.split(LINKS_HEADING)[0];
-  const links = [opsUrl ? `[Over&Out Ops](${opsUrl})` : null, dashboardUrl ? `["Over&Out Beta" service graphs](${dashboardUrl})` : null].filter(Boolean);
+  const links = [opsUrl ? `[Nowza Ops](${opsUrl})` : null, dashboardUrl ? `["Nowza Beta" service graphs](${dashboardUrl})` : null].filter(Boolean);
   return links.length ? `${base}${LINKS_HEADING}${links.join(" · ")}` : base;
 }
 
@@ -285,7 +290,7 @@ function logCondition(displayName: string, filter: string) {
 
 const policies = [
   {
-    displayName: "Over&Out: rings failing",
+    displayName: "Nowza: rings failing",
     conditions: [
       thresholdCondition("3+ rings pushed nowhere, unavailable or unresolved in an hour", `${userMetric("oao_conversations")} AND resource.type="global" AND metric.label.outcome=one_of("push-failed","unavailable","unresolved")`, "3600s", 2),
       thresholdCondition("3+ relay errors in an hour", `${userMetric("oao_relay_errors")} AND resource.type="global"`, "3600s", 2),
@@ -293,29 +298,29 @@ const policies = [
     doc: "Rings are failing for testers. Run `node tools/beta.ts summary --days 1` and `beta.ts tester <name>` for the conversations; the relay's log is in HANDOFF.md.",
   },
   {
-    displayName: "Over&Out: APNs setup",
+    displayName: "Nowza: APNs setup",
     conditions: [logCondition("APNs refused the relay's key, topic or certificate", `${kind("oao.apns")} AND (jsonPayload.status=403 OR jsonPayload.reason=~"BadTopic|TopicDisallowed|InvalidProviderToken|ExpiredProviderToken|MissingProviderToken|BadCertificate|DeviceTokenNotForTopic")`)],
     doc: "APNs refused a push for a setup reason (key, topic or certificate), so rings may not reach anyone. Check the apns-key secret and APNS_* settings; `beta.ts summary` lists APNs failures.",
     rateLimit: "3600s",
   },
   {
-    displayName: "Over&Out: API errors",
+    displayName: "Nowza: API errors",
     conditions: [thresholdCondition("5+ API 5xx in 10 minutes", `metric.type="run.googleapis.com/request_count" AND resource.type="cloud_run_revision" AND resource.labels.service_name="api" AND metric.labels.response_code_class="5xx"`, "600s", 4)],
     doc: "The account API is failing. `gcloud logging read 'resource.labels.service_name=\"api\" AND severity>=ERROR' --limit=20`.",
   },
   {
-    displayName: "Over&Out: app crashed",
+    displayName: "Nowza: app crashed",
     conditions: [logCondition("A crash, hang, unclean exit or unfinished extension run", `${kind("oao.event")} AND (jsonPayload.name="crash" OR jsonPayload.name="hang" OR jsonPayload.name="uncleanExit" OR jsonPayload.name="extensionUnfinished")`)],
     doc: "A tester's app crashed or hung. `node tools/beta.ts tester <account ID from the entry>`; TestFlight's symbolicated report: `node deploy/appstore/asc.ts crashes`.",
     rateLimit: "900s",
   },
   {
-    displayName: "Over&Out: dropped conversations",
+    displayName: "Nowza: dropped conversations",
     conditions: [thresholdCondition("3+ relay connections dropped mid-conversation in an hour", `${userMetric("oao_device_events")} AND resource.type="cloud_run_revision" AND metric.label.name="relayDropped"`, "3600s", 2)],
     doc: "Devices are losing the relay mid-conversation. `node tools/beta.ts summary --days 1`.",
   },
   {
-    displayName: "Over&Out: problem report",
+    displayName: "Nowza: problem report",
     conditions: [logCondition("A tester sent Report a Problem", `resource.type="cloud_run_revision" AND resource.labels.service_name="api" AND textPayload:"[feedback]"`)],
     doc: "A tester sent Report a Problem from the app. `node tools/beta.ts feedback`, then `beta.ts logs <tester>` once their devices upload.",
     rateLimit: "300s",
@@ -366,7 +371,7 @@ const dashboardUrl = (name: string) => `https://console.cloud.google.com/monitor
 
 // The dashboard's console address (null when only validating).
 async function applyDashboard(validateOnly: boolean): Promise<string | null> {
-  const found = ((await call("GET", monitoringV1)).dashboards ?? []).find((d: any) => d.displayName === dashboard.displayName);
+  const found = ((await call("GET", monitoringV1)).dashboards ?? []).find((d: any) => named(d.displayName, dashboard.displayName));
   if (found && !validateOnly) {
     await call("PATCH", `https://monitoring.googleapis.com/v1/${found.name}`, { ...dashboard, name: found.name, etag: found.etag });
     console.log(`Updated the dashboard: ${dashboardUrl(found.name)}`);
@@ -393,21 +398,22 @@ async function applyPolicies(dashboard: string | null): Promise<void> {
   const channel = await emailChannel();
   const existing = (await call("GET", `${monitoringV3}/alertPolicies?pageSize=200`)).alertPolicies ?? [];
   for (const p of policies) {
-    const found = existing.find((e: any) => e.displayName === p.displayName);
+    const found = existing.find((e: any) => named(e.displayName, p.displayName));
     const body = policyBody(p, channel, dashboard);
     if (found) await call("PATCH", `https://monitoring.googleapis.com/v3/${found.name}`, { ...body, name: found.name });
     else await call("POST", `${monitoringV3}/alertPolicies`, body);
     console.log(`${found ? "Updated" : "Created"} alert policy "${p.displayName}"`);
   }
   // The policies other scripts made (setup-uptime.sh's "Relay down", setup-api.sh's "user
-  // report"): only their documentation gets the links.
+  // report"): only their documentation gets the links, and an "Over&Out: " name becomes "Nowza: ".
   for (const e of existing) {
-    if (policies.some((p) => p.displayName === e.displayName)) continue;
-    if (!/^(Relay down: |Over&Out: )/.test(e.displayName ?? "")) continue;
+    if (policies.some((p) => named(e.displayName, p.displayName))) continue;
+    if (!/^(Relay down: |Nowza: |Over&Out: )/.test(e.displayName ?? "")) continue;
     const content = withLinks(e.documentation?.content ?? "", dashboard);
-    if (content === (e.documentation?.content ?? "")) continue;
-    await call("PATCH", `https://monitoring.googleapis.com/v3/${e.name}?updateMask=documentation`, { documentation: { content, mimeType: "text/markdown" } });
-    console.log(`Linked the dashboards in alert policy "${e.displayName}"`);
+    const displayName = (e.displayName as string).replace(/^Over&Out: /, "Nowza: ");
+    if (content === (e.documentation?.content ?? "") && displayName === e.displayName) continue;
+    await call("PATCH", `https://monitoring.googleapis.com/v3/${e.name}?updateMask=documentation,display_name`, { displayName, documentation: { content, mimeType: "text/markdown" } });
+    console.log(`Linked the dashboards in alert policy "${displayName}"`);
   }
 }
 

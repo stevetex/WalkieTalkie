@@ -1,4 +1,4 @@
-// Over&Out Ops (OPS_DASHBOARD_SPEC.md, "Ops service"): the product dashboard on Cloud Run, behind
+// Nowza Ops (OPS_DASHBOARD_SPEC.md, "Ops service"): the product dashboard on Cloud Run, behind
 // Identity-Aware Proxy (Google sign-in for the accounts Steve grants). It serves the page
 // (server/ops/) and a small JSON API that gathers every number server-side, so no token ever
 // reaches the browser. It runs in the API's image as ops-viewer, which can read Firestore and
@@ -21,10 +21,10 @@
 //   OPS_LOCAL              1 = no sign-in, Cloud Monitoring panels show sample numbers, and
 //                          Regenerate renders in this process. With STATS_LOCAL_DIR=<DATA_DIR>
 //                          (job-env.ts) and RELAY_NODES=http://localhost:8080
-//   RELAY_NODES            relay base URLs (default https://relay-1.overandout.app)
+//   RELAY_NODES            relay base URLs (default https://relay-1.nowza.app)
 //   OPS_STATS_TOKEN        the relay's /admin/stats token (OPS_STATS_TOKEN_SECRET names a secret)
 //   REGION                 the stats job's region (default us-central1)
-//   MONITORING_DASHBOARD   the "Over&Out Beta" dashboard's URL, for the header's link
+//   MONITORING_DASHBOARD   the "Nowza Beta" dashboard's URL, for the header's link
 //   TEST_BOT_USER_ID, CANARY_USER_ID, MINIMUM_BUILDS   for Regenerate run locally
 //   REVISION               the git commit
 

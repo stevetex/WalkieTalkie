@@ -2,9 +2,9 @@ import AuthenticationServices
 import OverAndOutKit
 import SwiftUI
 
-/// Says what deleting removes and that Apple's "Sign in to Over&Out" sheet is only the
+/// Says what deleting removes and that Apple's "Sign in to Nowza" sheet is only the
 /// confirmation, then deletes. The server needs that fresh authorization code to revoke
-/// Over&Out's access to the Apple ID (design decision 2026-09-27).
+/// Nowza's access to the Apple ID (design decision 2026-09-27).
 struct DeleteAccountView: View {
     @EnvironmentObject private var model: AppModel
     @Environment(\.dismiss) private var dismiss
@@ -21,7 +21,7 @@ struct DeleteAccountView: View {
                     item("person.crop.circle", "Your account and your screen name")
                     item("person.2", "Your friends. You're removed from their lists, so they can't ring you.")
                     item("envelope", "Your invites and the people you've blocked")
-                    item("applewatch", "Over&Out on your watch, which is signed out")
+                    item("applewatch", "Nowza on your watch, which is signed out")
                     Text("This can't be undone.")
                         .font(.callout.weight(.semibold))
                         .padding(.top, 4)
@@ -31,7 +31,7 @@ struct DeleteAccountView: View {
                     Text("How it works")
                         .font(.headline)
                     step(1, "Tap **Delete Account** below.")
-                    step(2, "Apple asks you to confirm with Face ID. Its sheet says **Sign in to Over&Out**: that only confirms it's you, and you won't be signed back in.")
+                    step(2, "Apple asks you to confirm with Face ID. Its sheet says **Sign in to Nowza**: that only confirms it's you, and you won't be signed back in.")
                 }
 
                 VStack(spacing: 12) {

@@ -4,7 +4,7 @@
 # (it drains conversations for up to DRAIN_MS and writes buffered metrics), then Caddy.
 #
 #   RELAY_HOSTNAMES  space-separated names Caddy gets certificates for, such as
-#                    "relay-1.overandout.app walkie.cypressoakstudios.com". Empty serves
+#                    "relay-1.nowza.app walkie.cypressoakstudios.com". Empty serves
 #                    plain HTTP on port 80 only (a test node with no DNS name).
 #   ACME_EMAIL       optional; the certificate authority's expiry notices go here.
 #   ACME_EAB_SECRET  Secret Manager secret holding a Google Trust Services external

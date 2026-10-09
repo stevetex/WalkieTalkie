@@ -35,7 +35,7 @@ struct InviteAcceptView: View {
                     .foregroundStyle(Brand.accent)
                     .multilineTextAlignment(.center)
             }
-            Text("Ring \(friend.name) from Over&Out on your watch.")
+            Text("Ring \(friend.name) from Nowza on your watch.")
                 .foregroundStyle(Brand.secondary)
             primary("Done") { dismiss() }
         } else if let error = invite.error {

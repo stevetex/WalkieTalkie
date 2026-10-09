@@ -18,7 +18,7 @@ struct SettingsView: View {
                     LabeledRow(label: "Signed in as", value: account.session?.name ?? "Not signed in")
                     LabeledRow(label: "Version", value: version)
                 } footer: {
-                    Text("Change your name and picture in Over&Out on your iPhone.")
+                    Text("Change your name and picture in Nowza on your iPhone.")
                 }
                 #if DEBUG
                 Section("Testing") {

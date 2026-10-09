@@ -27,7 +27,7 @@ struct FriendsListView: View {
                 List {
                     // The service no longer supports this build (it updates with the iPhone app).
                     if account.upgradeRequired {
-                        Text("Update Over&Out on your iPhone to keep talking.")
+                        Text("Update Nowza on your iPhone to keep talking.")
                             .font(.footnote)
                             .foregroundStyle(Brand.ivory)
                             .listRowBackground(Brand.surface)

@@ -3,7 +3,7 @@ import SwiftUI
 
 /// After the first sign-in (design decision 2026-09-28): your name and picture; how friends
 /// reach you (the microphone, walkie-talkie on this iPhone and, with a watch, letting rings
-/// through Focus); and, only with a watch paired, Over&Out on the watch.
+/// through Focus); and, only with a watch paired, Nowza on the watch.
 struct OnboardingView: View {
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var watch: PhoneWatchLink
@@ -77,14 +77,14 @@ struct OnboardingView: View {
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 8)
                 .accessibilityHidden(true)
-            point("mic.fill", "Hold the mascot's mouth to talk. Over&Out uses the microphone only while you hold it.")
+            point("mic.fill", "Hold the mascot's mouth to talk. Nowza uses the microphone only while you hold it.")
             if ptt.isAvailable {
                 point("iphone.radiowaves.left.and.right", "With walkie-talkie on, friends' messages play on this iPhone right away, even when it's locked.")
                 point("xmark.circle", "A conversation ends by itself when you both stop talking. The Leave button next to Talk turns walkie-talkie off.")
             }
             if watch.isPaired {
                 VStack(alignment: .leading, spacing: 12) {
-                    point("moon.fill", "Using Do Not Disturb or another Focus? Add Over&Out to its allowed apps so your watch still rings.")
+                    point("moon.fill", "Using Do Not Disturb or another Focus? Add Nowza to its allowed apps so your watch still rings.")
                     Button(showingFocusSteps ? "Hide the Steps" : "Show Me How") {
                         withAnimation { showingFocusSteps.toggle() }
                     }
@@ -112,7 +112,7 @@ struct OnboardingView: View {
 
     private var watchStep: some View {
         VStack(alignment: .leading, spacing: 16) {
-            title("Over&Out on your watch")
+            title("Nowza on your watch")
             Image("OAOCoolCat")
                 .resizable()
                 .scaledToFit()
@@ -121,9 +121,9 @@ struct OnboardingView: View {
                 .padding(.vertical, 8)
                 .accessibilityHidden(true)
             if !watch.isWatchAppInstalled {
-                detail("Install Over&Out on your watch: open the Watch app on this iPhone, scroll to Available Apps, and tap Install next to Over&Out.")
+                detail("Install Nowza on your watch: open the Watch app on this iPhone, scroll to Available Apps, and tap Install next to Nowza.")
             } else {
-                detail("Open Over&Out on your watch. It signs in with this account by itself, and you can talk from your wrist.")
+                detail("Open Nowza on your watch. It signs in with this account by itself, and you can talk from your wrist.")
             }
             Spacer(minLength: 24)
             primaryButton("Done") { finish() }
@@ -202,7 +202,7 @@ struct OnboardingView: View {
 
 struct FocusSteps: View {
     /// Only the watch rings with a notification; the iPhone plays through PushToTalk.
-    static let explanation = "When Do Not Disturb or another Focus is on, your Apple Watch doesn't ring unless Over&Out is on that Focus's list of allowed apps."
+    static let explanation = "When Do Not Disturb or another Focus is on, your Apple Watch doesn't ring unless Nowza is on that Focus's list of allowed apps."
 
     @Environment(\.openURL) private var openURL
 
@@ -210,7 +210,7 @@ struct FocusSteps: View {
         VStack(alignment: .leading, spacing: 12) {
             step(1, "Open **Settings** and tap **Focus**.")
             step(2, "Tap a Focus you use, such as **Do Not Disturb** or **Sleep**.")
-            step(3, "Under **Allow Notifications**, tap **Apps**, then **Add** and choose **Over&Out**.")
+            step(3, "Under **Allow Notifications**, tap **Apps**, then **Add** and choose **Nowza**.")
             step(4, "Repeat for each Focus. Your watch follows your iPhone by default.")
             Button {
                 if let url = URL(string: UIApplication.openSettingsURLString) { openURL(url) }

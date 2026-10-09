@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Deploys the account API (server/src/api-main.ts) to Cloud Run as the service "api", from
-# the committed code. It scales to zero; overandout.app/v2/* reaches it through Firebase Hosting
+# the committed code. It scales to zero; nowza.app/v2/* reaches it through Firebase Hosting
 # (deploy-web.sh). Run setup-api.sh once first.
 #
 #   deploy/gcp/deploy-api.sh [commit]     (default: HEAD)
@@ -24,10 +24,10 @@ trap 'rm -rf "$stage"' EXIT
   echo "SESSION_SIGNING_KEY_SECRET: session-signing-key"
   echo "SESSION_PUBLIC_KEYS_SECRET: session-public-keys"
   echo "APPLE_AUDIENCES: \"${APPLE_AUDIENCES:-com.cypressoakstudios.overandout}\""
-  echo "INVITE_BASE_URL: https://overandout.app/i/"
+  echo "INVITE_BASE_URL: ${INVITE_BASE_URL:-https://nowza.app/i/}"
   # GET /v2/config's relay, and the contract's compatibility setting (contracts/README.md).
-  # The apps only take a relay under overandout.app from it (ServiceConfigStore.approved).
-  echo "RELAY_BASE_URL: https://${RELAY_PUBLIC_HOST:-relay-1.overandout.app}"
+  # The apps only take a relay under nowza.app from it (ServiceConfigStore.approved).
+  echo "RELAY_BASE_URL: https://${RELAY_PUBLIC_HOST:-relay-1.nowza.app}"
   if [ -n "${MINIMUM_BUILDS:-}" ]; then echo "MINIMUM_BUILDS: '${MINIMUM_BUILDS}'"; fi
   # The Test Bot's standing invite (server/src/accounts.ts): befriends the bot, and only the bot.
   if [ -n "${TEST_BOT_INVITE:-}" ]; then

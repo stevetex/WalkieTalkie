@@ -49,7 +49,7 @@ gc services enable run.googleapis.com cloudscheduler.googleapis.com
 
 if ! gc iam service-accounts describe "$sa" >/dev/null 2>&1; then
   echo "Creating the $sa_name service account…"
-  gc iam service-accounts create "$sa_name" --display-name="Over&Out monthly node replacement"
+  gc iam service-accounts create "$sa_name" --display-name="Nowza monthly node replacement"
 fi
 
 # Only what a rolling replace and waiting on it need. roles/compute.instanceAdmin.v1 would
@@ -59,7 +59,7 @@ fi
 role_state=$(gc iam roles describe "$role" --format='value(deleted)' 2>/dev/null || echo missing)
 if [ "$role_state" = missing ]; then
   echo "Creating the $role role…"
-  gc iam roles create "$role" --title="Over&Out relay node replacer" \
+  gc iam roles create "$role" --title="Nowza relay node replacer" \
     --description="Rolling-replace the relay instance group" --permissions="$role_permissions" --stage=GA >/dev/null
 else
   # A role deleted within the last 7 days can't be re-created, only undeleted.
@@ -106,7 +106,7 @@ else
 fi
 gc scheduler jobs "$verb" http "$job-monthly" --location="$REGION" --schedule="$schedule" --time-zone=UTC \
   --uri="$uri" --http-method=POST --oauth-service-account-email="$sa" \
-  --description="Over&Out: replace relay nodes one at a time, for the newest Container-Optimized OS"
+  --description="Nowza: replace relay nodes one at a time, for the newest Container-Optimized OS"
 
 echo "Node replacement ready: the $group nodes are replaced at 09:00 UTC on the 1st of each month."
 echo "Runs: gcloud run jobs executions list --job=$job --region=$REGION --project=$PROJECT_ID"
