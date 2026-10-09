@@ -27,7 +27,7 @@ Every message encrypted
 
 ## Promotional text (166/170 characters)
 
-Talk to close friends from Apple Watch or iPhone. Every message is end-to-end encrypted by default, all the way to your wrist. Your private keys stay on your devices.
+Talk to friends and fam from Apple Watch or iPhone. Every message is end-to-end encrypted by default, all the way to your wrist. Your private keys stay on your devices.
 
 ## Description
 
