@@ -7,6 +7,7 @@ import { Codec, FRAME_HEADER_BYTES, type ClientMessage, type MetricEvent, type S
 import { openBundle, sealBundle, usableKeys, type FrameCipher, type FriendKeysJSON, type KeyBundle } from "../src/e2ee.ts";
 import type { EndpointKeys } from "../src/endpoint-keys.ts";
 import { RecordParser, RecordType, encodeJSONRecord, encodeRecord } from "../src/records.ts";
+import { SERVICE_CLIENT_BUILD } from "../src/contract.ts";
 
 export interface ClientOptions {
   server: string; // http(s)://host:port
@@ -66,7 +67,7 @@ export class SpikeClient {
   clientHeaders(): Record<string, string> {
     return {
       "x-oao-client-kind": this.opts.clientKind ?? "watchos",
-      "x-oao-build": this.opts.build ?? "1",
+      "x-oao-build": this.opts.build ?? SERVICE_CLIENT_BUILD,
       "x-oao-client-version": "test",
       "x-oao-relay-protocol": "2",
       "x-oao-decode": (this.opts.decode ?? ["opus16k", "pcm16le16k"]).join(","),

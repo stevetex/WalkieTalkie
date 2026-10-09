@@ -41,6 +41,8 @@ async function withBots(fn: (h: TestServer & { botId: string; canaryId: string; 
     docs,
     opsStatsToken: "ops",
     canaryUserId: canary.id,
+    // As in production since E2EE PR D: the Canary must still be admitted.
+    minimumBuilds: { ios: 256, watchos: 256 },
     testBot: { userId: bot.id, keys: botKeys, greeting: GREETING, answerDelayMs: 10, replyDelayMs: 20, frameMs: 0, idleMs: 30_000, minEchoFrames: 2 },
   });
 }

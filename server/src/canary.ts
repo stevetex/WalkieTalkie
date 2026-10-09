@@ -11,6 +11,7 @@
 import { randomUUID } from "node:crypto";
 import type { Docs } from "./docs.ts";
 import { Codec, type ServerMessage } from "./protocol.ts";
+import { SERVICE_CLIENT_BUILD } from "./contract.ts";
 import { openBundle, sealBundle, usableKeys, type FriendKeysJSON } from "./e2ee.ts";
 import type { EndpointKeys } from "./endpoint-keys.ts";
 import { SessionSigner, parseSigningKey } from "./session.ts";
@@ -64,7 +65,7 @@ export async function runCanary(options: CanaryOptions): Promise<CanaryResult> {
       headers: {
         authorization: `Bearer ${options.token}`,
         "x-oao-client-kind": "ios",
-        "x-oao-build": "1",
+        "x-oao-build": SERVICE_CLIENT_BUILD,
         "x-oao-client-version": "canary",
         "x-oao-relay-protocol": "2",
         "x-oao-decode": "opus16k,pcm16le16k",
