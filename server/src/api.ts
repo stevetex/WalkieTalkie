@@ -258,33 +258,36 @@ export function createApi(options: ApiOptions): ApiHandler {
       if (clientKind !== claims.session.clientKind) {
         throw new ContractError(400, "client-kind-mismatch", `this session is for a ${claims.session.clientKind} device`);
       }
-      let keys: { phoneCert: string; deviceCert: string; encCert: string } | undefined;
-      if (e2ee !== undefined) {
-        const value = e2ee as Record<string, unknown>;
-        const certificate = (v: unknown): v is string => typeof v === "string" && v.length > 0 && v.length <= 2048 &&
-          /^[A-Za-z0-9+/]+={0,2}$/.test(v) && Buffer.from(v, "base64").toString("base64") === v;
-        if (!value || typeof value !== "object" || Array.isArray(value) || !certificate(value.deviceCert) || !certificate(value.encCert)) {
-          throw new ContractError(400, "bad-certificate", "e2ee certificates are required");
-        }
-        let phoneCert = value.phoneCert;
-        if (claims.session.parentDeviceId) {
-          const parent = await accounts.device(claims.sub, claims.session.parentDeviceId);
-          if (!parent?.e2ee?.phoneCert || (phoneCert !== undefined && phoneCert !== parent.e2ee.phoneCert)) {
-            throw new ContractError(400, "bad-certificate", "the companion's phone certificate is unavailable");
-          }
-          phoneCert = parent.e2ee.phoneCert;
-        }
-        if (!certificate(phoneCert)) throw new ContractError(400, "bad-certificate", "phone certificate is required");
-        keys = { phoneCert, deviceCert: value.deviceCert, encCert: value.encCert };
+      // The request's shape first, so a build that speaks only format 1 is told to update
+      // (E2EE_SPEC.md, PR D) before its missing certificates are mentioned.
+      const parsedDelivery = parseDelivery(delivery, clientKind, policy);
+      const parsedAvailability = parseAvailability(availability);
+      const parsedCapabilities = parseCapabilities(capabilities);
+      // Every device has its keys: only format 2 is carried, so a device without them could
+      // neither send nor play anything.
+      const value = e2ee as Record<string, unknown> | undefined;
+      const certificate = (v: unknown): v is string => typeof v === "string" && v.length > 0 && v.length <= 2048 &&
+        /^[A-Za-z0-9+/]+={0,2}$/.test(v) && Buffer.from(v, "base64").toString("base64") === v;
+      if (!value || typeof value !== "object" || Array.isArray(value) || !certificate(value.deviceCert) || !certificate(value.encCert)) {
+        throw new ContractError(400, "bad-certificate", "e2ee certificates are required");
       }
+      let phoneCert = value.phoneCert;
+      if (claims.session.parentDeviceId) {
+        const parent = await accounts.device(claims.sub, claims.session.parentDeviceId);
+        if (!parent?.e2ee?.phoneCert || (phoneCert !== undefined && phoneCert !== parent.e2ee.phoneCert)) {
+          throw new ContractError(400, "bad-certificate", "the companion's phone certificate is unavailable");
+        }
+        phoneCert = parent.e2ee.phoneCert;
+      }
+      if (!certificate(phoneCert)) throw new ContractError(400, "bad-certificate", "phone certificate is required");
       const device = await accounts.registerDevice(claims.sub, claims.dev, {
         clientKind,
-        delivery: parseDelivery(delivery, clientKind, policy),
-        availability: parseAvailability(availability),
-        capabilities: parseCapabilities(capabilities),
+        delivery: parsedDelivery,
+        availability: parsedAvailability,
+        capabilities: parsedCapabilities,
         ...(typeof clientVersion === "string" && clientVersion ? { clientVersion: clientVersion.slice(0, 32) } : {}),
         ...(typeof build === "string" && build ? { build: build.slice(0, 32) } : {}),
-        ...(keys ? { e2ee: keys } : {}),
+        e2ee: { phoneCert, deviceCert: value.deviceCert, encCert: value.encCert },
       });
       // Never the token itself; "inApp" is a phone reachable only while the app is open.
       telemetry.write({

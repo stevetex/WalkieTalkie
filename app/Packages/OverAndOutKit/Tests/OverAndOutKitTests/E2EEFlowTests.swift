@@ -40,17 +40,26 @@ struct E2EEFlowTests {
         let sender = E2EEFlow(store: alice, trust: trust, deviceId: "alice-phone", userId: { "u_alice" })
         let receiver = E2EEFlow(store: bob, trust: trust, deviceId: "bob-phone",
                                 replayDefaults: defaults, userId: { "u_bob" })
+        // Format 1 is retired: a friend without keys (never seen, or none listed) can't be
+        // talked to, and nothing goes out unsealed.
         let legacy = FriendKeys(phones: [], devices: [], allDevicesHaveKeys: false)
-        #expect(try sender.start(peer: "u_legacy", conversationId: nil, burstId: "old",
-                                 codec: "opus16k", keys: legacy, now: now) == nil)
+        #expect(throws: E2EEFlow.FlowError.noCurrentKey) {
+            try sender.start(peer: "u_legacy", conversationId: nil, burstId: "old", codec: "opus16k", keys: legacy, now: now)
+        }
+        #expect(throws: E2EEFlow.FlowError.noCurrentKey) {
+            try sender.start(peer: "u_stranger", conversationId: nil, burstId: "old", codec: "opus16k", now: now)
+        }
+        #expect(throws: E2EEFlow.FlowError.noCurrentKey) {
+            try sender.send(VoiceFrame.encode(codec: .opus16k, seq: 0, payload: Data(repeating: 0x55, count: 60)))
+        }
         var incomplete = bobKeys
         incomplete.allDevicesHaveKeys = false
         #expect(throws: E2EEFlow.FlowError.noCurrentKey) {
             try sender.start(peer: "u_bob", conversationId: nil, burstId: "partial",
                              codec: "opus16k", keys: incomplete, now: now)
         }
-        let started = try #require(try sender.start(peer: "u_bob", conversationId: nil, burstId: "burst-a",
-                                                codec: "opus16k", keys: bobKeys, now: now))
+        let started = try sender.start(peer: "u_bob", conversationId: nil, burstId: "burst-a",
+                                       codec: "opus16k", keys: bobKeys, now: now)
         var start = started.control
         start["type"] = "burst-start"
         start["from"] = "u_alice"
@@ -84,11 +93,17 @@ struct E2EEFlowTests {
                                 identityKey: try PhoneCertificate(raw: a.phoneCert!).identityKey, now: now)
         let plain = try JSONDecoder().decode(RelayMessage.self,
             from: Data(#"{"type":"burst-start","burstId":"plain","format":1}"#.utf8))
+        // Never played, even from a friend whose keys this device hasn't seen.
+        #expect(throws: E2EEFlow.FlowError.downgrade) {
+            try receiver.receive(plain, peer: "u_carol", conversationId: started.conversationId, now: now)
+        }
+        #expect(throws: E2EEFlow.FlowError.missingBundle) {
+            try receiver.open(frame, burstId: "plain", now: now)
+        }
         #expect(throws: E2EEFlow.FlowError.downgrade) {
             try receiver.receive(plain, peer: "u_alice", conversationId: started.conversationId, now: now)
         }
         defaults.set(Data("damaged".utf8), forKey: "e2ee-trust-v1-u_bob")
-        #expect(trust.hasSeenKeys(account: "u_bob", friend: "u_alice"))
         #expect(throws: E2EEFlow.FlowError.downgrade) {
             try receiver.receive(plain, peer: "u_alice", conversationId: started.conversationId, now: now)
         }
@@ -101,6 +116,36 @@ struct E2EEFlowTests {
         #expect(throws: E2EEFlow.FlowError.noCurrentKey) {
             try sender.start(peer: "u_bob", conversationId: nil, burstId: "missing",
                              codec: "opus16k", now: now)
+        }
+    }
+
+    @Test func aDeviceWithoutACurrentKeyIsLeftOutAndNoneLeftFails() throws {
+        let alice = E2EEKeyStore(service: "oao-e2ee-test-\(UUID().uuidString)")
+        let bob = E2EEKeyStore(service: "oao-e2ee-test-\(UUID().uuidString)")
+        let bobOld = E2EEKeyStore(service: "oao-e2ee-test-\(UUID().uuidString)")
+        let suite = "oao-e2ee-trust-test-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer {
+            alice.signOut(userId: "u_alice", keepPhoneIdentity: false)
+            bob.signOut(userId: "u_bob", keepPhoneIdentity: false)
+            bobOld.signOut(userId: "u_bob", keepPhoneIdentity: false)
+            defaults.removePersistentDomain(forName: suite)
+        }
+        let now: Int64 = 1_791_000_000_000
+        _ = try alice.preparePhone(userId: "u_alice", deviceId: "alice-phone", now: now)
+        let b = try bob.preparePhone(userId: "u_bob", deviceId: "bob-phone", now: now)
+        // A second phone of Bob's, last opened 31 days ago: its key has expired.
+        let old = try bobOld.preparePhone(userId: "u_bob", deviceId: "bob-old", now: now - 31 * 86_400_000)
+        let current = FriendKeys.Device(deviceId: "bob-phone", clientKind: "ios", deviceCert: b.deviceCert, encCert: b.encCert)
+        let expired = FriendKeys.Device(deviceId: "bob-old", clientKind: "ios", deviceCert: old.deviceCert, encCert: old.encCert)
+        let sender = E2EEFlow(store: alice, trust: E2EETrust(defaults: defaults), deviceId: "alice-phone", userId: { "u_alice" })
+        let both = FriendKeys(phones: [b.phoneCert!, old.phoneCert!], devices: [current, expired, current], allDevicesHaveKeys: true)
+        let started = try sender.start(peer: "u_bob", conversationId: nil, burstId: "b1", codec: "opus16k", keys: both, now: now)
+        let bundle = try #require(started.control["e2ee"] as? [String: Any])
+        #expect((bundle["keys"] as? [[String: Any]])?.compactMap { $0["deviceId"] as? String } == ["bob-phone"])
+        let onlyExpired = FriendKeys(phones: [old.phoneCert!], devices: [expired], allDevicesHaveKeys: true)
+        #expect(throws: E2EEFlow.FlowError.noCurrentKey) {
+            try sender.start(peer: "u_bob", conversationId: nil, burstId: "b2", codec: "opus16k", keys: onlyExpired, now: now)
         }
     }
 

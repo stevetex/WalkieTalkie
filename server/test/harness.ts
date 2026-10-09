@@ -11,7 +11,11 @@ import { MemoryDocs } from "../src/docs.ts";
 import { SessionSigner, SessionVerifier, generateSigningKey } from "../src/session.ts";
 import { ApnsDelivery, Deliveries, FcmStub } from "../src/delivery.ts";
 import type { LogSink } from "../src/telemetry.ts";
+import type { Capabilities } from "../src/contract.ts";
 import { SpikeClient, type ClientOptions } from "../tools/client.ts";
+import type { KeyObject } from "node:crypto";
+import { createEndpointSecrets, openEndpointSecrets, type EndpointKeys } from "../src/endpoint-keys.ts";
+import { agreementKey, issueDeviceCertificate, issueEncryptionKeyCertificate, keyId, rawPublic, signingKey } from "../src/e2ee.ts";
 
 export interface TestServer {
   server: RunningServer;
@@ -87,7 +91,7 @@ export type Kind = "ios" | "watchos" | "android" | "wearos";
 
 // The admission headers a build of this kind sends.
 export function clientHeaders(kind: Kind, build = "170", encode = "opus16k"): Record<string, string> {
-  return { "x-oao-client-kind": kind, "x-oao-build": build, "x-oao-relay-protocol": "2", "x-oao-decode": "opus16k,pcm16le16k", "x-oao-encode": encode };
+  return { "x-oao-client-kind": kind, "x-oao-build": build, "x-oao-relay-protocol": "2", "x-oao-decode": "opus16k,pcm16le16k", "x-oao-encode": encode, "x-oao-audio-formats": "2" };
 }
 
 export async function call(url: string, method: string, path: string, token: string | null, body?: unknown, headers: Record<string, string> = {}): Promise<{ status: number; body: any; headers: Headers }> {
@@ -109,7 +113,40 @@ export type Ringing =
   | "test"
   | "none";
 
-export function registration(kind: Kind, ringing: Exclude<Ringing, "none">, notifications: "authorized" | "denied" | "unknown" = "authorized"): Record<string, unknown> {
+// What every build since E2EE says it supports: format 2 only.
+export const CAPABILITIES: Capabilities = { relayProtocols: [2], audioFormats: [2], decode: ["opus16k", "pcm16le16k"], encode: ["opus16k", "pcm16le16k"], features: [] };
+
+// New E2EE keys for a device of this account (each device here is its own phone identity).
+export function deviceKeys(userId: string, deviceId: string, kind: Kind): EndpointKeys {
+  return openEndpointSecrets(createEndpointSecrets(userId, deviceId, kind), userId, deviceId);
+}
+
+// Keys for a companion (a watch the phone signed in): its device certificate is issued by the
+// phone's identity key, as the apps do, so it registers under the phone's certificate.
+export function companionKeys(phone: EndpointKeys, deviceId: string, kind: Kind, now = Date.now()): EndpointKeys {
+  const { userId } = phone.secrets;
+  const seed = () => crypto.getRandomValues(new Uint8Array(32));
+  const raw = (key: KeyObject) => new Uint8Array(rawPublic(key));
+  const base64 = (bytes: Uint8Array) => Buffer.from(bytes).toString("base64");
+  const deviceSeed = seed();
+  const encSeed = seed();
+  const device = signingKey(deviceSeed);
+  const encryption = agreementKey(encSeed);
+  const identity = signingKey(new Uint8Array(Buffer.from(phone.secrets.phoneSeed, "base64")));
+  const deviceCert = issueDeviceCertificate(identity, { userId, deviceId, clientKind: kind, signingKey: raw(device) }, now);
+  const encCert = issueEncryptionKeyCertificate(device, { userId, deviceId, encKey: raw(encryption) }, now);
+  return {
+    secrets: { ...phone.secrets, deviceId, clientKind: kind, deviceSeed: base64(deviceSeed), encSeed: base64(encSeed),
+      deviceCert: deviceCert.toString("base64"), encCert: encCert.toString("base64") },
+    sender: { userId, deviceId, phoneCert: phone.sender.phoneCert, deviceCert, signingKey: device },
+    encryption: new Map([[keyId(raw(encryption)), encryption]]),
+    registration: { phoneCert: phone.secrets.phoneCert, deviceCert: deviceCert.toString("base64"), encCert: encCert.toString("base64") },
+  };
+}
+
+// A PUT /v2/me/device body: how it's rung, plus the capabilities and, with `keys`, its
+// certificates (a registration without them is refused).
+export function registration(kind: Kind, ringing: Exclude<Ringing, "none">, notifications: "authorized" | "denied" | "unknown" = "authorized", keys?: EndpointKeys): Record<string, unknown> {
   const delivery = ringing === "foreground"
     ? { provider: "relay", mode: "foreground" }
     : ringing === "test"
@@ -117,7 +154,7 @@ export function registration(kind: Kind, ringing: Exclude<Ringing, "none">, noti
       : "fcm" in ringing
         ? { provider: "fcm", mode: "notification", token: ringing.fcm }
         : { provider: "apns", mode: ringing.apns, token: ringing.token, environment: "sandbox" };
-  return { clientKind: kind, delivery, availability: { enabled: true, notifications } };
+  return { clientKind: kind, delivery, availability: { enabled: true, notifications }, capabilities: CAPABILITIES, ...(keys ? { e2ee: keys.registration } : {}) };
 }
 
 export interface TestUser {
@@ -126,6 +163,8 @@ export interface TestUser {
   token: string;
   deviceId: string;
   kind: Kind;
+  // This device's E2EE keys, registered with it.
+  keys: EndpointKeys;
   // A relay client for this device.
   client(options?: Partial<ClientOptions>): SpikeClient;
 }
@@ -139,19 +178,25 @@ export async function user(h: TestServer, name: string, options: { kind?: Kind; 
   const res = await call(h.url, "POST", `/v2/auth/${provider}`, null, { identityToken: `dev:${name.toLowerCase()}`, nonce: "n", name, deviceId, clientKind: kind });
   assert.equal(res.status, 200, JSON.stringify(res.body));
   const token = res.body.token as string;
+  const id = res.body.user.id as string;
+  const keys = deviceKeys(id, deviceId, kind);
   const ringing = options.ringing ?? "test";
   if (ringing !== "none") {
-    const reg = await call(h.url, "PUT", "/v2/me/device", token, registration(kind, ringing, options.notifications));
+    const reg = await call(h.url, "PUT", "/v2/me/device", token, registration(kind, ringing, options.notifications, keys));
     assert.equal(reg.status, 200, JSON.stringify(reg.body));
   }
-  const id = res.body.user.id as string;
   return {
     id,
     name,
     token,
     deviceId,
     kind,
-    client: (clientOptions = {}) => new SpikeClient({ server: h.url, userId: id, token, clientKind: kind, ...clientOptions }),
+    keys,
+    client: (clientOptions = {}) => new SpikeClient({
+      server: h.url, userId: id, token, clientKind: kind,
+      e2ee: { keys, directory: (friend) => h.accounts.friendKeys(friend) },
+      ...clientOptions,
+    }),
   };
 }
 

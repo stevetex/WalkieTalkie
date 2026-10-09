@@ -26,7 +26,6 @@ import { join } from "node:path";
 import { CANARY_DEVICE, canaryToken, runCanary, type CanaryResult } from "./canary.ts";
 import { Accounts, type DeviceRegistration } from "./accounts.ts";
 import { createEndpointSecrets, openEndpointSecrets } from "./endpoint-keys.ts";
-import { usableKeys } from "./e2ee.ts";
 import { parseMinimumBuilds, type MinimumBuilds } from "./contract.ts";
 import type { Docs } from "./docs.ts";
 import type { FirestoreData, FirestoreDocument } from "./firestore.ts";
@@ -149,7 +148,7 @@ if (import.meta.main) {
       const registration: DeviceRegistration = {
         clientKind: "ios", delivery: { provider: "relay", mode: "foreground" },
         availability: { enabled: true, notifications: "unknown" },
-        capabilities: { relayProtocols: [2], audioFormats: [1, 2], decode: ["opus16k", "pcm16le16k"], encode: ["pcm16le16k"], features: [] },
+        capabilities: { relayProtocols: [2], audioFormats: [2], decode: ["opus16k", "pcm16le16k"], encode: ["pcm16le16k"], features: [] },
         e2ee: keys.registration,
       };
       const token = await canaryToken(ctx.docs, bots.canary, signingKey);
@@ -166,9 +165,7 @@ if (import.meta.main) {
         await accounts.registerDevice(bots.canary, CANARY_DEVICE, registration);
       }
       const botKeys = await accounts.friendKeys(bots.testBot);
-      const encrypted = usableKeys(bots.testBot, botKeys, Date.now()).recipients.length > 0;
-      return runCanary({ relayUrl: nodes[0], token, botUserId: bots.testBot,
-        ...(encrypted ? { keys, botKeys } : {}) });
+      return runCanary({ relayUrl: nodes[0], token, botUserId: bots.testBot, keys, botKeys });
     },
   });
   const last = doc.canary.last;

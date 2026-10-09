@@ -101,13 +101,15 @@ struct ContractTests {
         #expect(store.upgradeRequired)
         #expect(ServiceConfigStore(bundledRelay: bundled, suiteName: suite, identity: old).upgradeRequired, "kept between launches")
         // Never a relay that isn't ours, nor garbage.
-        #expect(store.update(with: Data(#"{"schemaVersion":1,"relay":{"baseUrl":"https://relay.example.com","protocols":[2],"audioFormats":[1],"codecs":["opus16k"]}}"#.utf8)) != nil)
+        #expect(store.update(with: Data(#"{"schemaVersion":1,"relay":{"baseUrl":"https://relay.example.com","protocols":[2],"audioFormats":[2],"codecs":["opus16k"]}}"#.utf8)) != nil)
         #expect(store.relayBaseURL == bundled)
         #expect(store.update(with: Data("not json".utf8)) == nil)
         #expect(ServiceConfigStore.approved(URL(string: "http://relay-2.overandout.app")!, bundled: bundled) == false)
         #expect(ServiceConfigStore.approved(URL(string: "https://evil-overandout.app")!, bundled: bundled) == false)
-        // A relay that can't speak this build's protocol isn't used either.
-        #expect(store.update(with: Data(#"{"schemaVersion":1,"relay":{"baseUrl":"https://relay-3.overandout.app","protocols":[3],"audioFormats":[1],"codecs":["opus16k"]}}"#.utf8)) != nil)
+        // A relay that can't speak this build's protocol, or only the retired format 1, isn't used either.
+        #expect(store.update(with: Data(#"{"schemaVersion":1,"relay":{"baseUrl":"https://relay-3.overandout.app","protocols":[3],"audioFormats":[2],"codecs":["opus16k"]}}"#.utf8)) != nil)
+        #expect(store.relayBaseURL == bundled)
+        #expect(store.update(with: Data(#"{"schemaVersion":1,"relay":{"baseUrl":"https://relay-3.overandout.app","protocols":[2],"audioFormats":[1],"codecs":["opus16k"]}}"#.utf8)) != nil)
         #expect(store.relayBaseURL == bundled)
     }
 
@@ -136,12 +138,19 @@ struct ContractTests {
     }
 
     @Test(arguments: [
-        ("examples/current/device-ios-pushtotalk.json", DeviceRegistration(delivery: .pushToTalk(token: "TOKEN", environment: "production"), notifications: .authorized), ClientKind.ios),
-        ("examples/current/device-watchos-alert.json", DeviceRegistration(delivery: .alert(token: "TOKEN", environment: "production"), notifications: .authorized), ClientKind.watchos),
-        ("examples/current/device-ios-foreground.json", DeviceRegistration(delivery: .foreground, notifications: .denied), ClientKind.ios),
+        ("examples/current/device-ios-pushtotalk.json", DeviceRegistration.Delivery.pushToTalk(token: "TOKEN", environment: "production"), DeviceRegistration.Notifications.authorized, ClientKind.ios),
+        ("examples/current/device-watchos-alert.json", .alert(token: "TOKEN", environment: "production"), .authorized, ClientKind.watchos),
+        ("examples/current/device-ios-foreground.json", .foreground, .denied, ClientKind.ios),
     ])
-    func registrationsAreWhatTheContractSays(path: String, registration: DeviceRegistration, kind: ClientKind) throws {
+    func registrationsAreWhatTheContractSays(path: String, delivery: DeviceRegistration.Delivery,
+                                             notifications: DeviceRegistration.Notifications, kind: ClientKind) throws {
         let example = try #require(try Self.json(path) as? [String: Any])
+        // Every registration carries the device's certificates (format 2 only).
+        let certificates = try #require(example["e2ee"] as? [String: String])
+        let keys = E2EEKeyStore.Registration(phoneCert: certificates["phoneCert"].flatMap { Data(base64Encoded: $0) },
+                                             deviceCert: try #require(Data(base64Encoded: certificates["deviceCert"] ?? "")),
+                                             encCert: try #require(Data(base64Encoded: certificates["encCert"] ?? "")))
+        let registration = DeviceRegistration(delivery: delivery, notifications: notifications, e2ee: keys)
         let identity = ClientIdentity(kind: kind, version: "1.0", build: "170", encodes: kind == .watchos ? ["opus16k", "pcm16le16k"] : ["opus16k"])
         let body = registration.body(identity: identity)
         #expect(body["clientKind"] as? String == example["clientKind"] as? String)
@@ -151,12 +160,12 @@ struct ContractTests {
         expected["token"] = nil
         #expect(delivery == expected)
         #expect(NSDictionary(dictionary: body["availability"] as? [String: Any] ?? [:]) == NSDictionary(dictionary: example["availability"] as? [String: Any] ?? [:]))
-        if let capabilities = example["capabilities"] as? [String: Any] {
-            let ours = try #require(body["capabilities"] as? [String: Any])
-            for key in ["relayProtocols", "audioFormats", "decode", "encode"] {
-                #expect(NSArray(array: ours[key] as? [Any] ?? []) == NSArray(array: capabilities[key] as? [Any] ?? []), "\(key)")
-            }
+        let capabilities = try #require(example["capabilities"] as? [String: Any])
+        let ours = try #require(body["capabilities"] as? [String: Any])
+        for key in ["relayProtocols", "audioFormats", "decode", "encode"] {
+            #expect(NSArray(array: ours[key] as? [Any] ?? []) == NSArray(array: capabilities[key] as? [Any] ?? []), "\(key)")
         }
+        #expect(body["e2ee"] as? [String: String] == certificates)
     }
 
     // MARK: Binary
@@ -184,7 +193,9 @@ struct ContractTests {
     @Test func framesParseAndRealAppleOpusDecodesWhileMalformedOnesDont() throws {
         struct File: Decodable { let format: Int; let frames: [FrameFixture] }
         let file = try JSONDecoder().decode(File.self, from: Self.data("fixtures/frames.json"))
-        #expect(file.format == ServiceContract.audioFormat)
+        // Format 1's layout, which format 2 keeps and seals (the payload is encrypted after the
+        // header): VoiceFrame is the frame before sealing and after opening.
+        #expect(file.format == 1)
         let decoder = VoiceDecoder()
         var decodedOpus = 0
         for fixture in file.frames {

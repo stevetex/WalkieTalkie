@@ -93,16 +93,18 @@ async function accountClient(): Promise<SpikeClient> {
     token: session.token,
     clientKind: values["client-kind"] as "watchos",
     encode: [values.pcm ? "pcm16le16k" : "opus16k"],
-    ...(existsSync(BOT_KEYS_FILE) ? (() => {
+    // Every talk is format 2: the bot's keys (node tools/test-account.ts keys) are needed.
+    ...(() => {
+      if (!existsSync(BOT_KEYS_FILE)) throw new Error(`no bot keys at ${BOT_KEYS_FILE}: run node tools/test-account.ts keys, then register-keys`);
       const keys = openEndpointSecrets(JSON.parse(readFileSync(BOT_KEYS_FILE, "utf8")) as EndpointSecrets, session.userId, "test-bot");
       if (keys.secrets.clientKind !== values["client-kind"]) throw new Error("bot keys belong to another client kind");
-      return { audioFormats: [1, 2], e2ee: { keys, directory: async (userId: string): Promise<FriendKeysJSON> => {
+      return { e2ee: { keys, directory: async (userId: string): Promise<FriendKeysJSON> => {
         const response = await fetch(new URL("/v2/friends", session.api), { headers: { authorization: `Bearer ${session.token}` } });
         if (!response.ok) throw new Error(`friend keys: HTTP ${response.status}`);
         const { friends } = await response.json() as { friends: Array<{ id: string; keys?: FriendKeysJSON }> };
         return friends.find((friend) => friend.id === userId)?.keys ?? { phones: [], devices: [] };
       } } };
-    })() : {}),
+    })(),
   });
   if (mode === "send" && !values.to?.startsWith("u_")) {
     const res = await fetch(new URL("/v2/friends", session.api), { headers: { authorization: `Bearer ${session.token}` } });

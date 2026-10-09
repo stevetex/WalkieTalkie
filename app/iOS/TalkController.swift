@@ -586,9 +586,7 @@ final class TalkController: ObservableObject {
                     securityNoticeVersion += 1
                     Telemetry.shared.event("keyChanged", ["friend": peer])
                 }
-                if message.format == Int(E2EE.audioFormat) {
-                    conversation?.timeline.mark("bundleOpened", detail: "\(Int(Clock.nowMs() - openedAt)) ms", once: false)
-                }
+                conversation?.timeline.mark("bundleOpened", detail: "\(Int(Clock.nowMs() - openedAt)) ms", once: false)
             } catch {
                 acceptingBurst = false
                 Telemetry.shared.event("e2eeFailed", ["reason": (error as? E2EE.Failure)?.rawValue
@@ -674,14 +672,11 @@ final class TalkController: ObservableObject {
         do {
             let startedAt = Clock.nowMs()
             let fresh = AppModel.shared.friends.first { $0.id == current.peerId }?.keys
-            if let sealed = try e2ee.start(peer: current.peerId, conversationId: current.conversationId,
-                                            burstId: id, codec: audio.codecName, keys: fresh, now: Int64(startedAt)) {
-                conversation?.conversationId = sealed.conversationId
-                relay.send(sealed.control)
-                conversation?.timeline.mark("bundleSealed", detail: "\(Int(Clock.nowMs() - startedAt)) ms", once: false)
-            } else {
-                relay.send(["type": "talk-start", "to": current.peerId, "burstId": id, "codec": audio.codecName])
-            }
+            let sealed = try e2ee.start(peer: current.peerId, conversationId: current.conversationId,
+                                        burstId: id, codec: audio.codecName, keys: fresh, now: Int64(startedAt))
+            conversation?.conversationId = sealed.conversationId
+            relay.send(sealed.control)
+            conversation?.timeline.mark("bundleSealed", detail: "\(Int(Clock.nowMs() - startedAt)) ms", once: false)
             refetchedKeys = false
         } catch {
             burstId = nil
@@ -753,9 +748,8 @@ final class TalkController: ObservableObject {
         _ = AppModel.shared.trust.update(account: userId, friend: current.peerId, keys: keys, now: Int64(Clock.nowMs()))
         guard let id = pendingBurstId else { return false }
         do {
-            guard let sealed = try e2ee.start(peer: current.peerId, conversationId: current.conversationId,
-                                               burstId: id, codec: audio.codecName, keys: keys,
-                                               now: Int64(Clock.nowMs())) else { return false }
+            let sealed = try e2ee.start(peer: current.peerId, conversationId: current.conversationId,
+                                        burstId: id, codec: audio.codecName, keys: keys, now: Int64(Clock.nowMs()))
             if !burstFinished { burstId = id }
             conversation?.conversationId = sealed.conversationId
             relay.send(sealed.control)

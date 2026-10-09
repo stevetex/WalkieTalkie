@@ -5,49 +5,35 @@ import { createEndpointSecrets, openEndpointSecrets } from "../src/endpoint-keys
 import { openBundle, sealBundle, usableKeys } from "../src/e2ee.ts";
 import { Codec, parseClientMessage, isValidFrame } from "../src/protocol.ts";
 import { RecordParser } from "../src/records.ts";
-import { befriend, call, clientHeaders, registration, user, withServer, type TestServer, type TestUser } from "./harness.ts";
+import { DEFAULT_CAPABILITIES } from "../src/contract.ts";
+import { befriend, call, clientHeaders, pcm, registration, user, withServer, type TestServer, type TestUser } from "./harness.ts";
 
 async function encryptedDevice(h: TestServer, person: TestUser) {
   const keys = openEndpointSecrets(createEndpointSecrets(person.id, person.deviceId, person.kind), person.id, person.deviceId);
   const ringing = person.kind === "ios" ? { apns: "pushtotalk" as const, token: `token-${person.deviceId}` } : { apns: "alert" as const, token: `token-${person.deviceId}` };
-  const answer = await call(h.url, "PUT", "/v2/me/device", person.token, {
-    ...registration(person.kind, ringing),
-    capabilities: { relayProtocols: [2], audioFormats: [1, 2], decode: ["opus16k", "pcm16le16k"], encode: ["opus16k"], features: [] },
-    e2ee: keys.registration,
-  });
+  const answer = await call(h.url, "PUT", "/v2/me/device", person.token, registration(person.kind, ringing, "authorized", keys));
   assert.equal(answer.status, 200, JSON.stringify(answer.body));
   return keys;
 }
 
 test("format 2 parsing bounds bundles and frame sizes", () => {
-  assert.equal(isValidFrame(Buffer.alloc(5 + 60 + 16).fill(1, 0, 1), 2), true);
-  assert.equal(isValidFrame(Buffer.alloc(5 + 16).fill(1, 0, 1), 2), false);
+  assert.equal(isValidFrame(Buffer.alloc(5 + 60 + 16).fill(1, 0, 1)), true);
+  assert.equal(isValidFrame(Buffer.alloc(5 + 16).fill(1, 0, 1)), false);
+  // Format 1's frames (no tag) and talk-starts (no format, or format 1, and no bundle) are retired.
+  assert.equal(isValidFrame(Buffer.alloc(5 + 640).fill(2, 0, 1)), false);
   assert.equal(parseClientMessage({ type: "talk-start", to: "u_bob", burstId: "b", codec: "opus16k", format: 2 }), null);
+  assert.equal(parseClientMessage({ type: "talk-start", to: "u_bob", burstId: "b", codec: "opus16k" }), null);
+  assert.equal(parseClientMessage({ type: "talk-start", to: "u_bob", burstId: "b", codec: "opus16k", format: 1 }), null);
 });
 
 for (const transport of ["ws", "http"] as const) test(`validated registration and format 2 ${transport}: stale keys refuse; prefetch and replay preserve ciphertext`, async () => {
   await withServer(async (h) => {
     const alice = await user(h, "Alice", { kind: "ios", deviceId: "alice-phone" });
     const bob = await user(h, "Bob", { kind: "ios", deviceId: "bob-phone" });
-    const bobWatch = await user(h, "Bob", { kind: "watchos", deviceId: "bob-watch" });
+    const bobWatch = await user(h, "Bob", { kind: "watchos", deviceId: "bob-watch", ringing: "none" });
     await befriend(h, alice, bob);
     const ak = await encryptedDevice(h, alice);
     const bk = await encryptedDevice(h, bob);
-    const partial = await call(h.url, "GET", "/v2/friends", alice.token);
-    const partialKeys = partial.body.friends.find((f: { id: string }) => f.id === bob.id).keys;
-    assert.equal(partialKeys.allDevicesHaveKeys, false);
-    const partialClient = alice.client({ audioFormats: [1, 2], transport });
-    await partialClient.connect();
-    const partialId = randomUUID();
-    const partialBurst = randomUUID();
-    const partialSealed = sealBundle({ conversationId: partialId, burstId: partialBurst, codec: "opus16k",
-      from: alice.id, to: bob.id }, ak.sender, usableKeys(bob.id, partialKeys, Date.now()).recipients, Date.now());
-    partialClient.send({ type: "talk-start", to: bob.id, burstId: partialBurst, codec: "opus16k",
-      format: 2, conversationId: partialId, e2ee: partialSealed.bundle });
-    const partialRefusal = await partialClient.waitFor("talk-refused");
-    assert.equal(partialRefusal.reason, "keys-stale");
-    assert.equal(partialRefusal.keys?.allDevicesHaveKeys, false);
-    partialClient.close();
     await encryptedDevice(h, bobWatch);
     const listed = await call(h.url, "GET", "/v2/friends", alice.token);
     assert.equal(listed.status, 200);
@@ -60,7 +46,7 @@ for (const transport of ["ws", "http"] as const) test(`validated registration an
     });
     assert.equal(bad.status, 400);
 
-    const a = alice.client({ audioFormats: [1, 2], transport });
+    const a = alice.client({ transport, e2ee: { keys: ak, directory: (friend) => h.accounts.friendKeys(friend) } });
     await a.connect();
     const codec = "opus16k";
     const all = usableKeys(bob.id, directory, Date.now()).recipients;
@@ -100,7 +86,7 @@ for (const transport of ["ws", "http"] as const) test(`validated registration an
     assert.deepEqual(start.e2ee, bundle);
     assert.deepEqual(records[1].payload, frame);
 
-    const b = bob.client({ audioFormats: [1, 2], transport, e2ee: { keys: bk, directory: async () => ({ phones: [], devices: [] }) } });
+    const b = bob.client({ transport, e2ee: { keys: bk, directory: async () => ({ phones: [], devices: [] }) } });
     await b.connect();
     b.send({ type: "join", conversationId, ringId: ring.ringId });
     await b.waitFor("joined");
@@ -113,7 +99,7 @@ for (const transport of ["ws", "http"] as const) test(`validated registration an
     assert.equal(b.frames[0].readUInt32BE(1), 0);
     assert.deepEqual(b.frames[0].subarray(5), payload);
     b.close();
-    const resumed = bob.client({ audioFormats: [1, 2], transport, e2ee: { keys: bk, directory: async () => ({ phones: [], devices: [] }) } });
+    const resumed = bob.client({ transport, e2ee: { keys: bk, directory: async () => ({ phones: [], devices: [] }) } });
     await resumed.connect();
     resumed.send({ type: "join", conversationId, resume: { burstId, fromSeq: 0 } });
     await resumed.waitFor("joined");
@@ -125,6 +111,47 @@ for (const transport of ["ws", "http"] as const) test(`validated registration an
     assert.deepEqual(resumed.frames[0].subarray(5), payload);
     a.close();
     resumed.close();
+  });
+});
+
+// Format 2 only: a registration left by a build before E2EE (format 1, no certificates; the
+// storage layer still holds them) can't open anything, so it mustn't hold up its account's
+// friends, or be rung.
+test("a device without keys is left out of the key directory, never rung, and doesn't hold up Talks to its account", async () => {
+  await withServer(async (h) => {
+    const alice = await user(h, "Alice", { kind: "ios", deviceId: "alice-phone" });
+    const bob = await user(h, "Bob", { kind: "ios", deviceId: "bob-phone", ringing: { apns: "pushtotalk", token: "token-bob-phone" } });
+    await befriend(h, alice, bob);
+    // His watch, the form factor rung by default, registered before E2EE.
+    await user(h, "Bob", { kind: "watchos", deviceId: "bob-watch", ringing: "none" });
+    await h.accounts.registerDevice(bob.id, "bob-watch", {
+      clientKind: "watchos",
+      delivery: { provider: "apns", mode: "alert", token: "token-bob-watch", environment: "sandbox" },
+      availability: { enabled: true, notifications: "authorized" },
+      capabilities: structuredClone(DEFAULT_CAPABILITIES),
+    });
+    assert.deepEqual((await h.accounts.devices(bob.id)).map((d) => d.id).sort(), ["bob-phone", "bob-watch"]);
+
+    const listed = await call(h.url, "GET", "/v2/friends", alice.token);
+    const directory = listed.body.friends.find((f: { id: string }) => f.id === bob.id).keys;
+    assert.deepEqual(directory.devices.map((d: { deviceId: string }) => d.deviceId), ["bob-phone"]);
+    assert.equal(directory.phones.length, 1);
+    assert.equal(directory.allDevicesHaveKeys, true);
+
+    // Sealed to the keyed iPhone alone: granted, not keys-stale, and only the iPhone rings.
+    const a = alice.client();
+    await a.connect();
+    const burstId = randomUUID();
+    const { message, cipher } = await a.sealedTalkStart(bob.id, burstId, "pcm16le16k");
+    assert.deepEqual(message.type === "talk-start" && message.e2ee.keys.map((k) => k.deviceId), ["bob-phone"]);
+    a.send(message);
+    const granted = await a.waitForMatch((m) => (m.type === "floor-granted" || m.type === "talk-refused") && m.burstId === burstId, "floor decision");
+    assert.equal(granted.type, "floor-granted", JSON.stringify(granted));
+    assert.equal(granted.type === "floor-granted" && granted.pushed, true);
+    a.sendSealedFrame(cipher, Codec.pcm16le16k, 0, pcm(1));
+    a.send({ type: "talk-end", burstId });
+    assert.deepEqual(h.pusher.sent.map((p) => p.token), ["token-bob-phone"]);
+    a.close();
   });
 });
 
@@ -146,7 +173,7 @@ test("the Test Bot decrypts format 2 and returns an encrypted greeting and echo;
       keys: reviewerKeys, botKeys: await h.accounts.friendKeys(bot.id), timeoutMs: 5000 });
     assert.equal(result.ok, true, result.error);
     assert.ok(result.firstFrameMs !== undefined);
-    const client = reviewer.client({ audioFormats: [1, 2], e2ee: { keys: reviewerKeys, directory: async () => await h.accounts.friendKeys(bot.id) } });
+    const client = reviewer.client({ e2ee: { keys: reviewerKeys, directory: async () => await h.accounts.friendKeys(bot.id) } });
     await client.connect();
     const heard: Array<{ start: { conversationId: string; burstId: string; codec?: string; format?: number; e2ee?: any }; frames: Buffer[]; ended: boolean }> = [];
     client.onMessage = (message) => {

@@ -2,7 +2,8 @@
   "clientKind": "watchos",
   "delivery": { "provider": "apns", "mode": "alert", "token": "0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0", "environment": "production" },
   "availability": { "enabled": true, "notifications": "authorized" },
-  "capabilities": { "relayProtocols": [2], "audioFormats": [1], "decode": ["opus16k", "pcm16le16k"], "encode": ["opus16k", "pcm16le16k"] },
+  "capabilities": { "relayProtocols": [2], "audioFormats": [2], "decode": ["opus16k", "pcm16le16k"], "encode": ["opus16k", "pcm16le16k"], "features": [] },
   "clientVersion": "1.0",
-  "build": "170"
+  "build": "170",
+  "e2ee": {"deviceCert": "AA1vYW8tZGV2aWNlLXYxABJ1X2FsaWNlQWxpY2VBbGljZTEAJDBkMWUyZjNhLTRiNWMtNGQ2ZS04ZjcwLTgxOTJhM2I0YzVkNgAHd2F0Y2hvcwAgy1tUL8h02l6VRxg8SsYqH8qUhIICw3ZlD2pQlSAkQ/gAIHGPT4qevr0l86QZ/yvYW0rzQ5umSmXX/ChrI8YEe3WBAAABoLCGgQBNYj8fMe5YVwUV5X3s36mO3zynkzCuiyza5MLxwasASdzWu1Z+Ar0uoGUrLGshgiXEyo/SN0npgE5M3uiN1NMA", "encCert": "AA1vYW8tZW5ja2V5LXYxABJ1X2FsaWNlQWxpY2VBbGljZTEAJDBkMWUyZjNhLTRiNWMtNGQ2ZS04ZjcwLTgxOTJhM2I0YzVkNgAg+IV770V+mzxhcvmDIY49TeVO1z5n6+XEze7dSwbhqGAAAAGhCBKdAAAAAaGikWUAVfawHyOmhiJFUJyfpDdrBqEGvWPWkK941Mz6kR53JsE510z62RfeIZRFMb+gi501+a8qYt5rwzwl/PoXPWnRAg=="}
 }

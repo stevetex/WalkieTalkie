@@ -4,6 +4,7 @@
 // never makes), hear the greeting and the echo, and block or report it.
 
 import { test } from "node:test";
+import { randomUUID } from "node:crypto";
 import assert from "node:assert/strict";
 import { DryRunPusher } from "../src/apns.ts";
 import { Accounts } from "../src/accounts.ts";
@@ -17,8 +18,9 @@ import { activeAccounts } from "../src/stats.ts";
 import { JsonMetricsStore } from "../src/store.ts";
 import { loadGreeting } from "../src/test-bot.ts";
 import { DEFAULT_CAPABILITIES } from "../src/contract.ts";
+import { sealBundle, usableKeys } from "../src/e2ee.ts";
 import type { SpikeClient } from "../tools/client.ts";
-import { call, user, withServer, type Kind, type TestServer, type TestUser } from "./harness.ts";
+import { call, deviceKeys, user, withServer, type Kind, type TestServer, type TestUser } from "./harness.ts";
 
 const INVITE = "bot-invite-code-1234";
 // A short stand-in for the committed greeting: three "Opus packets" the tests can tell apart.
@@ -31,17 +33,13 @@ interface Harness extends TestServer {
 
 async function withBot(fn: (h: Harness) => Promise<void>, { authTtlMs, idleMs = 30_000, replyDelayMs = 20 }: { authTtlMs?: number; idleMs?: number; replyDelayMs?: number } = {}): Promise<void> {
   const docs = new MemoryDocs();
-  // The bot's account, its "device" and its test delivery, as tools/test-account.ts create
-  // writes them (it needs the account's ID before the relay starts).
+  // The bot's account and its "device", as tools/test-account.ts create writes them (it needs
+  // the account's ID before the relay starts), and its E2EE keys, which the relay registers with
+  // its test delivery when it starts.
   const setup = new Accounts(docs);
   const { user: bot } = await setup.signInWithApple("test-bot.overandout", "Test Bot");
   await setup.createSession(bot.id, "test-bot", "watchos");
-  await setup.registerDevice(bot.id, "test-bot", {
-    clientKind: "watchos",
-    delivery: { provider: "test", mode: "connection" },
-    availability: { enabled: true, notifications: "authorized" },
-    capabilities: structuredClone(DEFAULT_CAPABILITIES),
-  });
+  const keys = deviceKeys(bot.id, "test-bot", "watchos");
   const sink = new MemorySink();
   await withServer(async (h) => fn({ ...h, botId: bot.id, sink }), {
     docs,
@@ -49,7 +47,7 @@ async function withBot(fn: (h: Harness) => Promise<void>, { authTtlMs, idleMs = 
     api: { accounts: new Accounts(docs, { botInvite: { code: INVITE, userId: bot.id } }) },
     metrics: new TelemetryMetricsStore(sink, { endedMs: 5 }),
     ...(authTtlMs !== undefined ? { authTtlMs } : {}),
-    testBot: { userId: bot.id, greeting: GREETING, answerDelayMs: 10, replyDelayMs, frameMs: 0, idleMs, minEchoFrames: 2 },
+    testBot: { userId: bot.id, keys, greeting: GREETING, answerDelayMs: 10, replyDelayMs, frameMs: 0, idleMs, minEchoFrames: 2 },
   });
 }
 
@@ -74,6 +72,13 @@ function pcm(frames: number, fill = 1): Buffer {
   const buf = Buffer.alloc(frames * 640);
   for (let i = 0; i < buf.length; i++) buf[i] = (i + fill) & 0xff;
   return buf;
+}
+
+// A Talk sealed to the bot's keys, as the apps send it, with its frames' cipher.
+async function talkStart(client: SpikeClient, to: string, burstId: string, codec: "opus16k" | "pcm16le16k") {
+  const { message, cipher } = await client.sealedTalkStart(to, burstId, codec);
+  client.send(message);
+  return cipher;
 }
 
 // One burst of Opus packets, all at once.
@@ -211,10 +216,10 @@ test("a caller who keeps talking isn't talked over: the bot replies once they st
     const first = opus(4, 1);
     await say(client, h.botId, first);
     // Talking again before the bot replies, and holding the floor for a while.
-    client.send({ type: "talk-start", to: h.botId, burstId: "b2", codec: "opus16k" });
+    const cipher = await talkStart(client, h.botId, "b2", "opus16k");
     const second = opus(5, 9);
     for (const [seq, packet] of second.entries()) {
-      client.sendFrame(Codec.opus16k, seq, packet);
+      client.sendSealedFrame(cipher, Codec.opus16k, seq, packet);
       await new Promise((r) => setTimeout(r, 60));
     }
     assert.equal(heard.started, 0);
@@ -304,7 +309,7 @@ test("a reviewer who blocks and reports the Test Bot can't ring it, or re-add it
 
     const client = person.client();
     await client.connect();
-    client.send({ type: "talk-start", to: botId, burstId: "b1", codec: "pcm16le16k" });
+    await talkStart(client, botId, "b1", "pcm16le16k");
     assert.equal((await client.waitFor("talk-refused")).reason, "not-friends");
     await new Promise((r) => setTimeout(r, 50));
     assert.equal(server.testBot!.conversationCount, 0);
@@ -332,7 +337,7 @@ test("blocking the Test Bot mid-conversation ends it, and the bot stops answerin
 
     assert.equal((await call(url, "POST", "/v2/blocks", person.token, { userId: botId })).status, 200);
     // The next Talk is checked again (no grace period here): the conversation ends for both.
-    client.send({ type: "talk-start", to: botId, burstId: "after-block", codec: "pcm16le16k" });
+    await talkStart(client, botId, "after-block", "pcm16le16k");
     assert.equal((await client.waitFor("talk-refused")).reason, "not-friends");
     assert.ok(!server.relay.snapshot().some((c) => c.id === conversationId));
     await until(() => server.testBot!.conversationCount === 0 && server.relay.snapshot().length === 0, "the bot to drop it");
@@ -362,27 +367,31 @@ test("the Test Bot never rings: a caller who left before the echo isn't rung", a
 test("the relay refuses, rather than rings, a noRings peer talking to someone who isn't there", async () => {
   const pusher = new DryRunPusher();
   const metrics = new JsonMetricsStore(null);
+  const botKeys = deviceKeys("u_bot", "relay-bot", "watchos");
+  const phoneKeys = deviceKeys("u_alice", "phone", "ios");
+  const phone = {
+    id: "phone",
+    clientKind: "ios" as const,
+    formFactor: "phone" as const,
+    delivery: { provider: "apns" as const, mode: "pushtotalk" as const, token: "abcdef", environment: "sandbox" as const },
+    receiveMode: "automatic" as const,
+    availability: { enabled: true, notifications: "unknown" as const },
+    capabilities: { ...structuredClone(DEFAULT_CAPABILITIES), audioFormats: [2] },
+    e2ee: phoneKeys.registration,
+    lastActiveAt: 0,
+    updatedAt: 0,
+  };
+  const directory = { phones: [phoneKeys.registration.phoneCert], devices: [{ deviceId: "phone", clientKind: "ios", deviceCert: phoneKeys.registration.deviceCert, encCert: phoneKeys.registration.encCert }] };
   let lookups = 0;
   const relay = new Relay({
     accounts: {
       ringLookup: async () => {
         lookups++;
-        return {
-          allowed: true,
-          fromName: "Test Bot",
-          devices: [{
-            id: "phone",
-            clientKind: "ios",
-            formFactor: "phone",
-            delivery: { provider: "apns", mode: "pushtotalk", token: "abcdef", environment: "sandbox" },
-            receiveMode: "automatic",
-            availability: { enabled: true, notifications: "unknown" },
-            capabilities: structuredClone(DEFAULT_CAPABILITIES),
-            lastActiveAt: 0,
-            updatedAt: 0,
-          }],
-        };
+        return { allowed: true, fromName: "Test Bot", devices: [phone] };
       },
+      canTalk: async () => true,
+      friendKeys: async () => directory,
+      devices: async () => [phone],
     },
     pusher,
     metrics,
@@ -390,9 +399,13 @@ test("the relay refuses, rather than rings, a noRings peer talking to someone wh
   const received: ServerMessage[] = [];
   const bot: Peer = { userId: "u_bot", deviceId: "relay-bot", noRings: true, sendJSON: (m) => received.push(m), sendBinary: () => {} };
   relay.connect(bot);
-  relay.handleMessage(bot, { type: "talk-start", to: "u_alice", burstId: "b1", codec: Codec.opus16k });
-  assert.deepEqual(received, [{ type: "talk-refused", burstId: "b1", reason: "unavailable" }]);
+  const conversationId = randomUUID();
+  const { bundle } = sealBundle({ conversationId, burstId: "b1", codec: "opus16k", from: "u_bot", to: "u_alice" }, botKeys.sender,
+    usableKeys("u_alice", directory, Date.now()).recipients, Date.now());
+  relay.handleMessage(bot, { type: "talk-start", to: "u_alice", burstId: "b1", codec: Codec.opus16k, format: 2, conversationId, e2ee: bundle });
+  // Refused once the friendship and keys are checked, before any ring is looked up.
   await new Promise((r) => setTimeout(r, 20));
+  assert.deepEqual(received, [{ type: "talk-refused", burstId: "b1", reason: "unavailable" }]);
   assert.equal(pusher.sent.length, 0);
   assert.equal(lookups, 0);
   assert.deepEqual(relay.snapshot(), []);

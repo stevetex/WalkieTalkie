@@ -100,7 +100,8 @@ struct AccountTests {
         let c = client(store)
         #expect(try await c.setPreferredFormFactor(.phone).preferredFormFactor == .phone)
         #expect(try await c.setPreferredFormFactor(nil).preferredFormFactor == nil)
-        try await c.registerDevice(DeviceRegistration(delivery: .pushToTalk(token: "abc", environment: "sandbox"), notifications: .authorized))
+        let keys = E2EEKeyStore.Registration(phoneCert: Data([1]), deviceCert: Data([2]), encCert: Data([3]))
+        try await c.registerDevice(DeviceRegistration(delivery: .pushToTalk(token: "abc", environment: "sandbox"), notifications: .authorized, e2ee: keys))
         let bodies = StubProtocol.requests.map { request -> [String: Any] in
             let data = request.httpBodyStream.map { stream -> Data in
                 stream.open()
@@ -121,6 +122,8 @@ struct AccountTests {
         #expect(bodies[2]["clientKind"] as? String == "ios")
         #expect(bodies[2]["delivery"] as? [String: String] == ["provider": "apns", "mode": "pushtotalk", "token": "abc", "environment": "sandbox"])
         #expect((bodies[2]["availability"] as? [String: Any])?["notifications"] as? String == "authorized")
+        #expect((bodies[2]["capabilities"] as? [String: Any])?["audioFormats"] as? [Int] == [2])
+        #expect(bodies[2]["e2ee"] as? [String: String] == ["phoneCert": "AQ==", "deviceCert": "Ag==", "encCert": "Aw=="])
         #expect(StubProtocol.requests[2].httpMethod == "PUT")
         #expect(StubProtocol.requests[2].url?.path == "/v2/me/device")
         // Every call says which build is calling.

@@ -22,15 +22,16 @@ export interface ClientOptions {
   // Codecs this client plays and sends (X-OAO-Decode and X-OAO-Encode).
   decode?: string[];
   encode?: string[];
-  audioFormats?: number[];
-  e2ee?: { keys: EndpointKeys; directory: (userId: string) => Promise<FriendKeysJSON> };
+  // This device's keys and a friend's from the key directory: every talk is format 2, sealed to
+  // the friend's devices, and every burst heard is opened with these keys.
+  e2ee: { keys: EndpointKeys; directory: (userId: string) => Promise<FriendKeysJSON> };
 }
 
 // A message as it goes on the wire: talk-start names its codec ("opus16k"), where the relay's
 // parsed ClientMessage carries the codec's byte.
 export type WireMessage =
   | Exclude<ClientMessage, { type: "talk-start" }>
-  | { type: "talk-start"; to: string; burstId: string; codec: string; format?: 1 | 2; conversationId?: string; e2ee?: KeyBundle };
+  | { type: "talk-start"; to: string; burstId: string; codec: string; format: 2; conversationId: string; e2ee: KeyBundle };
 
 type Waiter = { match: (m: ServerMessage) => boolean; resolve: (m: ServerMessage) => void };
 
@@ -50,7 +51,7 @@ export class SpikeClient {
   private outbox: Buffer[] = [];
   private posting = false;
   private conversations = new Map<string, string>();
-  private receiving: { format: 1 | 2; cipher: FrameCipher | null } = { format: 1, cipher: null };
+  private receiving: { cipher: FrameCipher | null } = { cipher: null };
 
   constructor(options: ClientOptions) {
     this.opts = options;
@@ -70,7 +71,7 @@ export class SpikeClient {
       "x-oao-relay-protocol": "2",
       "x-oao-decode": (this.opts.decode ?? ["opus16k", "pcm16le16k"]).join(","),
       "x-oao-encode": (this.opts.encode ?? ["opus16k", "pcm16le16k"]).join(","),
-      ...(this.opts.audioFormats ? { "x-oao-audio-formats": this.opts.audioFormats.join(",") } : {}),
+      "x-oao-audio-formats": "2",
     };
   }
 
@@ -152,10 +153,11 @@ export class SpikeClient {
     if (message.type === "ping") return;
     if (message.type === "ring") this.conversations.set(message.from, message.conversationId);
     if (message.type === "joined") this.conversations.set(message.peer, message.conversationId);
+    if (message.type === "conversation-ended") this.forget(message.conversationId);
     if (message.type === "burst-start") {
       this.conversations.set(message.from, message.conversationId);
-      this.receiving = { format: message.format === 2 ? 2 : 1, cipher: null };
-      if (message.format === 2 && message.e2ee && message.codec && this.opts.e2ee) {
+      this.receiving = { cipher: null };
+      if (message.codec) {
         try {
           this.receiving.cipher = openBundle(message.e2ee,
             { conversationId: message.conversationId, burstId: message.burstId, codec: message.codec, from: message.from, to: this.userId },
@@ -174,20 +176,23 @@ export class SpikeClient {
     });
   }
 
+  // Frames are kept and passed on opened: header and plaintext payload, as format 1 had them.
   private receiveFrame(frame: Buffer): void {
-    if (this.receiving.format === 2) {
-      if (!this.receiving.cipher) return;
-      try {
-        const opened = this.receiving.cipher.open(frame);
-        const plain = Buffer.alloc(FRAME_HEADER_BYTES + opened.payload.length);
-        plain[0] = opened.codec;
-        plain.writeUInt32BE(opened.seq, 1);
-        opened.payload.copy(plain, FRAME_HEADER_BYTES);
-        frame = plain;
-      } catch { return; }
-    }
+    if (!this.receiving.cipher) return;
+    try {
+      const opened = this.receiving.cipher.open(frame);
+      const plain = Buffer.alloc(FRAME_HEADER_BYTES + opened.payload.length);
+      plain[0] = opened.codec;
+      plain.writeUInt32BE(opened.seq, 1);
+      opened.payload.copy(plain, FRAME_HEADER_BYTES);
+      frame = plain;
+    } catch { return; }
     this.frames.push(frame);
     this.onFrame(frame);
+  }
+
+  private forget(conversationId: string): void {
+    for (const [peer, id] of this.conversations) if (id === conversationId) this.conversations.delete(peer);
   }
 
   private authHeaders(): Record<string, string> {
@@ -216,10 +221,31 @@ export class SpikeClient {
   }
 
   send(message: WireMessage): void {
+    // Once left, the next Talk to them starts a new conversation, with a new ID.
+    if (message?.type === "leave") this.forget(message.conversationId);
     if (this.opts.transport === "http") this.enqueue(encodeJSONRecord(message));
     else this.ws?.send(JSON.stringify(message));
   }
 
+  // A talk-start sealed to the friend's current keys (conversationId: the established one, or a
+  // new random one), and the cipher for its frames. Throws "no-current-key" if there's nobody
+  // to seal to.
+  async sealedTalkStart(to: string, burstId: string, codec: "opus16k" | "pcm16le16k"): Promise<{ message: WireMessage; cipher: FrameCipher }> {
+    const conversationId = this.conversations.get(to) ?? randomUUID();
+    // Chosen for a new conversation: later Talks use it too, even before it's granted.
+    this.conversations.set(to, conversationId);
+    const recipients = usableKeys(to, await this.opts.e2ee.directory(to), Date.now()).recipients;
+    if (!recipients.length) throw new Error("no-current-key");
+    const { bundle, cipher } = sealBundle({ conversationId, burstId, codec, from: this.userId, to }, this.opts.e2ee.keys.sender, recipients, Date.now());
+    return { message: { type: "talk-start", to, burstId, codec, format: 2, conversationId, e2ee: bundle }, cipher };
+  }
+
+  // A frame sealed with a burst's cipher.
+  sendSealedFrame(cipher: FrameCipher, codec: number, seq: number, payload: Buffer): void {
+    this.sendFrame(codec, seq, cipher.seal(codec, seq, payload).subarray(FRAME_HEADER_BYTES));
+  }
+
+  // A frame as given (already sealed, or malformed on purpose).
   sendFrame(codec: number, seq: number, payload: Buffer): void {
     const frame = Buffer.alloc(FRAME_HEADER_BYTES + payload.length);
     frame[0] = codec;
@@ -283,23 +309,12 @@ export class SpikeClient {
     this.mark("talkPressed");
     let granted: ServerMessage;
     let burstId: string;
-    let cipher: FrameCipher | null = null;
+    let cipher: FrameCipher;
     for (let attempt = 0; ; attempt++) {
-      cipher = null;
       burstId = randomUUID();
-      const conversationId = this.conversations.get(to) ?? randomUUID();
-      let bundle: KeyBundle | undefined;
-      if (this.opts.e2ee) {
-        const directory = await this.opts.e2ee.directory(to);
-        const recipients = usableKeys(to, directory, Date.now()).recipients;
-        if ((directory.devices.length || attempt > 0) && !recipients.length) throw new Error("no-current-key");
-        if (recipients.length) {
-          const sealed = sealBundle({ conversationId, burstId, codec, from: this.userId, to }, this.opts.e2ee.keys.sender, recipients, Date.now());
-          bundle = sealed.bundle;
-          cipher = sealed.cipher;
-        }
-      }
-      this.send({ type: "talk-start", to, burstId, codec, ...(bundle ? { format: 2, conversationId, e2ee: bundle } : {}) });
+      const sealed = await this.sealedTalkStart(to, burstId, codec);
+      cipher = sealed.cipher;
+      this.send(sealed.message);
       granted = await this.waitForMatch(
         (m) => (m.type === "floor-granted" || m.type === "floor-denied" || m.type === "talk-refused") && m.burstId === burstId,
         "floor decision",
@@ -314,7 +329,7 @@ export class SpikeClient {
     this.mark("floorGranted", granted.pushed ? "rang recipient" : "recipient live");
     const start = performance.now();
     for (let seq = 0; seq < audio.frames.length; seq++) {
-      this.sendFrame(audio.codec, seq, cipher ? cipher.seal(audio.codec, seq, audio.frames[seq]).subarray(FRAME_HEADER_BYTES) : audio.frames[seq]);
+      this.sendSealedFrame(cipher, audio.codec, seq, audio.frames[seq]);
       if (seq === 0) this.mark("firstFrameSent");
       if (options.realtime !== false) {
         const due = start + (seq + 1) * 20;

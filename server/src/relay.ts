@@ -38,7 +38,6 @@ export interface Peer {
   clientKind?: ClientKind;
   // The codecs it plays; absent = both, as every Apple build does.
   decode?: CodecName[];
-  audioFormats?: number[];
   // Only an in-process endpoint may speak through several relay peers with one certified key.
   e2eeDeviceId?: string;
   sendJSON(message: ServerMessage): void;
@@ -65,8 +64,8 @@ interface Burst {
   from: string;
   // The codec of its frames, named at talk-start.
   codec: number;
-  format: 1 | 2;
-  e2ee?: KeyBundle;
+  // Format 2's key bundle, passed to listeners unchanged in burst-start.
+  e2ee: KeyBundle;
   // Kept only until the other member hears them: frames forwarded live aren't kept, and a
   // replay empties this once it's sent.
   frames: Buffer[];
@@ -331,7 +330,7 @@ export class Relay {
         peer.sendJSON({ type: "hello-ack", clientTime: message.clientTime, serverTime: this.opts.now() });
         break;
       case "talk-start":
-        this.talkStart(peer, message.to, message.burstId, message.codec, message.format ?? 1, message.conversationId, message.e2ee);
+        this.talkStart(peer, message.to, message.burstId, message.codec, message.conversationId, message.e2ee);
         break;
       case "talk-end":
         this.talkEnd(peer.userId, message.burstId);
@@ -356,7 +355,7 @@ export class Relay {
     if (!active || active.deviceId !== peer.deviceId) return;
     // Only frames the apps can decode are passed on.
     const { conversation, burst } = active;
-    if (!isValidFrame(frame, burst.format)) return;
+    if (!isValidFrame(frame)) return;
     // A burst is one codec: the one named at talk-start.
     if (frame[0] !== burst.codec) return;
     burst.frameCount++;
@@ -369,7 +368,7 @@ export class Relay {
       burst.sent.push(frame);
       return;
     }
-    if (burst.deliveredTo.has(other) && listener && this.plays(listener, burst.codec, burst.format) && this.canOpen(listener, burst)) {
+    if (burst.deliveredTo.has(other) && listener && this.plays(listener, burst.codec) && this.canOpen(listener, burst)) {
       // Heard live, so there's nothing to keep for a replay; kept only to resume a member
       // whose stream drops (sent to a dead stream, or to nobody until they rejoin).
       burst.sent.push(frame);
@@ -385,7 +384,7 @@ export class Relay {
       }
       return;
     }
-    if (burst.deliveredTo.has(other) && listener && (!this.plays(listener, burst.codec, burst.format) || !this.canOpen(listener, burst))) {
+    if (burst.deliveredTo.has(other) && listener && (!this.plays(listener, burst.codec) || !this.canOpen(listener, burst))) {
       burst.deliveredTo.delete(other);
     }
     if (bufferedBytes(conversation) + frame.length > this.opts.maxBufferedBytes) return this.cutOff(peer.userId, "too much audio waiting", "too-much-audio");
@@ -489,32 +488,32 @@ export class Relay {
   }
 
   // Whether this connection can play a codec.
-  private plays(peer: Peer, codec: number, format: 1 | 2 = 1): boolean {
+  private plays(peer: Peer, codec: number): boolean {
     const name = codecName(codec);
-    return name !== undefined && (peer.decode ?? DEFAULT_CAPABILITIES.decode).includes(name)
-      && (peer.audioFormats ?? [1]).includes(format);
+    return name !== undefined && (peer.decode ?? DEFAULT_CAPABILITIES.decode).includes(name);
   }
 
+  // The bundle has a sealed message key for this device.
   private canOpen(peer: Peer, burst: Burst): boolean {
-    return burst.format === 1 || burst.e2ee?.keys.some((key) => key.deviceId === (peer.e2eeDeviceId ?? peer.deviceId)) === true;
+    return burst.e2ee.keys.some((key) => key.deviceId === (peer.e2eeDeviceId ?? peer.deviceId));
   }
 
-  private talkStart(peer: Peer, to: string, burstId: string, codec: number, format: 1 | 2, conversationId?: string, e2ee?: KeyBundle): void {
+  private talkStart(peer: Peer, to: string, burstId: string, codec: number, conversationId: string, e2ee: KeyBundle): void {
     const from = peer.userId;
     const now = this.opts.now();
     if (to === from) {
       this.error(peer, "cannot talk to yourself", "unknown-conversation");
       return;
     }
-    if (format === 2 && (!e2ee || e2ee.sender.deviceId !== (peer.e2eeDeviceId ?? peer.deviceId) || !conversationId ||
-        !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(conversationId))) {
+    if (e2ee.sender.deviceId !== (peer.e2eeDeviceId ?? peer.deviceId) ||
+        !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(conversationId)) {
       return this.error(peer, "invalid encrypted talk", "unknown-message");
     }
     const existing = this.byPair.get(pairKey(from, to));
-    if (format === 2 && ((existing && existing.id !== conversationId) || (!existing && this.byId.has(conversationId!)))) {
+    if ((existing && existing.id !== conversationId) || (!existing && this.byId.has(conversationId))) {
       return this.error(peer, "conversation ID has changed", "unknown-conversation");
     }
-    const conversation = this.conversationFor(from, to, format === 2 ? conversationId : undefined);
+    const conversation = this.conversationFor(from, to, conversationId);
     this.pruneBursts(conversation);
 
     const holder = conversation.floor;
@@ -533,8 +532,7 @@ export class Relay {
       id: burstId,
       from,
       codec,
-      format,
-      ...(e2ee ? { e2ee } : {}),
+      e2ee,
       frames: [],
       bytes: 0,
       frameCount: 0,
@@ -565,7 +563,7 @@ export class Relay {
       const listener = this.memberPeer(conversation, to);
       if (listener) {
         // Codec admission: never forward a codec the listener can't play.
-        if (!this.plays(listener, burst.codec, burst.format)) return this.refuse(peer, conversation, burstId, "unsupported-codec");
+        if (!this.plays(listener, burst.codec)) return this.refuse(peer, conversation, burstId, "unsupported-codec");
         if (!this.canOpen(listener, burst)) return this.refuse(peer, conversation, burstId, "unavailable");
         this.startDelivery(conversation, burst, to, false);
         this.grantFloor(peer, conversation, burstId, false);
@@ -576,7 +574,7 @@ export class Relay {
         // One ring per conversation start; further bursts queue behind the pending ring.
         // The ring looks the devices up in the store, so only a Talk that rings waits for
         // the store. Frames that arrive meanwhile are buffered in the burst as usual.
-        void this.ring(conversation, from, to, burstId, burst.codec, burst.format).then((result) => {
+        void this.ring(conversation, from, to, burstId, burst.codec).then((result) => {
           if (!currentStart()) return;
           if ("refused" in result) this.refuse(peer, conversation, burstId, result.refused, result.keys);
           else this.grantFloor(peer, conversation, burstId, result.pushed);
@@ -585,31 +583,23 @@ export class Relay {
         this.grantFloor(peer, conversation, burstId, false);
       }
     };
-    // Talking to someone already listening: check they're still friends first, unless that was
-    // just checked (a ring checks for itself). Frames buffer in the burst meanwhile.
-    const authorizedDeliver = (): void => {
-      if (format !== 2) return deliver();
-      const allowed = this.opts.accounts.canTalk
-        ? this.opts.accounts.canTalk(from, to)
-        : this.opts.accounts.ringLookup(from, to).then((lookup) => lookup.allowed);
-      void allowed.then((friend) => {
-        if (!friend) return { refused: "not-friends" as const };
-        return this.checkRecipientKeys(to, e2ee!).then((keys) => ({ keys }));
-      }).then((result) => {
-        if (!currentStart()) return;
-        if ("refused" in result) this.refuse(peer, conversation, burstId, result.refused);
-        else if (result.keys) this.refuse(peer, conversation, burstId, "keys-stale", result.keys);
-        else deliver();
-      }).catch((err: Error) => {
-        console.error(`[relay] key lookup for ${to} failed: ${err.message}`);
-        if (currentStart()) this.refuse(peer, conversation, burstId, "unavailable");
-      });
-    };
-    if (format === 2 || this.recentlyAuthorized(conversation) || !this.memberPeer(conversation, to)) return authorizedDeliver();
-    void this.authorize(conversation, from, to).then((allowed) => {
-      if (this.byId.get(conversation.id) !== conversation || !conversation.bursts.includes(burst)) return;
-      if (allowed) authorizedDeliver();
-      else this.revoke(conversation);
+    // Every Talk checks they're still friends and that the bundle is sealed to their current
+    // keys (keys-stale otherwise); frames buffer in the burst meanwhile.
+    const allowed = this.opts.accounts.canTalk
+      ? this.opts.accounts.canTalk(from, to)
+      : this.opts.accounts.ringLookup(from, to).then((lookup) => lookup.allowed);
+    void allowed.then((friend) => {
+      if (!friend) return { refused: "not-friends" as const };
+      return this.checkRecipientKeys(to, e2ee).then((keys) => ({ keys }));
+    }).then((result) => {
+      if (!currentStart()) return;
+      // No longer friends: the conversation ends for both (talk-refused to the sender).
+      if ("refused" in result) this.revoke(conversation);
+      else if (result.keys) this.refuse(peer, conversation, burstId, "keys-stale", result.keys);
+      else deliver();
+    }).catch((err: Error) => {
+      console.error(`[relay] key lookup for ${to} failed: ${err.message}`);
+      if (currentStart()) this.refuse(peer, conversation, burstId, "unavailable");
     });
   }
 
@@ -764,7 +754,7 @@ export class Relay {
 
   private burstStart(conversationId: string, burst: Burst, replay: boolean): Extract<ServerMessage, { type: "burst-start" }> {
     return { type: "burst-start", conversationId, burstId: burst.id, from: burst.from, replay,
-      ...this.codecField(burst), ...(burst.format === 2 ? { format: 2 as const, e2ee: burst.e2ee } : {}) };
+      ...this.codecField(burst), format: 2, e2ee: burst.e2ee };
   }
 
   // The directory is only an admission hint. The listener authenticates the entire bundle.
@@ -773,7 +763,6 @@ export class Relay {
   private async checkRecipientKeys(to: string, bundle: KeyBundle): Promise<FriendKeysJSON | null> {
     if (!this.opts.accounts.friendKeys || !this.opts.accounts.devices) throw new Error("key directory unavailable");
     const [keys, devices] = await Promise.all([this.opts.accounts.friendKeys(to), this.opts.accounts.devices(to)]);
-    if (devices.some((device) => !device.e2ee)) return keys;
     const current = usableKeys(to, keys, this.opts.now()).recipients;
     if (!current.length) return keys;
     for (const recipient of current) {
@@ -810,7 +799,7 @@ export class Relay {
     if (!peer) return;
     // A held burst in a codec this device can't play (a join from a device that wasn't the one
     // rung) is skipped rather than sent to its decoder.
-    if (!this.plays(peer, burst.codec, burst.format) || !this.canOpen(peer, burst)) {
+    if (!this.plays(peer, burst.codec) || !this.canOpen(peer, burst)) {
       this.opts.metrics.server(conversation.id, "burstUndecodable", this.opts.now(), burst.id);
       return;
     }
@@ -843,7 +832,7 @@ export class Relay {
     };
   }
 
-  private async ring(conversation: Conversation, from: string, to: string, burstId: string, codec: number, format: 1 | 2): Promise<RingResult> {
+  private async ring(conversation: Conversation, from: string, to: string, burstId: string, codec: number): Promise<RingResult> {
     // Armed before the lookup, so a second Talk meanwhile doesn't ring again.
     conversation.ring = { id: newRingId(), to, from, fromName: from, burstId, state: "ringing", notified: [] };
     conversation.rolledOver = false;
@@ -869,24 +858,22 @@ export class Relay {
       this.opts.metrics.server(conversation.id, "ringRefused", this.opts.now(), "not friends");
       return { refused: "not-friends" };
     }
-    if (format === 2) {
-      const bundle = conversation.bursts.find((b) => b.id === burstId)?.e2ee;
-      if (!bundle) { ended(); return { refused: "unavailable" }; }
-      try {
-        const keys = await this.checkRecipientKeys(to, bundle);
-        if (keys) { ended(); return { refused: "keys-stale", keys }; }
-      } catch (err) {
-        ended();
-        console.error(`[relay] key lookup for ${to} failed: ${(err as Error).message}`);
-        return { refused: "unavailable" };
-      }
+    const bundle = conversation.bursts.find((b) => b.id === burstId)?.e2ee;
+    if (!bundle) { ended(); return { refused: "unavailable" }; }
+    try {
+      const keys = await this.checkRecipientKeys(to, bundle);
+      if (keys) { ended(); return { refused: "keys-stale", keys }; }
+    } catch (err) {
+      ended();
+      console.error(`[relay] key lookup for ${to} failed: ${(err as Error).message}`);
+      return { refused: "unavailable" };
     }
     conversation.authorizedAt = this.opts.now();
     ring.fromName = lookup.fromName;
     // One device rings (contracts/README.md, "Choosing the device that rings"). If its
     // provider turns it away for good (an unregistered token), its registration goes and the
     // next one rings instead.
-    const candidates = this.ringCandidates(conversation, to, lookup.devices, lookup.preferredFormFactor, codec, format);
+    const candidates = this.ringCandidates(conversation, to, lookup.devices, lookup.preferredFormFactor, codec);
     for (const target of candidates) {
       // Answered, or the relay is shutting down, meanwhile.
       if (!conversation.ringTimer) return { pushed: false };
@@ -897,12 +884,12 @@ export class Relay {
       }
       const pushed = outcome !== "unreachable";
       if (pushed && lookup.rollOver && target.formFactor === "watch") {
-        this.armRollOver(conversation, to, lookup.devices, codec, format);
+        this.armRollOver(conversation, to, lookup.devices, codec);
       }
       return { pushed };
     }
     ended();
-    const anyIgnoringCodec = candidates.length === 0 && this.ringCandidates(conversation, to, lookup.devices, lookup.preferredFormFactor, null, format).length > 0;
+    const anyIgnoringCodec = candidates.length === 0 && this.ringCandidates(conversation, to, lookup.devices, lookup.preferredFormFactor, null).length > 0;
     this.opts.metrics.server(conversation.id, "pushSkipped", this.opts.now(), anyIgnoringCodec ? `no device for ${to} plays the codec` : `no device for ${to}`);
     // The caller learns at once that nobody will hear it.
     return { refused: anyIgnoringCodec ? "unsupported-codec" : "unavailable" };
@@ -921,11 +908,11 @@ export class Relay {
 
   // Ring Me On's rollover (design decision 2026-10-01): the recipient chose to have their
   // phone rung when they don't answer or decline on the watch in rollOverMs.
-  private armRollOver(conversation: Conversation, to: string, devices: AccountDevice[], codec: number, format: 1 | 2): void {
+  private armRollOver(conversation: Conversation, to: string, devices: AccountDevice[], codec: number): void {
     this.clearRollOver(conversation);
     // Counted from the watch's ring, not from the provider's answer to it.
     const ms = Math.max(0, this.opts.rollOverMs - (this.opts.now() - (conversation.lastRingAt ?? this.opts.now())));
-    conversation.rollOverTimer = setTimeout(() => void this.rollOver(conversation, to, devices, codec, format), ms);
+    conversation.rollOverTimer = setTimeout(() => void this.rollOver(conversation, to, devices, codec), ms);
     conversation.rollOverTimer.unref();
   }
 
@@ -936,10 +923,10 @@ export class Relay {
 
   // The watch wasn't answered: ring the phone, until the first ring would have run out. The
   // watch's ring stays on its screen; answering it later moves the conversation there.
-  private async rollOver(conversation: Conversation, to: string, devices: AccountDevice[], codec: number, format: 1 | 2): Promise<void> {
+  private async rollOver(conversation: Conversation, to: string, devices: AccountDevice[], codec: number): Promise<void> {
     conversation.rollOverTimer = null;
     if (!conversation.ringTimer || conversation.joined.has(to) || this.byId.get(conversation.id) !== conversation) return;
-    const phones = this.ringCandidates(conversation, to, devices, "phone", codec, format).filter((d) => d.formFactor === "phone");
+    const phones = this.ringCandidates(conversation, to, devices, "phone", codec).filter((d) => d.formFactor === "phone");
     if (!phones.length) {
       this.opts.metrics.server(conversation.id, "rollOverSkipped", this.opts.now(), "no phone to ring");
       return;
@@ -1002,11 +989,11 @@ export class Relay {
   // last used in this conversation; then their preferred form factor's devices (automatic: the
   // watch if one can ring), most recently used first, ties by device ID; then the other form
   // factor's. Only one rings at a time.
-  private ringCandidates(conversation: Conversation, to: string, devices: AccountDevice[], preferred: FormFactor | undefined, codec: number | null, format: 1 | 2): AccountDevice[] {
+  private ringCandidates(conversation: Conversation, to: string, devices: AccountDevice[], preferred: FormFactor | undefined, codec: number | null): AccountDevice[] {
     // codec null: whatever the burst's codec (to tell "nobody plays it" from "nobody at all").
     const bundle = conversation.bursts.find((b) => b.id === conversation.ring?.burstId)?.e2ee;
-    const eligible = devices.filter((d) => this.canRing(to, d, codec, format) &&
-      (format === 1 || bundle?.keys.some((k) => k.deviceId === d.id)));
+    // Only devices the burst was sealed to: no other could open it.
+    const eligible = devices.filter((d) => this.canRing(to, d, codec) && bundle?.keys.some((k) => k.deviceId === d.id));
     const ordered: AccountDevice[] = [];
     const sticky = eligible.find((d) => d.id === conversation.chosenDevice.get(to));
     if (sticky) ordered.push(sticky);
@@ -1023,10 +1010,11 @@ export class Relay {
 
   // Eligible: switched on, with a current session, able to play the burst, and with a way to be
   // rung now. Not a claim that it's online.
-  private canRing(userId: string, device: AccountDevice, codec: number | null, format: 1 | 2): boolean {
+  private canRing(userId: string, device: AccountDevice, codec: number | null): boolean {
     if (!device.availability.enabled || device.hasSession === false) return false;
-    if (!device.capabilities.audioFormats.includes(format)) return false;
-    if (format === 2 && !device.e2ee) return false;
+    // Format 2 only: a device without keys (a registration left by a build before E2EE) can't
+    // open anything.
+    if (!device.capabilities.audioFormats.includes(2) || !device.e2ee) return false;
     const name = codec === null ? undefined : codecName(codec);
     if (name && !device.capabilities.decode.includes(name)) return false;
     if (device.availability.notifications === "denied" && isNotificationDelivery(device.delivery)) return false;

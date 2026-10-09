@@ -592,11 +592,15 @@ export class Accounts {
     return row ? toDevice(deviceId, row) : null;
   }
 
+  // The key directory. Only format 2 is carried, so a device without keys (a registration left
+  // by a build before E2EE) can't be rung or sealed to: it's left out rather than holding up its
+  // account's friends. allDevicesHaveKeys, which builds before PR D wait for, is then true
+  // whenever a device is listed.
   async friendKeys(userId: string): Promise<FriendKeysJSON> {
-    const devices = await this.devices(userId);
-    const phones = [...new Set(devices.flatMap((d) => d.e2ee?.phoneCert ? [d.e2ee.phoneCert] : []))];
-    return { phones, devices: devices.flatMap((d) => d.e2ee ? [{ deviceId: d.id, clientKind: d.clientKind, deviceCert: d.e2ee.deviceCert, encCert: d.e2ee.encCert }] : []),
-      allDevicesHaveKeys: devices.length > 0 && devices.every((d) => !!d.e2ee) };
+    const keyed = (await this.devices(userId)).flatMap((d) => d.e2ee ? [{ device: d, e2ee: d.e2ee }] : []);
+    const phones = [...new Set(keyed.map((k) => k.e2ee.phoneCert))];
+    return { phones, devices: keyed.map(({ device, e2ee }) => ({ deviceId: device.id, clientKind: device.clientKind, deviceCert: e2ee.deviceCert, encCert: e2ee.encCert })),
+      allDevicesHaveKeys: keyed.length > 0 };
   }
 
   async friends(userId: string): Promise<Friend[]> {

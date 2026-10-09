@@ -252,8 +252,9 @@ public final class E2EEKeyStore: @unchecked Sendable {
     }
 }
 
-/// Remember public directory keys across launches. A missing later directory entry cannot
-/// silently turn an encrypted friend back into a plaintext friend.
+/// Remember public directory keys across launches: the keys to seal to, and the friend's phone
+/// fingerprints, so a change shows the "security code changed" notice. The seen marker outlives
+/// a damaged cache, so a friend whose keys were seen isn't taken for a first contact.
 public final class E2EETrust: @unchecked Sendable {
     public struct State: Codable, Sendable {
         public var phones: [String] = []
@@ -291,9 +292,6 @@ public final class E2EETrust: @unchecked Sendable {
 
     private func key(_ account: String) -> String { prefix + account }
     private func seenKey(_ account: String, _ friend: String) -> String { seenPrefix + account + "-" + friend }
-    public func hasSeenKeys(account: String, friend: String) -> Bool {
-        lock.withLock { _ in defaults.bool(forKey: seenKey(account, friend)) || !(all(account)[friend]?.phones.isEmpty ?? true) }
-    }
     private func all(_ account: String) -> [String: State] {
         guard let data = defaults.data(forKey: key(account)) else { return [:] }
         return (try? JSONDecoder().decode([String: State].self, from: data)) ?? [:]
@@ -307,7 +305,7 @@ public final class E2EETrust: @unchecked Sendable {
     }
 
     /// A fresh directory result with no keys invalidates cached recipients while retaining
-    /// the downgrade marker and the last known fingerprints for the warning.
+    /// the seen marker and the last known fingerprints for the warning.
     public func missingKeys(account: String, friend: String) {
         lock.withLock { _ in
             var states = all(account)

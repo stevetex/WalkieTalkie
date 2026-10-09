@@ -381,18 +381,19 @@ final class AppModel: ObservableObject {
         while session != nil {
             let joined = pushToTalk.isJoined ? pushToTalk.pushToken : nil
             let delivery: DeviceRegistration.Delivery = joined.map { .pushToTalk(token: $0, environment: Self.apnsEnvironment) } ?? .foreground
-            let keys: E2EEKeyStore.Registration?
+            let keys: E2EEKeyStore.Registration
             do {
                 keys = try e2ee.preparePhone(userId: session!.userId, deviceId: deviceId, now: Int64(Clock.nowMs()))
             } catch {
                 Telemetry.shared.event("e2eeFailed", ["reason": "key-storage"])
+                reachability = "Not registered: this iPhone's keys couldn't be stored"
                 break
             }
             let registration = DeviceRegistration(delivery: delivery, notifications: notificationPermission, e2ee: keys)
             if registered == registration { break }
             do {
                 try await client.registerDevice(registration)
-                if let keys, let userId = session?.userId {
+                if let userId = session?.userId {
                     let marker = "e2eePhoneEncCert-\(userId)"
                     let current = keys.encCert.base64EncodedString()
                     if let previous = UserDefaults.standard.string(forKey: marker), previous != current {

@@ -24,7 +24,7 @@ Three versions are kept apart, and change independently:
 | --- | --- | --- |
 | API version | 2 | the path: `/v2/…` |
 | Relay protocol version | 2 | `X-OAO-Relay-Protocol` on relay admission |
-| Binary audio format version | 1; 2 specified, not yet served | `relay.audioFormats` in config; `format` on talk-start |
+| Binary audio format version | 2 (end to end encrypted); 1 (plaintext) retired | `relay.audioFormats` in config; `format` on talk-start |
 
 Version 1 (the `/v1/…` paths, no admission headers) was the tester-only contract before Phase 0.
 It's retired: the service no longer serves it, and no build that speaks it is supported.
@@ -100,7 +100,7 @@ only if its host is approved: the bundled relay host, or `https` on a host under
 {
   "schemaVersion": 1,
   "api": { "versions": [1, 2] },
-  "relay": { "baseUrl": "https://relay-1.overandout.app", "protocols": [2], "audioFormats": [1], "codecs": ["opus16k", "pcm16le16k"] },
+  "relay": { "baseUrl": "https://relay-1.overandout.app", "protocols": [2], "audioFormats": [2], "codecs": ["opus16k", "pcm16le16k"] },
   "features": { "googleSignIn": false, "fcmDelivery": false },
   "compatibility": { "minimumBuilds": { "ios": 0, "watchos": 0 }, "message": null },
   "timing": { "ringUnansweredMs": 35000, "answerJoinGraceMs": 30000, "conversationIdleMs": 45000 }
@@ -109,6 +109,10 @@ only if its host is approved: the bundled relay host, or `https` on a host under
 
 `minimumBuilds` maps a client kind to the lowest build the service still supports; a missing
 kind means no minimum. A build below it shows an update screen and keeps its session.
+
+A client uses the named relay only if it speaks one of `relay.audioFormats` (now only 2);
+otherwise it keeps its bundled relay. Builds from before format 1 was retired look for 1 there,
+so they stay on their bundled relay, where admission tells them to update.
 
 ## Identity and sessions
 
@@ -186,9 +190,10 @@ A proof for the other provider is `400 wrong-provider`.
   "clientKind": "ios",
   "delivery": { "provider": "apns", "mode": "pushtotalk", "token": "…", "environment": "production" },
   "availability": { "enabled": true, "notifications": "authorized" },
-  "capabilities": { "relayProtocols": [2], "audioFormats": [1], "decode": ["opus16k", "pcm16le16k"], "encode": ["opus16k"], "features": [] },
+  "capabilities": { "relayProtocols": [2], "audioFormats": [2], "decode": ["opus16k", "pcm16le16k"], "encode": ["opus16k"], "features": [] },
   "clientVersion": "1.0",
-  "build": "165"
+  "build": "165",
+  "e2ee": { "phoneCert": "…", "deviceCert": "…", "encCert": "…" }
 }
 ```
 
@@ -201,7 +206,8 @@ The answer is `{"device": {...}}`: the stored registration, with what the server
 | `receiveMode` | Derived, never written: `automatic` for APNs PushToTalk, `tap` otherwise |
 | `availability.enabled` | The person's on/off choice; `false` = never rung. Default `true` |
 | `availability.notifications` | `authorized`, `denied` or `unknown` (default). `denied` excludes notification-only deliveries |
-| `capabilities` | Intersected with what the service supports. Default: protocol 2, audio format 1, decode both codecs, encode `opus16k` |
+| `capabilities` | Intersected with what the service supports. Default: protocol 2, decode both codecs, encode `opus16k`. `audioFormats` must include 2: a build that names none, or only format 1, gets `409 client-upgrade-required` |
+| `e2ee` | Required: the device's certificates ("End-to-end encryption" below). Without them, `400 bad-certificate`. A device without keys could neither send nor play anything |
 | `clientVersion`, `build` | Diagnostics only |
 
 | Delivery | Client kinds | Rung by |
@@ -236,8 +242,9 @@ The person's opt-in "Roll Over to iPhone" is the one exception: 12 s after an un
 undeclined ring to their watch, the same ring goes to their phone, within the same deadline.
 
 Eligible means: availability enabled, a current session, relay protocol 2 and a codec in
-common, and a usable delivery (a foreground delivery needs the device's relay connection
-open). It doesn't mean online.
+common, encryption keys with an entry for the device in the burst's key bundle, and a usable
+delivery (a foreground delivery needs the device's relay connection open). It doesn't mean
+online. A registration left by a build before E2EE (no keys) is never rung.
 
 ## Rings
 
@@ -291,8 +298,10 @@ conversation's timeline) and `GET /v2/time`.
 
 **Admission.** Both transports check, before opening a stream or joining a conversation: the
 session (as above), `X-OAO-Client-Kind` and `X-OAO-Build` (`409 client-upgrade-required` below
-the minimum), `X-OAO-Relay-Protocol` (`409 unsupported-protocol` unless 2), and the codecs
-(`409 unsupported-codec` if the device decodes none the service supports). A WebSocket that
+the minimum), `X-OAO-Relay-Protocol` (`409 unsupported-protocol` unless 2),
+`X-OAO-Audio-Formats` (`409 client-upgrade-required` unless it includes 2; a build that sends
+no such header spoke only format 1), and the codecs (`409 unsupported-codec` if the device
+decodes none the service supports). A WebSocket that
 fails admission gets the same status and JSON body instead of the upgrade.
 
 `GET /v2/relay/stream?clientTime=<ms>[&join=<conversationId>&ring=<ringId>][&resumeBurst=<id>&resumeFrom=<seq>]`
@@ -339,9 +348,12 @@ listener can resume.
 ring would go to, can't decode it. Frames of another codec than the burst's are dropped. Every
 commercial client decodes both codecs.
 
-## Binary audio (format 1)
+## Binary audio (format 1, retired)
 
-Unchanged since the spike. One frame per WebSocket binary message, or per type-2 record:
+Format 1 carried this frame in plaintext. It's retired ([E2EE_SPEC.md](../E2EE_SPEC.md), PR D):
+the relay refuses a talk-start without `format: 2`, and the apps neither send nor play it.
+Its layout lives on as the frame inside format 2, before sealing and after opening, and
+`fixtures/frames.json` holds it. One frame per WebSocket binary message, or per type-2 record:
 
 ```
 byte 0      codec: 1 = opus16k (16 kHz mono Opus, one 20 ms packet)
@@ -358,10 +370,10 @@ big-endian, at most 64 KiB), then the payload. A partial record waits for the re
 
 ## End-to-end encryption (binary audio format 2)
 
-Specified here and tested (`fixtures/e2ee.json`, `server/src/e2ee.ts`, the kit's `E2EE.swift`),
-but not yet served: no client sends it and the relay doesn't accept it until the server and app
-changes of [E2EE_SPEC.md](../E2EE_SPEC.md) land (PRs B and C). Only audio is encrypted; the relay
-forwards ciphertext it can't read.
+The only audio format the service carries ([E2EE_SPEC.md](../E2EE_SPEC.md); tested by
+`fixtures/e2ee.json`, `server/src/e2ee.ts` and the kit's `E2EE.swift`). Only audio is
+encrypted; the relay forwards ciphertext it can't read. The one exception is the Test Bot,
+which runs in the relay with its own keys.
 
 ### Cryptography
 
@@ -415,13 +427,16 @@ encCert}` (`phoneCert` from phones). Friends see them in `GET /v2/friends`, on e
 }
 ```
 
-`allDevicesHaveKeys` is false while any registered device has not published certificates.
-During PR C the apps do not start an encrypted burst in that state. A friend whose keys have
-already been seen cannot be downgraded to format 1.
+The list has only devices with keys: a registration left by a build before E2EE can't be rung
+or sealed to, so it's left out rather than holding up the friend's other devices.
+`allDevicesHaveKeys` is true whenever the list has a device (builds from before format 1 was
+retired wait for it).
 
-A PR C sender starts format 2 only when every registered recipient device has a valid,
-unexpired key and seals to all of them. Missing or invalid keys stop the encrypted Talk;
-once this sender has seen keys for the friend, it cannot fall back to format 1.
+A sender seals to every listed device that has a valid, unexpired key, and leaves out one that
+doesn't (a watch unused past its key's 30 days; the relay doesn't ring it either). A friend with
+no such device can't be talked to ("Can't reach … right now", `e2eeFailed`
+`no-current-key`); there's no plaintext fallback. A listener never plays a burst that isn't
+format 2 (`e2eeFailed` `downgrade`).
 
 Over WatchConnectivity, the watch's session request adds `signingKey` (its raw Ed25519 public
 key, base64); the phone's reply adds the watch's `deviceCert` and the phone's `phoneCert`.

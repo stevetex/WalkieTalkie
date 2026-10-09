@@ -66,7 +66,7 @@ import { Firestore, gcloudAccessToken, metadataAccessToken, metadataProjectId } 
 import { loadSecrets } from "./secrets.ts";
 import { Relay, type Peer, type RingCallResult } from "./relay.ts";
 import { TestBot, loadGreeting, type TestBotOptions } from "./test-bot.ts";
-import { localEndpointKeys, openEndpointSecrets, type EndpointSecrets } from "./endpoint-keys.ts";
+import { localEndpointKeys, openEndpointSecrets, type EndpointKeys, type EndpointSecrets } from "./endpoint-keys.ts";
 import { summarizeAttempts } from "./report.ts";
 import { RecordParser, RecordType, encodeJSONRecord, encodeRecord } from "./records.ts";
 import { isRingId, parseClientMessage, type MetricsUpload, type RelayErrorCode } from "./protocol.ts";
@@ -119,7 +119,7 @@ export interface ServerOptions {
   maxBurstMs?: number;
   maxBufferedBytes?: number;
   // The always-on Test Bot (test-bot.ts).
-  testBot?: TestBotOptions;
+  testBot?: Omit<TestBotOptions, "recipientKeys">;
 }
 
 export interface RunningServer {
@@ -159,12 +159,12 @@ const RING_ERROR_MESSAGE: Partial<Record<RelayErrorCode, string>> = {
 };
 
 export async function startServer(options: ServerOptions): Promise<RunningServer> {
-  if (options.testBot?.keys) {
+  if (options.testBot) {
     const keys = options.testBot.keys;
     await options.accounts.registerDevice(keys.secrets.userId, keys.secrets.deviceId, {
       clientKind: "watchos", delivery: { provider: "test", mode: "connection" },
       availability: { enabled: true, notifications: "authorized" },
-      capabilities: { relayProtocols: [2], audioFormats: [1, 2], decode: ["opus16k", "pcm16le16k"], encode: ["opus16k"], features: [] },
+      capabilities: { relayProtocols: [2], audioFormats: [2], decode: ["opus16k", "pcm16le16k"], encode: ["opus16k"], features: [] },
       e2ee: keys.registration,
     });
   }
@@ -276,7 +276,6 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       deviceId: caller.deviceId,
       clientKind: admission.clientKind,
       decode: admission.decode,
-      audioFormats: admission.audioFormats,
       sendJSON: (m) => write(encodeJSONRecord(m)),
       sendBinary: (b) => write(encodeRecord(RecordType.audio, b)),
     };
@@ -454,7 +453,6 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         deviceId,
         clientKind: admission.clientKind,
         decode: admission.decode,
-        audioFormats: admission.audioFormats,
         sendJSON: (m) => ws.sendJSON(m),
         sendBinary: (b) => ws.sendBinary(b),
       };
@@ -592,13 +590,21 @@ if (import.meta.main) {
   let running: RunningServer;
   let api: ApiSetup | null = null;
   const fullTimelineUsers = (env.FULL_TIMELINE_USERS ?? "").split(",").map((u) => u.trim()).filter(Boolean);
-  const testBotKeys = env.TEST_BOT_USER_ID
-    ? env.TEST_BOT_E2EE
-      ? openEndpointSecrets(JSON.parse(env.TEST_BOT_E2EE) as EndpointSecrets, env.TEST_BOT_USER_ID, "test-bot")
-      : onGoogleCloud ? undefined : localEndpointKeys(join(ensureDir(resolve(env.DATA_DIR ?? "data")), "test-bot-keys.json"), env.TEST_BOT_USER_ID, "test-bot", "watchos")
-    : undefined;
-  const testBot = env.TEST_BOT_USER_ID ? { userId: env.TEST_BOT_USER_ID, deviceId: "test-bot", greeting: loadGreeting(), ...(testBotKeys ? { keys: testBotKeys } : {}) } : undefined;
-  if (onGoogleCloud && testBot && !testBotKeys) console.warn("[server] TEST_BOT_E2EE_SECRET not set: the Test Bot only accepts format 1");
+  // The Test Bot talks only format 2, so without usable keys it's off. Keys that don't open (an
+  // expired certificate: the secret wasn't rotated in time) turn it off too, rather than stopping
+  // the relay from starting.
+  let testBotKeys: EndpointKeys | undefined;
+  if (env.TEST_BOT_USER_ID) {
+    try {
+      testBotKeys = env.TEST_BOT_E2EE
+        ? openEndpointSecrets(JSON.parse(env.TEST_BOT_E2EE) as EndpointSecrets, env.TEST_BOT_USER_ID, "test-bot")
+        : onGoogleCloud ? undefined : localEndpointKeys(join(ensureDir(resolve(env.DATA_DIR ?? "data")), "test-bot-keys.json"), env.TEST_BOT_USER_ID, "test-bot", "watchos");
+      if (!testBotKeys) console.warn("[server] TEST_BOT_E2EE_SECRET not set: the Test Bot is off");
+    } catch (err) {
+      console.error(`[server] the Test Bot's keys can't be used (${(err as Error).message}): the Test Bot is off`);
+    }
+  }
+  const testBot = env.TEST_BOT_USER_ID && testBotKeys ? { userId: env.TEST_BOT_USER_ID, deviceId: "test-bot", greeting: loadGreeting(), keys: testBotKeys } : undefined;
   const ringTimeoutMs = env.RING_TIMEOUT_MS ? Number(env.RING_TIMEOUT_MS) : undefined;
   if (ringTimeoutMs !== undefined && (onGoogleCloud || !(ringTimeoutMs > 0))) throw new Error("RING_TIMEOUT_MS is a positive number, for local runs only");
   const relayOptions = {

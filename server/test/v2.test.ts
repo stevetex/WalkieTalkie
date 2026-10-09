@@ -10,9 +10,11 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { DryRunPusher, type AlertPush, type ApnsEnvironment, type PushResult } from "../src/apns.ts";
 import { Codec } from "../src/protocol.ts";
-import { SpikeClient } from "../tools/client.ts";
+import type { Accounts } from "../src/accounts.ts";
+import type { EndpointKeys } from "../src/endpoint-keys.ts";
+import { SpikeClient, type ClientOptions } from "../tools/client.ts";
 import { SchemaSet } from "./json-schema.ts";
-import { call, clientHeaders, pcm, withServer } from "./harness.ts";
+import { call, clientHeaders, companionKeys, deviceKeys, pcm, withServer } from "./harness.ts";
 
 const contracts = join(import.meta.dirname!, "..", "..", "contracts");
 const schemas = new SchemaSet(join(contracts, "schemas"));
@@ -21,11 +23,16 @@ function valid(schema: string, value: unknown): void {
   assert.deepEqual(schemas.validate(schema, value), [], `${schema}: ${JSON.stringify(value)}`);
 }
 
+// A signed-in device and its E2EE keys (registered with register()).
+interface Device { token: string; userId: string; deviceId: string; kind: "ios" | "watchos" | "android"; keys: EndpointKeys }
+
 async function signIn(url: string, sub: string, name: string, deviceId: string, provider: "apple" | "google" = "apple") {
-  const res = await call(url, "POST", `/v2/auth/${provider}`, null, { identityToken: sub, nonce: "n", name, deviceId, clientKind: provider === "apple" ? "ios" : "android" });
+  const kind = provider === "apple" ? "ios" : "android";
+  const res = await call(url, "POST", `/v2/auth/${provider}`, null, { identityToken: sub, nonce: "n", name, deviceId, clientKind: kind });
   assert.equal(res.status, 200, JSON.stringify(res.body));
   valid("session.schema.json", res.body);
-  return res.body as { token: string; expiresAt: number; user: { id: string; name: string; signInProvider: string }; created: boolean };
+  const body = res.body as { token: string; expiresAt: number; user: { id: string; name: string; signInProvider: string }; created: boolean };
+  return { ...body, userId: body.user.id, deviceId, kind, keys: deviceKeys(body.user.id, deviceId, kind) } satisfies Device;
 }
 
 async function befriend(url: string, inviterToken: string, inviteeToken: string) {
@@ -34,12 +41,29 @@ async function befriend(url: string, inviterToken: string, inviteeToken: string)
   assert.equal((await call(url, "POST", `/v2/invites/${invite.body.code}/accept`, inviteeToken)).status, 200);
 }
 
-async function watchFor(url: string, phoneToken: string, deviceId: string, requestId = "req-1") {
-  const res = await call(url, "POST", "/v2/auth/device", phoneToken, { deviceId, clientKind: "watchos", requestId });
+// A watch the phone signs in, with keys the phone certifies.
+async function watchFor(url: string, phone: Device, deviceId: string, requestId = "req-1") {
+  const res = await call(url, "POST", "/v2/auth/device", phone.token, { deviceId, clientKind: "watchos", requestId });
   assert.equal(res.status, 200, JSON.stringify(res.body));
   valid("session.schema.json", res.body);
-  return res.body as { token: string; deviceId: string; parentDeviceId: string };
+  const body = res.body as { token: string; deviceId: string; parentDeviceId: string };
+  return { ...body, userId: phone.userId, kind: "watchos", keys: companionKeys(phone.keys, deviceId, "watchos") } satisfies Device;
 }
+
+// PUT /v2/me/device as the apps send it: format 2 and the device's certificates (a watch's after
+// its phone's, whose phone certificate it shares).
+function register(url: string, device: Device, body: Record<string, unknown>) {
+  const capabilities = { audioFormats: [2], ...(body.capabilities as Record<string, unknown> | undefined) };
+  return call(url, "PUT", "/v2/me/device", device.token, { ...body, capabilities, e2ee: device.keys.registration });
+}
+
+// A relay client for the device, sealing to friends' keys from the key directory.
+function relayClient(url: string, accounts: Accounts, device: Device, options: Partial<ClientOptions> = {}): SpikeClient {
+  return new SpikeClient({ server: url, userId: device.userId, token: device.token, clientKind: device.kind,
+    e2ee: { keys: device.keys, directory: (friend) => accounts.friendKeys(friend) }, ...options });
+}
+
+const inApp = { clientKind: "ios", delivery: { provider: "relay", mode: "foreground" } };
 
 const apnsAlert = (token: string) => ({ clientKind: "watchos", delivery: { provider: "apns", mode: "alert", token, environment: "sandbox" }, availability: { enabled: true, notifications: "authorized" } });
 const apnsPtt = (token: string) => ({ clientKind: "ios", delivery: { provider: "apns", mode: "pushtotalk", token, environment: "sandbox" } });
@@ -130,14 +154,24 @@ test("deletion needs the account's own provider's proof", async () => {
 test("device registrations follow the contract, and refused ones match the rejected examples", async () => {
   await withServer(async ({ url }) => {
     const phone = await signIn(url, "apple.alice", "Alice", "alice-phone");
-    const watch = await watchFor(url, phone.token, "alice-watch");
-    const res = await call(url, "PUT", "/v2/me/device", phone.token, { ...apnsPtt("cc".repeat(32)), capabilities: { relayProtocols: [2, 9], decode: ["opus16k", "pcm16le16k", "lyra"], encode: ["opus16k"] }, build: "170" });
+    const watch = await watchFor(url, phone, "alice-watch");
+    // Builds before E2EE: no audio formats (format 1 by default) or format 1 alone must update;
+    // format 2 without the device's certificates is refused.
+    const ptt = apnsPtt("cc".repeat(32));
+    for (const capabilities of [undefined, { audioFormats: [1] }]) {
+      const old = await call(url, "PUT", "/v2/me/device", phone.token, { ...ptt, ...(capabilities ? { capabilities } : {}), e2ee: phone.keys.registration });
+      assert.deepEqual([old.status, old.body.error], [409, "client-upgrade-required"], JSON.stringify(capabilities));
+    }
+    const keyless = await call(url, "PUT", "/v2/me/device", phone.token, { ...ptt, capabilities: { audioFormats: [2] } });
+    assert.deepEqual([keyless.status, keyless.body.error], [400, "bad-certificate"]);
+    const res = await register(url, phone, { ...ptt, capabilities: { relayProtocols: [2, 9], decode: ["opus16k", "pcm16le16k", "lyra"], encode: ["opus16k"] }, build: "170" });
     assert.equal(res.status, 200, JSON.stringify(res.body));
     valid("device.schema.json", res.body);
     assert.equal(res.body.device.receiveMode, "automatic");
     assert.deepEqual(res.body.device.capabilities.decode, ["opus16k", "pcm16le16k"]);
     assert.deepEqual(res.body.device.capabilities.relayProtocols, [2]);
-    assert.equal((await call(url, "PUT", "/v2/me/device", watch.token, apnsAlert("ab".repeat(32)))).status, 200);
+    assert.deepEqual(res.body.device.capabilities.audioFormats, [2]);
+    assert.equal((await register(url, watch, apnsAlert("ab".repeat(32)))).status, 200);
     assert.deepEqual((await call(url, "GET", "/v2/me", phone.token)).body.formFactors, ["phone", "watch"]);
     // A watch session can't register as a phone.
     assert.equal((await call(url, "PUT", "/v2/me/device", watch.token, apnsPtt("cc".repeat(32)))).body.error, "client-kind-mismatch");
@@ -160,16 +194,16 @@ test("device registrations follow the contract, and refused ones match the rejec
 });
 
 test("a watch's session ends with its phone's, at the API and the relay, even mid-conversation", async () => {
-  await withServer(async ({ url }) => {
+  await withServer(async ({ url, accounts }) => {
     const phone = await signIn(url, "apple.alice", "Alice", "alice-phone");
-    const watch = await watchFor(url, phone.token, "alice-watch");
+    const watch = await watchFor(url, phone, "alice-watch");
     // The same request again gets the same session.
-    const again = await watchFor(url, phone.token, "alice-watch");
+    const again = await watchFor(url, phone, "alice-watch");
     assert.equal((await call(url, "GET", "/v2/me", watch.token)).status, 200);
     assert.equal((await call(url, "GET", "/v2/me", again.token)).status, 200);
     // A watch can't make sessions.
     assert.equal((await call(url, "POST", "/v2/auth/device", watch.token, { deviceId: "w2", clientKind: "watchos", requestId: "x" })).body.error, "unsupported-client-kind");
-    const listening = new SpikeClient({ server: url, userId: "x", token: watch.token, transport: "http", clientKind: "watchos" });
+    const listening = relayClient(url, accounts, watch, { transport: "http" });
     await listening.connect();
     // The phone signs out: the watch's next request, and its open stream, end.
     assert.equal((await call(url, "POST", "/v2/auth/signout", phone.token)).status, 200);
@@ -193,10 +227,16 @@ test("relay admission refuses what the device can't speak, on both transports", 
     assert.deepEqual([outdated.status, outdated.body.error, outdated.body.minimumBuild], [409, "client-upgrade-required", 160]);
     const noCodec = await stream({ ...clientHeaders("ios"), "x-oao-decode": "lyra" });
     assert.deepEqual([noCodec.status, noCodec.body.error], [409, "unsupported-codec"]);
+    // A build that speaks only format 1 (plaintext, retired): it names no audio formats, or 1.
+    const { "x-oao-audio-formats": _, ...formatless } = clientHeaders("ios");
+    for (const headers of [formatless, { ...formatless, "x-oao-audio-formats": "1" }]) {
+      const plaintext = await stream(headers);
+      assert.deepEqual([plaintext.status, plaintext.body.error], [409, "client-upgrade-required"], JSON.stringify(headers));
+    }
     assert.equal((await stream(clientHeaders("watchos"))).body.error, "client-kind-mismatch");
-    // The same refusal, as the WebSocket's answer to the upgrade.
-    const upgrade = await new Promise<{ status: number; body: string }>((resolve) => {
-      const req = request({ port: server.port, path: "/v2/relay", headers: { connection: "Upgrade", upgrade: "websocket", "sec-websocket-key": "dGhlIHNhbXBsZSBub25jZQ==", "sec-websocket-version": "13", authorization: `Bearer ${phone.token}`, ...clientHeaders("ios", "100") } });
+    // The same refusals, as the WebSocket's answer to the upgrade.
+    const upgrade = (headers: Record<string, string>) => new Promise<{ status: number; body: string }>((resolve) => {
+      const req = request({ port: server.port, path: "/v2/relay", headers: { connection: "Upgrade", upgrade: "websocket", "sec-websocket-key": "dGhlIHNhbXBsZSBub25jZQ==", "sec-websocket-version": "13", authorization: `Bearer ${phone.token}`, ...headers } });
       req.on("response", (res) => {
         let body = "";
         res.on("data", (c) => (body += c));
@@ -204,21 +244,24 @@ test("relay admission refuses what the device can't speak, on both transports", 
       });
       req.end();
     });
-    assert.equal(upgrade.status, 409);
-    assert.equal(JSON.parse(upgrade.body).error, "client-upgrade-required");
+    for (const headers of [clientHeaders("ios", "100"), formatless, { ...formatless, "x-oao-audio-formats": "1" }]) {
+      const refused = await upgrade(headers);
+      assert.equal(refused.status, 409);
+      assert.equal(JSON.parse(refused.body).error, "client-upgrade-required");
+    }
   }, { minimumBuilds: { ios: 160 } });
 });
 
 test("a ring has an ID and a deadline, one device rings, and an answer claims it", async () => {
-  await withServer(async ({ url, pusher }) => {
+  await withServer(async ({ url, pusher, accounts }) => {
     const alice = await signIn(url, "apple.alice", "Alice", "alice-phone");
-    const watch = await watchFor(url, alice.token, "alice-watch");
-    await call(url, "PUT", "/v2/me/device", watch.token, apnsAlert("aa".repeat(32)));
-    await call(url, "PUT", "/v2/me/device", alice.token, apnsPtt("bb".repeat(32)));
+    const watch = await watchFor(url, alice, "alice-watch");
+    await register(url, alice, apnsPtt("bb".repeat(32)));
+    await register(url, watch, apnsAlert("aa".repeat(32)));
     const bob = await signIn(url, "apple.bob", "Bob", "bob-phone");
     await befriend(url, alice.token, bob.token);
 
-    const bobRelay = new SpikeClient({ server: url, userId: "x", token: bob.token, clientKind: "ios" });
+    const bobRelay = relayClient(url, accounts, bob);
     await bobRelay.connect();
     const { conversationId, pushed } = await bobRelay.talk(alice.user.id, pcm(10), { realtime: false });
     assert.equal(pushed, true);
@@ -251,11 +294,11 @@ test("a ring has an ID and a deadline, one device rings, and an answer claims it
     const phoneAnswer = await call(url, "POST", "/v2/rings/answer", alice.token, { conversationId, ringId }, clientHeaders("ios"));
     assert.deepEqual([phoneAnswer.status, phoneAnswer.body.error], [409, "ring-answered-elsewhere"]);
     // The phone's join gives way to the watch, which joins with the ring and hears the message.
-    const phoneRelay = new SpikeClient({ server: url, userId: "x", token: alice.token, transport: "http", clientKind: "ios" });
+    const phoneRelay = relayClient(url, accounts, alice, { transport: "http" });
     await phoneRelay.connect(conversationId, undefined, ringId);
     await phoneRelay.waitFor("moved");
     phoneRelay.close();
-    const watchRelay = new SpikeClient({ server: url, userId: "x", token: watch.token, transport: "http", clientKind: "watchos" });
+    const watchRelay = relayClient(url, accounts, watch, { transport: "http" });
     await watchRelay.connect(conversationId, undefined, ringId);
     const joined = await watchRelay.waitFor("joined");
     valid("relay-server-message.schema.json", joined);
@@ -273,13 +316,14 @@ test("a ring has an ID and a deadline, one device rings, and an answer claims it
 });
 
 test("a late tap on an old ring can't hear or join a newer one", async () => {
-  await withServer(async ({ url, pusher }) => {
+  await withServer(async ({ url, pusher, accounts }) => {
     const alice = await signIn(url, "apple.alice", "Alice", "alice-phone");
-    const watch = await watchFor(url, alice.token, "alice-watch");
-    await call(url, "PUT", "/v2/me/device", watch.token, apnsAlert("aa".repeat(32)));
+    const watch = await watchFor(url, alice, "alice-watch");
+    await register(url, alice, inApp);
+    await register(url, watch, apnsAlert("aa".repeat(32)));
     const bob = await signIn(url, "apple.bob", "Bob", "bob-phone");
     await befriend(url, alice.token, bob.token);
-    const bobRelay = new SpikeClient({ server: url, userId: "x", token: bob.token, clientKind: "ios" });
+    const bobRelay = relayClient(url, accounts, bob);
     await bobRelay.connect();
     const first = await bobRelay.talk(alice.user.id, pcm(5), { realtime: false });
     const oldRing = String(pushedRing(pusher, "aa".repeat(32)).ringId);
@@ -292,7 +336,7 @@ test("a late tap on an old ring can't hear or join a newer one", async () => {
     const newRing = String(pushedRing(pusher, "aa".repeat(32)).ringId);
     assert.notEqual(newRing, oldRing);
     // The old notification's tap: expired, and nothing plays.
-    const late = new SpikeClient({ server: url, userId: "x", token: watch.token, transport: "http", clientKind: "watchos" });
+    const late = relayClient(url, accounts, watch, { transport: "http" });
     await late.connect(first.conversationId, undefined, oldRing);
     assert.equal((await late.waitFor("error")).code, "ring-expired");
     assert.equal((await fetch(new URL(`/v2/rings/audio?conversationId=${first.conversationId}&ringId=${oldRing}`, url), { headers: { authorization: `Bearer ${watch.token}`, ...clientHeaders("watchos") } })).status, 410);
@@ -320,28 +364,29 @@ test("the one device that rings: most recently used first, the next only after a
   })();
   await withServer(async ({ url, accounts }) => {
     const alice = await signIn(url, "apple.alice", "Alice", "alice-phone");
-    const older = await watchFor(url, alice.token, "watch-old", "a");
-    const newer = await watchFor(url, alice.token, "watch-new", "b");
-    await call(url, "PUT", "/v2/me/device", older.token, apnsAlert("11".repeat(32)));
-    await call(url, "PUT", "/v2/me/device", newer.token, apnsAlert("dead".repeat(16)));
+    const older = await watchFor(url, alice, "watch-old", "a");
+    const newer = await watchFor(url, alice, "watch-new", "b");
+    await register(url, alice, inApp);
+    await register(url, older, apnsAlert("11".repeat(32)));
+    await register(url, newer, apnsAlert("dead".repeat(16)));
     await accounts.markActive(alice.user.id, "watch-new", Date.now() + 1000);
     const bob = await signIn(url, "apple.bob", "Bob", "bob-phone");
     await befriend(url, alice.token, bob.token);
-    const bobRelay = new SpikeClient({ server: url, userId: "x", token: bob.token, clientKind: "ios" });
+    const bobRelay = relayClient(url, accounts, bob);
     await bobRelay.connect();
     // The newer watch's token is dead: it's removed, and only then the older watch rings.
     await bobRelay.talk(alice.user.id, pcm(3), { realtime: false });
     assert.deepEqual(pusher.sent.map((p) => p.token), ["dead".repeat(16), "11".repeat(32)]);
-    assert.deepEqual((await accounts.devices(alice.user.id)).map((d) => d.id), ["watch-old"]);
+    assert.deepEqual((await accounts.devices(alice.user.id)).map((d) => d.id).sort(), ["alice-phone", "watch-old"]);
     bobRelay.close();
 
     // An ambiguous failure isn't a rejection: nothing else rings for it.
     pusher.sent.length = 0;
-    await call(url, "PUT", "/v2/me/device", newer.token, apnsAlert("slow".repeat(16)));
+    await register(url, newer, apnsAlert("slow".repeat(16)));
     await accounts.markActive(alice.user.id, "watch-new", Date.now() + 120_000);
     const carol = await signIn(url, "apple.carol", "Carol", "carol-phone");
     await befriend(url, alice.token, carol.token);
-    const carolRelay = new SpikeClient({ server: url, userId: "x", token: carol.token, clientKind: "ios" });
+    const carolRelay = relayClient(url, accounts, carol);
     await carolRelay.connect();
     const { pushed } = await carolRelay.talk(alice.user.id, pcm(3), { realtime: false });
     assert.equal(pushed, true);
@@ -351,14 +396,14 @@ test("the one device that rings: most recently used first, the next only after a
 });
 
 test("a watch with notifications off isn't rung; the phone is", async () => {
-  await withServer(async ({ url, pusher }) => {
+  await withServer(async ({ url, pusher, accounts }) => {
     const alice = await signIn(url, "apple.alice", "Alice", "alice-phone");
-    const watch = await watchFor(url, alice.token, "alice-watch");
-    await call(url, "PUT", "/v2/me/device", watch.token, { ...apnsAlert("aa".repeat(32)), availability: { notifications: "denied" } });
-    await call(url, "PUT", "/v2/me/device", alice.token, apnsPtt("bb".repeat(32)));
+    const watch = await watchFor(url, alice, "alice-watch");
+    await register(url, alice, apnsPtt("bb".repeat(32)));
+    await register(url, watch, { ...apnsAlert("aa".repeat(32)), availability: { notifications: "denied" } });
     const bob = await signIn(url, "apple.bob", "Bob", "bob-phone");
     await befriend(url, alice.token, bob.token);
-    const bobRelay = new SpikeClient({ server: url, userId: "x", token: bob.token, clientKind: "ios" });
+    const bobRelay = relayClient(url, accounts, bob);
     await bobRelay.connect();
     await bobRelay.talk(alice.user.id, pcm(3), { realtime: false });
     assert.deepEqual(pusher.sent.map((p) => [p.token, p.pushType]), [["bb".repeat(32), "pushtotalk"]]);
@@ -370,17 +415,17 @@ test("a watch with notifications off isn't rung; the phone is", async () => {
 });
 
 test("codec admission: nobody is sent, or rung for, a codec they can't play", async () => {
-  await withServer(async ({ url, pusher }) => {
+  await withServer(async ({ url, pusher, accounts }) => {
     const alice = await signIn(url, "apple.alice", "Alice", "alice-phone");
     const bob = await signIn(url, "apple.bob", "Bob", "bob-phone");
     await befriend(url, alice.token, bob.token);
     // Alice's only device plays PCM alone, and is rung in the app.
-    await call(url, "PUT", "/v2/me/device", alice.token, { clientKind: "ios", delivery: { provider: "relay", mode: "foreground" }, capabilities: { decode: ["pcm16le16k"], encode: ["pcm16le16k"] } });
-    const bobRelay = new SpikeClient({ server: url, userId: "x", token: bob.token, clientKind: "ios" });
+    await register(url, alice, { ...inApp, capabilities: { decode: ["pcm16le16k"], encode: ["pcm16le16k"] } });
+    const bobRelay = relayClient(url, accounts, bob);
     await bobRelay.connect();
     // Ringing her with Opus is refused before anything rings.
     await assert.rejects(bobRelay.talkFrames(alice.user.id, { codec: Codec.opus16k, frames: realOpus() }, { realtime: false }), /unavailable|unsupported-codec/);
-    const aliceRelay = new SpikeClient({ server: url, userId: "x", token: alice.token, clientKind: "ios", decode: ["pcm16le16k"] });
+    const aliceRelay = relayClient(url, accounts, alice, { decode: ["pcm16le16k"] });
     await aliceRelay.connect();
     await assert.rejects(bobRelay.talkFrames(alice.user.id, { codec: Codec.opus16k, frames: realOpus() }, { realtime: false }), /unsupported-codec/);
     assert.equal(pusher.sent.length, 0);
@@ -394,12 +439,13 @@ test("codec admission: nobody is sent, or rung for, a codec they can't play", as
     // She's listening: Opus is refused at talk-start, and Opus frames in a PCM burst are dropped.
     await assert.rejects(bobRelay.talkFrames(alice.user.id, { codec: Codec.opus16k, frames: realOpus() }, { realtime: false }), /unsupported-codec/);
     const burstId = "mixed-burst";
-    bobRelay.send({ type: "talk-start", to: alice.user.id, burstId, codec: "pcm16le16k" } as never);
+    const { message, cipher } = await bobRelay.sealedTalkStart(alice.user.id, burstId, "pcm16le16k");
+    bobRelay.send(message);
     await bobRelay.waitFor("floor-granted", (m) => m.burstId === burstId);
     const before = aliceRelay.frames.length;
-    bobRelay.sendFrame(Codec.pcm16le16k, 0, Buffer.alloc(640, 2));
-    bobRelay.sendFrame(Codec.opus16k, 1, realOpus()[0]);
-    bobRelay.sendFrame(Codec.pcm16le16k, 2, Buffer.alloc(640, 3));
+    bobRelay.sendSealedFrame(cipher, Codec.pcm16le16k, 0, Buffer.alloc(640, 2));
+    bobRelay.sendSealedFrame(cipher, Codec.opus16k, 1, realOpus()[0]);
+    bobRelay.sendSealedFrame(cipher, Codec.pcm16le16k, 2, Buffer.alloc(640, 3));
     bobRelay.send({ type: "talk-end", burstId });
     await aliceRelay.waitFor("burst-end", (m) => m.burstId === burstId);
     assert.deepEqual(aliceRelay.frames.slice(before).map((f) => f[0]), [Codec.pcm16le16k, Codec.pcm16le16k]);
@@ -409,11 +455,11 @@ test("codec admission: nobody is sent, or rung for, a codec they can't play", as
 });
 
 test("synthetic Android peers: Google accounts, FCM rings (simulated), and Apple's Opus both ways", async () => {
-  await withServer(async ({ url, fcm, pusher }) => {
+  await withServer(async ({ url, fcm, pusher, accounts }) => {
     const apple = await signIn(url, "apple.alice", "Alice", "alice-phone");
-    await call(url, "PUT", "/v2/me/device", apple.token, apnsPtt("bb".repeat(32)));
+    await register(url, apple, apnsPtt("bb".repeat(32)));
     const android = await signIn(url, "g.riley", "Riley", "pixel-1", "google");
-    const reg = await call(url, "PUT", "/v2/me/device", android.token, { clientKind: "android", delivery: { provider: "fcm", mode: "notification", token: "fcm-pixel-1" }, capabilities: { decode: ["opus16k", "pcm16le16k"], encode: ["opus16k"] } });
+    const reg = await register(url, android, { clientKind: "android", delivery: { provider: "fcm", mode: "notification", token: "fcm-pixel-1" }, capabilities: { decode: ["opus16k", "pcm16le16k"], encode: ["opus16k"] } });
     assert.equal(reg.status, 200, JSON.stringify(reg.body));
     assert.equal(reg.body.device.receiveMode, "tap");
     // A cross-provider invite: friends regardless of provider, and nothing says which.
@@ -421,14 +467,15 @@ test("synthetic Android peers: Google accounts, FCM rings (simulated), and Apple
     const appleFriends = await call(url, "GET", "/v2/friends", apple.token);
     valid("friends.schema.json", appleFriends.body);
     // The iPhone rings the Android phone: the FCM stub has the same envelope.
-    const appleRelay = new SpikeClient({ server: url, userId: "x", token: apple.token, clientKind: "ios" });
+    const appleRelay = relayClient(url, accounts, apple);
     await appleRelay.connect();
     const opus = realOpus();
     const { conversationId } = await appleRelay.talkFrames(android.user.id, { codec: Codec.opus16k, frames: opus }, { realtime: false });
     assert.equal(fcm.sent.length, 1);
     valid("ring.schema.json", fcm.sent[0].ring);
-    // Android taps the notification: it answers the ring and hears Apple's packets byte for byte.
-    const androidRelay = new SpikeClient({ server: url, userId: "x", token: android.token, transport: "http", clientKind: "android" });
+    // Android taps the notification: it answers the ring and hears (opened) Apple's packets byte
+    // for byte.
+    const androidRelay = relayClient(url, accounts, android, { transport: "http" });
     assert.equal((await call(url, "POST", "/v2/rings/answer", android.token, { conversationId, ringId: fcm.sent[0].ring.ringId }, clientHeaders("android"))).status, 200);
     await androidRelay.connect(conversationId, undefined, fcm.sent[0].ring.ringId);
     await androidRelay.waitFor("burst-end");
