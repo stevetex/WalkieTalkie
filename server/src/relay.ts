@@ -509,9 +509,15 @@ export class Relay {
         !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(conversationId)) {
       return this.error(peer, "invalid encrypted talk", "unknown-message");
     }
+    // The bundle's signature covers the conversation ID, so the relay can't substitute the pair's
+    // own: it names it (another of the sender's devices is in it, or the app started again
+    // inside it), and the sender seals again with it. An ID already used by another pair is
+    // refused without one: the sender starts afresh with a new ID.
     const existing = this.byPair.get(pairKey(from, to));
     if ((existing && existing.id !== conversationId) || (!existing && this.byId.has(conversationId))) {
-      return this.error(peer, "conversation ID has changed", "unknown-conversation");
+      if (existing) this.opts.metrics.server(existing.id, "conversationChanged", now, from);
+      peer.sendJSON({ type: "talk-refused", burstId, reason: "conversation-changed", ...(existing ? { conversationId: existing.id } : {}) });
+      return;
     }
     const conversation = this.conversationFor(from, to, conversationId);
     this.pruneBursts(conversation);

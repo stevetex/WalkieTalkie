@@ -213,6 +213,29 @@ test("a rejoin can resume a burst that's still going, then hear the rest live", 
   });
 });
 
+test("a talk-start naming another pair's conversation is refused without that conversation's ID", async () => {
+  await withServer(async (h) => {
+    const [alice, bob, carol] = await friends(h, "Alice", "Bob", "Carol");
+    const a = alice.client();
+    const b = bob.client();
+    await Promise.all([a.connect(), b.connect()]);
+    const { conversationId } = await a.talk(bob.id, pcm(2), { realtime: false });
+    await b.waitFor("ring");
+
+    // Carol names Alice and Bob's conversation for her own Talk to Alice.
+    const c = carol.client();
+    await c.connect();
+    const burstId = randomUUID();
+    const { message } = await c.sealedTalkStart(alice.id, burstId, "pcm16le16k");
+    c.send({ ...message, conversationId } as typeof message);
+    const refused = await c.waitFor("talk-refused", (m) => m.burstId === burstId);
+    assert.equal(refused.reason, "conversation-changed");
+    assert.equal(refused.conversationId, undefined);
+    assert.equal(b.received.some((m) => m.type === "burst-start" && m.from === carol.id), false);
+    for (const x of [a, b, c]) x.close();
+  });
+});
+
 test("half duplex: the floor is denied while the other side is talking", async () => {
   await withServer(async (h) => {
     const [alice, bob] = await friends(h, "Alice", "Bob");

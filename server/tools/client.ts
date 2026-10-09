@@ -319,7 +319,14 @@ export class SpikeClient {
         (m) => (m.type === "floor-granted" || m.type === "floor-denied" || m.type === "talk-refused") && m.burstId === burstId,
         "floor decision",
       );
-      if (granted.type !== "talk-refused" || granted.reason !== "keys-stale" || attempt >= 1) break;
+      if (granted.type !== "talk-refused" || attempt >= 2) break;
+      if (granted.reason === "conversation-changed") {
+        // Seal again for the conversation the relay has for this pair (or a new one).
+        if (granted.conversationId) this.conversations.set(to, granted.conversationId);
+        else this.conversations.delete(to);
+        continue;
+      }
+      if (granted.reason !== "keys-stale" || attempt >= 1) break;
       // The next iteration fetches the friend's current certificates and seals a new bundle.
     }
     if (granted.type === "floor-denied") throw new Error(`floor held by ${granted.holder}`);

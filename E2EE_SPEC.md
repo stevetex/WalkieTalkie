@@ -147,7 +147,10 @@ At `talk-start` the sender attaches a bundle:
   back to its sender, or swapping keys.
 - For a new conversation, the sender chooses a random conversation UUID at `talk-start` so it
   can sign that ID before the relay grants the floor. It uses the established ID on later Talks;
-  the relay refuses a mismatched ID.
+  the relay refuses a mismatched ID with `talk-refused` `conversation-changed`, naming the pair's
+  conversation (another of the person's devices is in it, or the app started again inside it),
+  and the sender seals again for it (2026-10-09; until then the refusal was an `error` the apps
+  didn't act on, so Talk waited for a floor decision that never came).
 - **Replays:** a listener plays a message only if `sentAt` is at most about 3 minutes old by its
   own clock: the longest a real message waits before its start is heard (a 35 s ring, a 30 s
   join grace, queued bursts of up to 60 s, and a 30 s resume), plus a minute for clock drift:

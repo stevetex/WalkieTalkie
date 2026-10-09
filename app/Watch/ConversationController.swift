@@ -25,6 +25,9 @@ final class ConversationController: NSObject, ObservableObject {
     static let conversationWindow: TimeInterval = 45
     /// An in-app ring stops after this; the relay abandons the ring at 35 s.
     static let inAppRingTimeout: TimeInterval = 30
+    /// A Talk the relay hasn't answered by then (granted, denied or refused) is given up, so an
+    /// answer this build doesn't expect can't leave Talk waiting. Rings answer well within it.
+    static let floorDecisionTimeout: TimeInterval = 15
     /// How long to keep trying to rejoin after the stream drops mid-conversation; the relay
     /// keeps a heard message 30 s after it ends for the resume.
     static let reconnectWindowMs: Double = 30_000
@@ -141,6 +144,8 @@ final class ConversationController: NSObject, ObservableObject {
     /// The friends list was fetched again after this press's keys looked missing.
     private var refetchedKeys = false
     private var awaitingFloor = false
+    /// Counts talk-starts sent, so only the latest one's floor timeout acts.
+    private var floorWaits = 0
     private var sentFirstFrame = false
     private var idleTimer: Timer?
     private var incomingRingTimer: Timer?
@@ -906,8 +911,8 @@ final class ConversationController: NSObject, ObservableObject {
             e2ee.endSending()
         case "talk-refused":
             guard awaitingFloor, message.burstId == pendingBurstId else { break }
-            if message.reason == "keys-stale", message.burstId == pendingBurstId,
-               let keys = message.keys, retryWithKeys(keys) { break }
+            if message.reason == "keys-stale", let keys = message.keys, retryWithKeys(keys) { break }
+            if message.reason == "conversation-changed", retryInConversation(message.conversationId) { break }
             // No longer friends (removed or blocked): nobody was rung.
             WKInterfaceDevice.current().play(.failure)
             audio.endCapture {}
@@ -1054,6 +1059,7 @@ final class ConversationController: NSObject, ObservableObject {
                                         burstId: id, codec: audio.codecName, keys: fresh, now: Int64(startedAt))
             conversation?.conversationId = sealed.conversationId
             relay.send(sealed.control)
+            awaitFloorDecision()
             conversation?.timeline.mark("bundleSealed", detail: "\(Int(Clock.nowMs() - startedAt)) ms", once: false)
             refetchedKeys = false
         } catch {
@@ -1099,21 +1105,60 @@ final class ConversationController: NSObject, ObservableObject {
               let userId = account.session?.userId else { return false }
         staleRetries += 1
         _ = account.trust.update(account: userId, friend: current.peerId, keys: keys, now: Int64(Clock.nowMs()))
-        guard let id = pendingBurstId else { return false }
+        guard resendPendingBurst(keys: keys) else {
+            Telemetry.shared.event("e2eeFailed", ["reason": "stale-key"])
+            return false
+        }
+        // The next press seals to the current keys instead of being refused again.
+        Task { await account.refreshFriends() }
+        return true
+    }
+
+    /// The relay has this friend's conversation under another ID (the iPhone is in it, or the
+    /// app started again inside it), or none for an ID it can't use: the same burst is sealed
+    /// again for that conversation, or a new one. The signature covers the ID, so the relay can
+    /// only name it.
+    private func retryInConversation(_ id: String?) -> Bool {
+        guard awaitingFloor, staleRetries < 2, let current = conversation else { return false }
+        staleRetries += 1
+        conversation?.conversationId = id
+        conversation?.timeline.mark("conversationChanged", once: false)
+        return resendPendingBurst(keys: account.friends.first { $0.id == current.peerId }?.keys)
+    }
+
+    /// Seals the waiting burst again (same burst ID) and sends it with the frames captured so far.
+    private func resendPendingBurst(keys: FriendKeys?) -> Bool {
+        guard let current = conversation, let id = pendingBurstId else { return false }
         do {
             let sealed = try e2ee.start(peer: current.peerId, conversationId: current.conversationId,
                                         burstId: id, codec: audio.codecName, keys: keys, now: Int64(Clock.nowMs()))
             if !burstFinished { burstId = id }
             conversation?.conversationId = sealed.conversationId
             relay.send(sealed.control)
+            awaitFloorDecision()
             for frame in pendingFrames { relay.send(frame: try e2ee.send(frame)) }
             if burstFinished { relay.send(["type": "talk-end", "burstId": id]) }
-            // The next press seals to the current keys instead of being refused again.
-            Task { await account.refreshFriends() }
             return true
         } catch {
-            Telemetry.shared.event("e2eeFailed", ["reason": "stale-key"])
             return false
+        }
+    }
+
+    /// Gives up on a talk-start the relay never answers.
+    private func awaitFloorDecision() {
+        floorWaits += 1
+        let wait = floorWaits
+        Timer.scheduledTimer(withTimeInterval: Self.floorDecisionTimeout, repeats: false) { [weak self] _ in
+            guard let self else { return }
+            MainActor.assumeIsolated {
+                guard awaitingFloor, floorWaits == wait, conversation != nil else { return }
+                conversation?.timeline.mark("floorTimedOut", once: false)
+                Telemetry.shared.event("floorTimedOut", [:])
+                WKInterfaceDevice.current().play(.failure)
+                audio.endCapture {}
+                burstId = nil
+                finish(outcome: .unreachable)
+            }
         }
     }
 

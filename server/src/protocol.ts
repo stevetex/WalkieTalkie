@@ -136,7 +136,7 @@ export type ServerMessage =
   // The burst was dropped and nobody was rung: not friends (an account can only ring its
   // friends), none of the friend's devices can be rung right now, or the listener can't play
   // the burst's codec.
-  | { type: "talk-refused"; burstId: string; reason: "not-friends" | "unavailable" | "unsupported-codec" | "keys-stale"; keys?: FriendKeysJSON }
+  | { type: "talk-refused"; burstId: string; reason: "not-friends" | "unavailable" | "unsupported-codec" | "keys-stale" | "conversation-changed"; keys?: FriendKeysJSON; conversationId?: string }
   // The user joined or talked in this conversation from another of their devices, which now
   // has it; this device should end its side.
   | { type: "moved"; conversationId: string }
