@@ -1,23 +1,23 @@
-// overandout.app on Firebase Hosting (design decision 2026-09-27), over the REST API with
+// nowza.app on Firebase Hosting (design decision 2026-09-27), over the REST API with
 // the gcloud CLI's credentials, so no Firebase CLI or login is needed. Run through
 // setup-web.sh and deploy-web.sh, which pass the settings as environment variables.
 //
 //   node deploy/gcp/firebase-hosting.ts setup     adds Firebase to the project, creates the
 //                                                 site and the custom domain, and prints the
-//                                                 DNS records to add at GoDaddy
+//                                                 DNS records to add at Porkbun
 //   node deploy/gcp/firebase-hosting.ts dns       prints the domain's DNS and certificate state
 //   node deploy/gcp/firebase-hosting.ts deploy    uploads web/public and releases it
 //   node deploy/gcp/firebase-hosting.ts redirect  a site with no files that sends every path to
-//                                                 REDIRECT_URL (ops.overandout.app → the Ops
+//                                                 REDIRECT_URL (ops.nowza.app → the Ops
 //                                                 dashboard): creates the site and its custom
 //                                                 domain if needed, releases, prints the DNS records
 //
 //   PROJECT_ID, REGION   from config.sh
 //   SITE                 the Hosting site (default: PROJECT_ID)
-//   WEB_DOMAIN           the custom domain (default overandout.app; not DOMAIN, which config.sh
+//   WEB_DOMAIN           the custom domain (default nowza.app; not DOMAIN, which config.sh
 //                        sets to the relay's hostname)
 //   REDIRECT_TO          setup only: create WEB_DOMAIN as a redirect to this domain instead, for
-//                        example WEB_DOMAIN=www.overandout.app REDIRECT_TO=overandout.app
+//                        example WEB_DOMAIN=www.nowza.app REDIRECT_TO=nowza.app
 //   TEAM_ID              the Apple team ID, for apple-app-site-association
 //   SUPPORT_EMAIL        shown on the privacy and support pages
 //   TESTFLIGHT_URL       optional: the Beta's public TestFlight link, which the invite page
@@ -34,7 +34,7 @@ const env = process.env;
 const project = required("PROJECT_ID");
 const region = env.REGION || "us-central1";
 const site = env.SITE || project;
-const domain = env.WEB_DOMAIN || "overandout.app";
+const domain = env.WEB_DOMAIN || "nowza.app";
 const redirectTo = env.REDIRECT_TO || "";
 const publicDir = join(import.meta.dirname, "..", "..", "web", "public");
 const hosting = "https://firebasehosting.googleapis.com/v1beta1";
@@ -207,7 +207,7 @@ async function dns(): Promise<void> {
     console.log("No DNS changes needed.");
     return;
   }
-  console.log("DNS changes for GoDaddy:");
+  console.log(`DNS changes for ${domain} at Porkbun:`);
   for (const r of changes) console.log(`  ${r.requiredAction}  ${r.type}  ${r.domainName}  ${r.rdata}`);
 }
 

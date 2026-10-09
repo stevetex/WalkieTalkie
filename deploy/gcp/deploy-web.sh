@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# overandout.app on Firebase Hosting: the apple-app-site-association file, the invite
-# fallback page, and the home, privacy and support pages from web/public, with
-# overandout.app/v2/* going to the account API on Cloud Run.
+# nowza.app on Firebase Hosting: the apple-app-site-association file, the invite fallback
+# page, and the home, privacy and support pages from web/public, with nowza.app/v2/* going to
+# the account API on Cloud Run.
 #
 #   deploy/gcp/deploy-web.sh setup    once: adds Firebase to the project, creates the site
-#                                     and the custom domain, and prints GoDaddy's DNS records
+#                                     and the custom domain (WEB_DOMAIN, default nowza.app),
+#                                     and prints the DNS records it needs
 #   deploy/gcp/deploy-web.sh dns      the domain's DNS and certificate state
 #   deploy/gcp/deploy-web.sh          uploads web/public and releases it (the invite page
 #                                     offers TestFlight while config.sh sets TESTFLIGHT_URL)
