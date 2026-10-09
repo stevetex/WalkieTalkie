@@ -326,7 +326,7 @@ Server to client (clients ignore unknown types and fields):
 | `ring` | the ring envelope |
 | `floor-granted` | `burstId`, `conversationId`, `pushed` |
 | `floor-denied` | `burstId`, `holder` |
-| `talk-refused` | `burstId`, `reason`: `not-friends`, `unavailable` or `unsupported-codec` |
+| `talk-refused` | `burstId`, `reason`: `not-friends`, `unavailable`, `unsupported-codec`, `keys-stale` (with `keys`) or `conversation-changed` (with the pair's `conversationId`, or none); a client treats a reason it doesn't know as a refusal |
 | `joined` | `conversationId`, `peer`, `replayBursts`, `resumedFrames?`, `ringId?` |
 | `burst-start` | `conversationId`, `burstId`, `from`, `replay`, `resumed?`, `codec?` |
 | `burst-end` | `conversationId`, `burstId` |
@@ -445,9 +445,16 @@ key, base64); the phone's reply adds the watch's `deviceCert` and the phone's `p
 
 A message (burst) has its own random 32-byte message key. For the first encrypted Talk in a
 conversation the sender chooses a random UUID for `conversationId`; the relay uses it. For later
-Talks the sender uses the ID already given in `floor-granted` or `joined`. A different ID for an
-existing conversation is refused. This lets the sender sign the conversation ID before sending
-the bundle. `talk-start` carries `"format": 2`, `conversationId`,
+Talks the sender uses the ID already given in `floor-granted` or `joined`. This lets the sender
+sign the conversation ID before sending the bundle, so the relay can't substitute one.
+
+**Conversation changed.** A talk-start naming another ID than the pair's existing conversation
+(another of the sender's devices is in it, or the app started again inside it) is refused:
+`talk-refused` with `reason: "conversation-changed"` and that conversation's `conversationId`.
+The client seals the same burst again for it and retries; the conversation then moves to this
+device as a Talk from it always does (`moved` to the other). An ID that belongs to another
+pair's conversation is refused the same way without a `conversationId`: the client starts
+afresh with a new random ID. Clients give up on a talk-start with no floor decision after 15 s. `talk-start` carries `"format": 2`, `conversationId`,
 and the bundle in `e2ee`; the relay passes the bundle to listeners in `burst-start` (`format`,
 `e2ee`), wherever it sends one: live, replayed, resumed, and in `GET /v2/rings/audio`.
 

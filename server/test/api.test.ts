@@ -392,6 +392,39 @@ test("an iPhone and a watch on one account stay connected together, and a conver
   });
 });
 
+test("a device that doesn't know the conversation's ID is told it, seals again and takes the conversation over", async () => {
+  await withApi(async ({ url, pusher, accounts }) => {
+    const { alice, watch, bob } = await twoDevices(url);
+    const bobClient = relayClient(url, accounts, bob);
+    await bobClient.connect();
+    const first = await bobClient.talk(alice.user.id, pcm(3), { realtime: false });
+    const ring = ringIn(pusher, WATCH);
+    const aliceWatch = relayClient(url, accounts, watch);
+    await aliceWatch.connect(first.conversationId, undefined, ring.ringId);
+    await aliceWatch.waitFor("burst-end");
+
+    // Alice's iPhone never saw this conversation (or its app started again): its Talk names a
+    // new ID, which the relay can't take over (the bundle's signature covers it), so it's told
+    // the pair's own instead of hearing nothing.
+    const alicePhone = relayClient(url, accounts, alice);
+    await alicePhone.connect();
+    const burstId = crypto.randomUUID();
+    const { message } = await alicePhone.sealedTalkStart(bob.user.id, burstId, "pcm16le16k");
+    alicePhone.send(message);
+    const refused = await alicePhone.waitFor("talk-refused", (m) => m.burstId === burstId);
+    assert.deepEqual([refused.reason, refused.conversationId], ["conversation-changed", first.conversationId]);
+    alicePhone.send({ type: "talk-end", burstId });
+
+    // Sealed again for that conversation, the Talk goes through, and the iPhone has it now.
+    const again = await alicePhone.talk(bob.user.id, pcm(2), { realtime: false });
+    assert.equal(again.conversationId, first.conversationId);
+    assert.equal(again.pushed, false);
+    assert.equal((await aliceWatch.waitFor("moved")).conversationId, first.conversationId);
+    await bobClient.waitForMatch((m) => m.type === "burst-end" && bobClient.frames.length === 2, "Alice's message from her iPhone");
+    for (const c of [alicePhone, aliceWatch, bobClient]) c.close();
+  });
+});
+
 test("one device rings: the watch by default, the iPhone when chosen, the other when one can't be reached", async () => {
   await withApi(async ({ url, pusher, accounts }) => {
     const { alice, watch, bob } = await twoDevices(url);
