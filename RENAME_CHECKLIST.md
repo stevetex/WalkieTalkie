@@ -75,20 +75,20 @@ State on 2026-10-09:
   - `WEB_DOMAIN=www.nowza.app REDIRECT_TO=nowza.app deploy/gcp/deploy-web.sh setup`
 
   `setup` prints the records it expects. Compare them with the table above, because Firebase may want an extra TXT for the certificate. On 2026-10-09 neither custom domain existed (`deploy-web.sh dns` returned 404 `CD_NOT_FOUND`).
-- [ ] **Wait for the certificate:** `WEB_DOMAIN=nowza.app deploy/gcp/deploy-web.sh dns`. Then check that `https://nowza.app/.well-known/apple-app-site-association` and `https://nowza.app/v2/health` load. They should, because it's the same site with the same rewrites to the API.
+- [x] **Wait for the certificate:** `WEB_DOMAIN=nowza.app deploy/gcp/deploy-web.sh dns`. Then check that `https://nowza.app/.well-known/apple-app-site-association` and `https://nowza.app/v2/health` load. They should, because it's the same site with the same rewrites to the API. *(nowza.app and www.nowza.app certificates active; AASA and `/v2/health` load, 2026-10-09.)*
 - [x] **Fix the script comments.** `deploy-web.sh` and `firebase-hosting.ts` say "GoDaddy's DNS records" and default `WEB_DOMAIN` to overandout.app. Make the default `nowza.app` and say that nowza.app's DNS is at Porkbun. *(PR B.)*
 - ~~**Later (optional):** redirect overandout.app's HTML pages to nowza.app.~~ Superseded: the domain is retired (section 1a).
 
 ## 1a. Retire overandout.app (Steve, later on 2026-10-09)
 
-- [ ] **Apps (PR A):** `OAO_API_HOST = nowza.app`, `OAO_SERVER_HOST = relay-1.nowza.app`, only `applinks:nowza.app`, and `ServiceConfigStore.approved` trusts only nowza.app. Server and script defaults name nowza.app.
-- [ ] **Relay certificate:** `relay-1`'s `relay-hostnames` stateful metadata is `relay-1.nowza.app walkie.cypressoakstudios.com`, then a relay deploy (Caddy gets the certificate). Porkbun has `relay-1.nowza.app` A 35.209.96.216.
-- [ ] **`config.sh`:** `RELAY_PUBLIC_HOST=relay-1.nowza.app`, `RELAY_NODES=https://relay-1.nowza.app`, `INVITE_BASE_URL=https://nowza.app/i/`, `OPS_DOMAIN=ops.nowza.app`, `SUPPORT_EMAIL=nowza@cypressoakstudios.com`.
-- [ ] **Deploys:** the relay, the API, Ops (`setup-ops.sh`), the stats jobs (`setup-stats.sh`), the website, and `setup-telemetry.sh`.
-- [ ] **Ops address:** `ops.nowza.app` on the Hosting site `overandout-ops` (`setup-ops-redirect.sh`). Porkbun has `ops.nowza.app` CNAME `overandout-ops.web.app`.
-- [ ] **Monitoring:** uptime check and "Relay down" alert for `relay-1.nowza.app` (`setup-uptime.sh`), then delete the overandout.app ones.
-- [ ] **Remove from Firebase Hosting:** `overandout.app`, `www.overandout.app` and `ops.overandout.app`.
-- [ ] **Steve, in the console (no API without a Google Cloud organization):** Google Auth Platform → Branding: app name Nowza, home page `https://nowza.app`, privacy policy `https://nowza.app/privacy`; Authorized domains: add `nowza.app` (it may send you to Search Console for a Porkbun TXT record), remove `overandout.app`. Optional: rename the client "Over&Out Ops (IAP)".
+- [x] **Apps (PR A):** `OAO_API_HOST = nowza.app`, `OAO_SERVER_HOST = relay-1.nowza.app`, only `applinks:nowza.app`, and `ServiceConfigStore.approved` trusts only nowza.app. Server and script defaults name nowza.app. *(#63.)*
+- [x] **Relay certificate:** `relay-1`'s `relay-hostnames` stateful metadata is `relay-1.nowza.app walkie.cypressoakstudios.com`, then a relay deploy (Caddy gets the certificate). Porkbun has `relay-1.nowza.app` A 35.209.96.216. *(relay-1.nowza.app answers `/healthz` over valid TLS.)*
+- [x] **`config.sh`:** `RELAY_PUBLIC_HOST=relay-1.nowza.app`, `RELAY_NODES=https://relay-1.nowza.app`, `INVITE_BASE_URL=https://nowza.app/i/`, `OPS_DOMAIN=ops.nowza.app`, `SUPPORT_EMAIL=nowza@cypressoakstudios.com`. *(Only `SUPPORT_EMAIL` needed setting; the scripts' defaults are nowza.app.)*
+- [x] **Deploys:** the relay, the API, Ops (`setup-ops.sh`), the stats jobs (`setup-stats.sh`), the website, and `setup-telemetry.sh`. *(Steve ran them, 2026-10-09: relay, API, Ops and both stats jobs on `57746e5`; website from #64. The API's `/v2/config` names relay-1.nowza.app and invites are on nowza.app. The 23:15 Canary: relay 1/1, 1280 ms.)*
+- [x] **Ops address:** `ops.nowza.app` on the Hosting site `overandout-ops` (`setup-ops-redirect.sh`). Porkbun has `ops.nowza.app` CNAME `overandout-ops.web.app`. *(Added; its certificate was still validating at 23:15.)*
+- [x] **Monitoring:** uptime check and "Relay down" alert for `relay-1.nowza.app` (`setup-uptime.sh`), then delete the overandout.app ones. *(Done. The old uptime check could only be deleted after its alert policy, which uses it.)*
+- [x] **Remove from Firebase Hosting:** `overandout.app`, `www.overandout.app` and `ops.overandout.app`. *(Done; overandout.app/v2/health is 404. The CDN serves cached pages for up to an hour.)*
+- [x] **Steve, in the console (no API without a Google Cloud organization):** Google Auth Platform → Branding: app name Nowza, home page `https://nowza.app`, privacy policy `https://nowza.app/privacy`; Authorized domains: add `nowza.app` (it may send you to Search Console for a Porkbun TXT record), remove `overandout.app`. Optional: rename the client "Over&Out Ops (IAP)". *(Done by Steve. A failed earlier branding verification blocked edits until nowza.app was verified in Google Search Console (Domain property, TXT record at Porkbun) and re-verification was requested with "I have fixed the issues".)*
 - [ ] **Steve, GoDaddy:** let overandout.app lapse (turn auto-renew off) once nothing above needs it.
 - [ ] **Local tools:** the `bot.ts` and test-account token files name `https://overandout.app` as their API; point them at `https://nowza.app`.
 
@@ -139,7 +139,7 @@ State on 2026-10-09:
 
 ## 3. Server and config (part of PR A, plus config Steve owns)
 
-- [ ] **`deploy/gcp/config.sh`** (gitignored): `SUPPORT_EMAIL="nowza@cypressoakstudios.com"`. The privacy, support and terms pages pick it up through `firebase-hosting.ts`.
+- [x] **`deploy/gcp/config.sh`** (gitignored): `SUPPORT_EMAIL="nowza@cypressoakstudios.com"`. The privacy, support and terms pages pick it up through `firebase-hosting.ts`.
 - [x] **`INVITE_BASE_URL`** for the API *(PR A: `deploy-api.sh` reads it from `config.sh`, default `https://nowza.app/i/`; deployed with the retirement, section 1a.)* (`server/src/api-main.ts` defaults to `https://overandout.app/i/`). Change the default and the deployed value to `https://nowza.app/i/`, in the order given in section 2, then deploy the API (ask first).
 - [x] **Comments and defaults** that only describe the domain (`api-main.ts`, `api.ts`, `ops-main.ts`, `rolling-main.ts`, `stats.ts`, `telemetry.ts`): update the product name in comments. Leave relay URLs alone. *(PR A.)*
 - [x] **Optional, later, ask first:** *(PR A, Steve's OK: "Nowza Ops", "Nowza Beta" and "Nowza: …" alerts, renamed in place by `setup-telemetry.sh`. The OAuth consent screen is Steve's, in the console.)*
@@ -154,7 +154,7 @@ State on 2026-10-09:
   - overandout.app links → nowza.app
   - In privacy and terms, update the effective or updated date. Keep "Cypress Oak Studios, LLC" as the operator.
 - [x] **`web/public/.well-known/apple-app-site-association`:** no change. It lists app IDs, and the same file serves both domains.
-- [ ] **Deploy the website (ask first):** `deploy/gcp/deploy-web.sh`. Then check both domains in a browser.
+- [x] **Deploy the website (ask first):** `deploy/gcp/deploy-web.sh`. Then check both domains in a browser. *(nowza.app only; overandout.app is retired.)*
 
 ## 5. App Store Connect, TestFlight and store assets (ask Steve before each change)
 
