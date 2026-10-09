@@ -58,7 +58,6 @@ h1, h2, h3 { font-family: var(--f-display); text-wrap: balance; margin: 0; }
 .mast-in { max-width: 1280px; margin: 0 auto; display: flex; flex-wrap: wrap; align-items: center; gap: 12px 24px; }
 .brand { display: flex; align-items: center; gap: 10px; }
 .brand h1 { font-size: 24px; font-weight: 700; letter-spacing: .01em; }
-.brand h1 span { color: var(--accent-fill); }
 .env { font-size: 13px; color: var(--mast-muted); display: flex; gap: 6px 14px; flex-wrap: wrap; }
 .env .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #6fd19a; margin-right: 6px; vertical-align: 1px; }
 .controls { margin-left: auto; display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center; }
