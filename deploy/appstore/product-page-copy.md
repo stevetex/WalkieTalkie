@@ -17,8 +17,7 @@ and every message is sealed to each of the friend's registered devices.
 Nowza: Walkie Talkie + Watch
 
 Renamed from Over&Out on 2026-10-09 (an earlier app, "Over-N-Out Walkie Talkie", has a
-confusingly similar name). The description below still says "Over&Out"; replace it with "Nowza"
-as part of RENAME_CHECKLIST.md. Keep "Walkie Talkie" as two words: App Store search matches whole
+confusingly similar name). Keep "Walkie Talkie" as two words: App Store search matches whole
 words. The keyword list doesn't repeat any word in the name or subtitle. Recheck that if either
 changes. `phone` is in the keywords because the name has no room for it.
 
@@ -32,7 +31,7 @@ Talk to close friends from Apple Watch or iPhone. Every message is end-to-end en
 
 ## Description
 
-Over&Out is a walkie-talkie for close friends on Apple Watch and iPhone, and every message is end-to-end encrypted by default, on your watch as well as your phone. Hold the mascot's mouth to talk, then let go to listen. Ask a quick question, share a bit of news, or just say hi. Your friend can answer right back, and you can keep talking for as long as you like.
+Nowza is a walkie-talkie for close friends on Apple Watch and iPhone, and every message is end-to-end encrypted by default, on your watch as well as your phone. Hold the mascot's mouth to talk, then let go to listen. Ask a quick question, share a bit of news, or just say hi. Your friend can answer right back, and you can keep talking for as long as you like.
 
 Here's how it works:
 
@@ -40,17 +39,17 @@ Here's how it works:
 
 • Encrypted all the way to your wrist. Your Apple Watch has its own keys. Each message is encrypted separately for each of your friend's devices, so their watch decrypts it itself. It isn't decrypted on a phone or a server along the way.
 
-• Talk from your watch. When a friend starts a conversation, your watch taps your wrist. Tap the ring to hear the message, even if Over&Out was closed. Hold the mascot's mouth to answer. You can also start a conversation from a friend's Talk screen on your watch.
+• Talk from your watch. When a friend starts a conversation, your watch taps your wrist. Tap the ring to hear the message, even if Nowza was closed. Hold the mascot's mouth to answer. You can also start a conversation from a friend's Talk screen on your watch.
 
-• Hear them on your iPhone. With iPhone ringing on, your friend's voice plays without a tap, even if the phone is locked or Over&Out isn't open. Reply with the Talk button on the Lock Screen, or talk from the app. An Apple Watch isn't required.
+• Hear them on your iPhone. With iPhone ringing on, your friend's voice plays without a tap, even if the phone is locked or Nowza isn't open. Reply with the Talk button on the Lock Screen, or talk from the app. An Apple Watch isn't required.
 
 • Choose where friends reach you. If you have a paired watch, set it to ring on your watch, on your iPhone, or on your watch first. In that last setting, your iPhone rings if you haven't answered the watch within 20 seconds.
 
 • Invite the people you want to hear from. Send a link through Messages. They choose whether to add you, and only accepted friends can ring you. You can block or report someone if you need to.
 
-Pick a screen name and a picture your friends will recognize: your own photo or one of Over&Out's 18 mascots. They'll see it when you ring. Over&Out doesn't keep recordings or a message history.
+Pick a screen name and a picture your friends will recognize: your own photo or one of Nowza's 18 mascots. They'll see it when you ring. Nowza doesn't keep recordings or a message history.
 
-Start on your iPhone with Sign in with Apple. If you have an Apple Watch, install Over&Out on it and it signs in from your iPhone.
+Start on your iPhone with Sign in with Apple. If you have an Apple Watch, install Nowza on it and it signs in from your iPhone.
 
 ## Keywords
 

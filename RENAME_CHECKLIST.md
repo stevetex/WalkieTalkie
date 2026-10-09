@@ -21,6 +21,11 @@ by name. Use separate PRs for independent work, and say how you'll split it befo
 Suggested split: **PR A** apps + server strings + entitlements, **PR B** website, **PR C** docs and
 art. Hosting setup and DNS are not code.
 
+**Changed later on 2026-10-09: Steve retires overandout.app.** Few people know it, so every
+breaking change happens at once: the apps, API, relay, Ops and website move entirely to nowza.app,
+and builds made before the move stop working until testers install the new one. Section 0's
+domain items below are superseded; section 1a lists the retirement.
+
 ## 0. Do NOT rename these
 
 These identifiers are internal, and existing installs, old builds and links already sent depend on
@@ -47,18 +52,11 @@ them. Leave every one as it is, even though it says "overandout".
   - `demo-overandout` (Firestore emulator project)
   - the GCP project `walkie-talkie-relay`
   - Cloud Run service names
-- **Relay hostnames:**
-  - `relay-*.overandout.app`
-  - `Contract.approved(_:bundled:)` in `OverAndOutKit/Contract.swift`, which only trusts relay hosts on `overandout.app`
-  - Old builds only accept relays there, so relays stay on overandout.app. Optional: let new builds also accept `nowza.app` hosts, for a future move.
-- **`overandout.app` itself stays live and renewed indefinitely.** It serves:
-  - the account API (`/v1`, `/v2`) that every existing build calls (`OAO_API_HOST`)
-  - the `apple-app-site-association` file for old builds' universal links
-  - `/i/` invite links already sent
-  - the relay nodes
-  - `ops.overandout.app`
-
-  Steve: turn on auto-renew at GoDaddy. **Never redirect its `/v1`, `/v2`, `/i/` or `/.well-known/` paths.**
+- ~~**Relay hostnames** and **`overandout.app` itself**~~: superseded. overandout.app is retired
+  (section 1a); the relays, API, invites, AASA and Ops are on nowza.app, and
+  `Contract.approved(_:bundled:)` trusts only nowza.app relays.
+- **Firebase Hosting site names** `walkie-talkie-relay` and `overandout-ops`: sites can't be renamed,
+  and users never see them.
 
 ## 1. DNS and hosting (Steve does DNS; ask before running setup)
 
@@ -72,20 +70,33 @@ State on 2026-10-09:
 | `*.nowza.app` | deleted ✅ | none |
 
 - [x] **Steve, at Porkbun:** removed the parking ALIAS and the wildcard, and added the root A record (checked on Porkbun, Google and Cloudflare DNS, 2026-10-09). Porkbun shows root records with an empty Host, not `@`.
-- [ ] **Add the custom domains to the Hosting site (ask first).** Run with `export PATH=$HOME/google-cloud-sdk/bin:$PATH`:
+- [x] **Add the custom domains to the Hosting site (ask first).** Run with `export PATH=$HOME/google-cloud-sdk/bin:$PATH`: *(Done 2026-10-09 with Steve's OK: both hosts and ownership active, certificates propagating, no DNS changes needed.)*
   - `WEB_DOMAIN=nowza.app deploy/gcp/deploy-web.sh setup`
   - `WEB_DOMAIN=www.nowza.app REDIRECT_TO=nowza.app deploy/gcp/deploy-web.sh setup`
 
   `setup` prints the records it expects. Compare them with the table above, because Firebase may want an extra TXT for the certificate. On 2026-10-09 neither custom domain existed (`deploy-web.sh dns` returned 404 `CD_NOT_FOUND`).
 - [ ] **Wait for the certificate:** `WEB_DOMAIN=nowza.app deploy/gcp/deploy-web.sh dns`. Then check that `https://nowza.app/.well-known/apple-app-site-association` and `https://nowza.app/v2/health` load. They should, because it's the same site with the same rewrites to the API.
-- [ ] **Fix the script comments.** `deploy-web.sh` and `firebase-hosting.ts` say "GoDaddy's DNS records" and default `WEB_DOMAIN` to overandout.app. Make the default `nowza.app` and say that nowza.app's DNS is at Porkbun.
-- [ ] **Later (optional):** redirect overandout.app's **HTML pages only** (`/`, `/privacy`, `/support`, `/terms`) to nowza.app. Not `/i/`, `/v1`, `/v2` or `/.well-known/`. The current redirect tooling sends `**` (every path), so this needs a per-path redirect config. Until then both domains serve the same site, and that's fine.
+- [x] **Fix the script comments.** `deploy-web.sh` and `firebase-hosting.ts` say "GoDaddy's DNS records" and default `WEB_DOMAIN` to overandout.app. Make the default `nowza.app` and say that nowza.app's DNS is at Porkbun. *(PR B.)*
+- ~~**Later (optional):** redirect overandout.app's HTML pages to nowza.app.~~ Superseded: the domain is retired (section 1a).
+
+## 1a. Retire overandout.app (Steve, later on 2026-10-09)
+
+- [ ] **Apps (PR A):** `OAO_API_HOST = nowza.app`, `OAO_SERVER_HOST = relay-1.nowza.app`, only `applinks:nowza.app`, and `ServiceConfigStore.approved` trusts only nowza.app. Server and script defaults name nowza.app.
+- [ ] **Relay certificate:** `relay-1`'s `relay-hostnames` stateful metadata is `relay-1.nowza.app walkie.cypressoakstudios.com`, then a relay deploy (Caddy gets the certificate). Porkbun has `relay-1.nowza.app` A 35.209.96.216.
+- [ ] **`config.sh`:** `RELAY_PUBLIC_HOST=relay-1.nowza.app`, `RELAY_NODES=https://relay-1.nowza.app`, `INVITE_BASE_URL=https://nowza.app/i/`, `OPS_DOMAIN=ops.nowza.app`, `SUPPORT_EMAIL=nowza@cypressoakstudios.com`.
+- [ ] **Deploys:** the relay, the API, Ops (`setup-ops.sh`), the stats jobs (`setup-stats.sh`), the website, and `setup-telemetry.sh`.
+- [ ] **Ops address:** `ops.nowza.app` on the Hosting site `overandout-ops` (`setup-ops-redirect.sh`). Porkbun has `ops.nowza.app` CNAME `overandout-ops.web.app`.
+- [ ] **Monitoring:** uptime check and "Relay down" alert for `relay-1.nowza.app` (`setup-uptime.sh`), then delete the overandout.app ones.
+- [ ] **Remove from Firebase Hosting:** `overandout.app`, `www.overandout.app` and `ops.overandout.app`.
+- [ ] **Steve, in the console (no API without a Google Cloud organization):** Google Auth Platform → Branding: app name Nowza, home page `https://nowza.app`, privacy policy `https://nowza.app/privacy`; Authorized domains: add `nowza.app` (it may send you to Search Console for a Porkbun TXT record), remove `overandout.app`. Optional: rename the client "Over&Out Ops (IAP)".
+- [ ] **Steve, GoDaddy:** let overandout.app lapse (turn auto-renew off) once nothing above needs it.
+- [ ] **Local tools:** the `bot.ts` and test-account token files name `https://overandout.app` as their API; point them at `https://nowza.app`.
 
 ## 2. Apps (PR A)
 
 ### Display name and user-visible text
-- [ ] **`INFOPLIST_KEY_CFBundleDisplayName = "Over&Out"`:** set it to `"Nowza"` in all 5 places in `app/OverAndOut.xcodeproj/project.pbxproj` (lines ~394, 424, 454, 485, 515).
-- [ ] **Every user-visible string with "Over&Out":**
+- [x] **`INFOPLIST_KEY_CFBundleDisplayName = "Over&Out"`:** set it to `"Nowza"` in all 5 places in `app/OverAndOut.xcodeproj/project.pbxproj` (lines ~394, 424, 454, 485, 515). *(PR A: 6 places, plus the microphone text.)*
+- [x] **Every user-visible string with "Over&Out":** *(PR A. About's line under the logo is now "Walkie Talkie + Watch".)*
   - **Kit:** `Account.swift` (188, 199, 202, 207), `Contract.swift` (23, 295)
   - **Watch:** `ContentView.swift`, `FriendsListView.swift`, `SettingsView.swift`, `WatchAccount.swift`
   - **iOS:**
@@ -101,27 +112,27 @@ State on 2026-10-09:
     - `RootView.swift` (57, 59)
   - **Tests asserting these strings:** `RelayConnectionTests.swift` (190, 198) and any other `"Update Over&Out"` checks.
   - **Check:** `git grep -n -E 'Over&Out|Over and Out' -- app ':!*.png'` should leave only comments, if anything.
-- [ ] **Server-sent text the apps show:** `server/src/contract.ts:256` `"Update Over&Out to keep talking."` → `"Update Nowza to keep talking."`, plus the matching tests and `contracts/examples`. Push alerts are "<friend name>" / "Tap to listen" (`server/src/apns.ts`), so they need no change.
+- [x] **Server-sent text the apps show:** `server/src/contract.ts:256` `"Update Over&Out to keep talking."` → `"Update Nowza to keep talking."`, plus the matching tests and `contracts/examples`. Push alerts are "<friend name>" / "Tap to listen" (`server/src/apns.ts`), so they need no change. *(PR A.)*
 
 ### Invite links on nowza.app
-- [ ] **Entitlements:** `app/Config/iOS.entitlements` and `iOS-NoPush.entitlements` have `applinks:$(OAO_LINK_DOMAIN)`. Keep the old domain and add the new one:
+- [x] **Entitlements:** `app/Config/iOS.entitlements` and `iOS-NoPush.entitlements` have `applinks:$(OAO_LINK_DOMAIN)`. Keep the old domain and add the new one: *(PR A, after the retirement: only `applinks:$(OAO_LINK_DOMAIN)`, which is nowza.app. www.nowza.app is left out: Firebase redirects every path there, AASA included, and Apple doesn't follow AASA redirects.)*
   - `applinks:nowza.app`
   - `applinks:www.nowza.app`
   - `applinks:overandout.app`, so links already sent keep opening the app
 
   The Associated Domains capability is already on the App ID, so Xcode's automatic signing regenerates the profiles.
-- [ ] **`app/Config/Base.xcconfig`:** `OAO_LINK_DOMAIN = nowza.app`. Keep `OAO_API_HOST = overandout.app` and `OAO_SERVER_HOST = relay-1.overandout.app` (section 0).
-- [ ] **`AppModel.swift:546`** only accepts `linkDomain` and `www.linkDomain`. Also accept `overandout.app` (and `www.`), so old links work in new builds. Change the `?? "overandout.app"` fallback on line 92 and the `?? URL(string: "https://overandout.app")` on line 94 to whatever matches the new defaults. Keep the API on overandout.app unless you move it deliberately.
-- [ ] **Order matters for invites:** switch the API's `INVITE_BASE_URL` to `https://nowza.app/i/` (section 3) only **after** the minimum build includes `applinks:nowza.app`. Until then, old builds open nowza.app links in Safari (the invite fallback page) instead of the app.
+- [x] **`app/Config/Base.xcconfig`:** `OAO_LINK_DOMAIN = nowza.app`. Keep `OAO_API_HOST = overandout.app` and `OAO_SERVER_HOST = relay-1.overandout.app` (section 0). *(PR A.)*
+- [x] **`AppModel.swift:546`** only accepts `linkDomain` and `www.linkDomain`. Also accept `overandout.app` (and `www.`), so old links work in new builds. Change the `?? "overandout.app"` fallback on line 92 and the `?? URL(string: "https://overandout.app")` on line 94 to whatever matches the new defaults. Keep the API on overandout.app unless you move it deliberately. *(PR A.)*
+- [x] ~~**Order matters for invites:**~~ *(Moot: overandout.app is retired and old builds stop working anyway.)* switch the API's `INVITE_BASE_URL` to `https://nowza.app/i/` (section 3) only **after** the minimum build includes `applinks:nowza.app`. Until then, old builds open nowza.app links in Safari (the invite fallback page) instead of the app.
 
 ### Art inside the apps
-- [ ] **`OverAndOutBrand`** (the stacked mascot plus **"Over&Out" wordmark** on indigo) is used by About. It needs a new **Nowza** wordmark from Steve, or About can show the mascot plus native text instead. The same applies to `art/masters/brand-stacked-indigo.png`, `art/masters/lockup-horizontal-dark.png`, `art/documentation/over-and-out-horizontal-*.png` and `art/merch/lockup-horizontal-dark-300dpi.png`. Steve decides how to produce the new wordmark (it's raster art with no font file; see `art/README.md`).
-- [ ] **App icons** (`art/icons/*/OverAndOut-1024.png`): check them for any lettering. Expected: mascot only, no change.
+- [x] **`OverAndOutBrand`** (the stacked mascot plus **"Over&Out" wordmark** on indigo) is used by About. It needs a new **Nowza** wordmark from Steve, or About can show the mascot plus native text instead. The same applies to `art/masters/brand-stacked-indigo.png`, `art/masters/lockup-horizontal-dark.png`, `art/documentation/over-and-out-horizontal-*.png` and `art/merch/lockup-horizontal-dark-300dpi.png`. Steve decides how to produce the new wordmark (it's raster art with no font file; see `art/README.md`). *(PR #62.)*
+- [x] **App icons** (`art/icons/*/OverAndOut-1024.png`): check them for any lettering. Expected: mascot only, no change. *(No lettering, per PR #62.)*
 
 ### Checks
-- [ ] Kit `swift test`.
-- [ ] iPhone and watch Debug simulator builds, plus a Release device build, with **no warnings**.
-- [ ] In the simulators (local relay + API): the name on the home screen and in About, the invite share text, and a nowza.app invite link and an overandout.app invite link both open the app.
+- [x] Kit `swift test`. *(81 passed.)*
+- [x] iPhone and watch Debug simulator builds, plus a Release device build, with **no warnings**. *(PR A, no Swift warnings.)*
+- [x] In the simulators (local relay + API): the name on the home screen and in About, the invite share text, and a nowza.app invite link and an overandout.app invite link both open the app. *(Names, About and the nowza.app invite link checked. Universal links can't open in the simulator, because the `.dev` bundle ID isn't in AASA; check them on TestFlight.)*
 - [ ] **TestFlight build (ask first).** On devices:
   - the home-screen name, the Lock Screen PushToTalk name, and Sign in with Apple's sheet
   - **re-measure push → first audio** on the locked iPhone, because `PushToTalkChannel.swift` changed (AGENTS.md); check Ring Me On first
@@ -129,20 +140,20 @@ State on 2026-10-09:
 ## 3. Server and config (part of PR A, plus config Steve owns)
 
 - [ ] **`deploy/gcp/config.sh`** (gitignored): `SUPPORT_EMAIL="nowza@cypressoakstudios.com"`. The privacy, support and terms pages pick it up through `firebase-hosting.ts`.
-- [ ] **`INVITE_BASE_URL`** for the API (`server/src/api-main.ts` defaults to `https://overandout.app/i/`). Change the default and the deployed value to `https://nowza.app/i/`, in the order given in section 2, then deploy the API (ask first).
-- [ ] **Comments and defaults** that only describe the domain (`api-main.ts`, `api.ts`, `ops-main.ts`, `rolling-main.ts`, `stats.ts`, `telemetry.ts`): update the product name in comments. Leave relay URLs alone.
-- [ ] **Optional, later, ask first:**
+- [x] **`INVITE_BASE_URL`** for the API *(PR A: `deploy-api.sh` reads it from `config.sh`, default `https://nowza.app/i/`; deployed with the retirement, section 1a.)* (`server/src/api-main.ts` defaults to `https://overandout.app/i/`). Change the default and the deployed value to `https://nowza.app/i/`, in the order given in section 2, then deploy the API (ask first).
+- [x] **Comments and defaults** that only describe the domain (`api-main.ts`, `api.ts`, `ops-main.ts`, `rolling-main.ts`, `stats.ts`, `telemetry.ts`): update the product name in comments. Leave relay URLs alone. *(PR A.)*
+- [x] **Optional, later, ask first:** *(PR A, Steve's OK: "Nowza Ops", "Nowza Beta" and "Nowza: …" alerts, renamed in place by `setup-telemetry.sh`. The OAuth consent screen is Steve's, in the console.)*
   - the Ops dashboard title "Over&Out Ops" (`ops-main.ts`)
   - the Cloud Monitoring dashboard "Over&Out Beta" (`setup-telemetry.sh`)
   - the Ops OAuth consent screen name
 
 ## 4. Website (PR B)
 
-- [ ] **`web/public/index.html`, `invite.html`, `privacy.html`, `support.html`, `terms.html`:**
+- [x] **`web/public/index.html`, `invite.html`, `privacy.html`, `support.html`, `terms.html`:** *(PR B.)*
   - "Over&Out" (and `Over&amp;Out`) → "Nowza"
   - overandout.app links → nowza.app
   - In privacy and terms, update the effective or updated date. Keep "Cypress Oak Studios, LLC" as the operator.
-- [ ] **`web/public/.well-known/apple-app-site-association`:** no change. It lists app IDs, and the same file serves both domains.
+- [x] **`web/public/.well-known/apple-app-site-association`:** no change. It lists app IDs, and the same file serves both domains.
 - [ ] **Deploy the website (ask first):** `deploy/gcp/deploy-web.sh`. Then check both domains in a browser.
 
 ## 5. App Store Connect, TestFlight and store assets (ask Steve before each change)
@@ -153,20 +164,20 @@ State on 2026-10-09:
   - the Feedback Email → `nowza@cypressoakstudios.com`
   - the beta app description
   - the "What to Test" notes of the next build should mention the rename
-- [ ] **`deploy/appstore/beta-review-notes.md`:** name and contact email.
-- [ ] **`deploy/appstore/product-page-copy.md`:**
+- [x] **`deploy/appstore/beta-review-notes.md`:** name and contact email. *(PR C.)*
+- [x] **`deploy/appstore/product-page-copy.md`:** *(PR C.)*
   - "Over&Out" → "Nowza" throughout
   - the header note's assumed app name
   - the app name, the "Renamed" note and the keywords (with `phone`) were already updated on 2026-10-09; recheck duplicates only if the name or subtitle changes
   - remove the "being renamed" note
-- [ ] **`deploy/appstore/creative-assets/compose.swift`** and its outputs: the text is "Walkie-talkie for iPhone + Apple Watch", with no name in the strings. Check that the UI captures it composes don't show "Over&Out" (for example About). Regenerate and get Steve's approval if they do.
-- [ ] **`deploy/appstore/screenshots/`:** retake any screenshot that shows the old name.
-- [ ] **`deploy/appstore/asc.ts` and `testflight.sh`:** check for hard-coded names (scheme and archive names stay, per section 0).
+- [x] **`deploy/appstore/creative-assets/compose.swift`** and its outputs: the text is "Walkie-talkie for iPhone + Apple Watch", with no name in the strings. Check that the UI captures it composes don't show "Over&Out" (for example About). Regenerate and get Steve's approval if they do. *(OCR of its outputs finds no old name.)*
+- [ ] **`deploy/appstore/screenshots/`:** retake any screenshot that shows the old name. *(OCR, 2026-10-09: `iphone-2-locked` (Lock Screen "Over&Out", from Steve's iPhone), `iphone-5-friends` and `iphone-7-ring-choice` (masthead and text). Retake after PR A merges.)*
+- [x] **`deploy/appstore/asc.ts` and `testflight.sh`:** check for hard-coded names (scheme and archive names stay, per section 0). *(Only section 0 identifiers.)*
 
 ## 6. Docs and repo (PR C)
 
-- [ ] **Product name in prose:** `README.md`, `AGENTS.md` (first line, plus the overandout.app mentions that should now say nowza.app), `HANDOFF.md`, `app/README.md`, `contracts/README.md`, `art/README.md` ("Brand spelling is **Over&Out**" → **Nowza**), `art/GENERATION.md`, `E2EE_SPEC.md`, `OPS_DASHBOARD_SPEC.md`, `ANDROID_WEAR_OS_PLAN.md`, `SWIFT6_MIGRATION_PLAN.md`, `.claude/agents/` (run-analyst), and workflow display names in `.github/workflows/` (not job IDs CI depends on).
-- [ ] **Leave historical log entries in HANDOFF.md as written.** Add a new top entry about the rename.
+- [x] **Product name in prose:** `README.md`, `AGENTS.md` (first line, plus the overandout.app mentions that should now say nowza.app), `HANDOFF.md`, `app/README.md`, `contracts/README.md`, `art/README.md` ("Brand spelling is **Over&Out**" → **Nowza**), `art/GENERATION.md`, `E2EE_SPEC.md`, `OPS_DASHBOARD_SPEC.md`, `ANDROID_WEAR_OS_PLAN.md`, `SWIFT6_MIGRATION_PLAN.md`, `.claude/agents/` (run-analyst), and workflow display names in `.github/workflows/` (not job IDs CI depends on). *(PR C.)*
+- [x] **Leave historical log entries in HANDOFF.md as written.** Add a new top entry about the rename. *(PR C.)*
 - [ ] **Claude Docs (optional):** the titles of the feasibility doc, backlog, telemetry spec and App Store pre-submission checklist. The feasibility doc's Design decisions table already has the rename decision (2026-10-09).
 
 ## 7. Email
@@ -181,10 +192,10 @@ State on 2026-10-09:
 ## 8. Done when
 
 - [ ] `git grep -n -I -E 'Over&Out|Over&amp;Out|Over and Out'` shows only historical entries (HANDOFF log, decision records) and section 0 identifiers.
-- [ ] `https://nowza.app`, `/privacy`, `/support`, `/terms` and `/i/<code>` load with a valid certificate. `www.nowza.app` redirects to `nowza.app`. overandout.app still serves the API, AASA and `/i/`.
+- [ ] `https://nowza.app`, `/privacy`, `/support`, `/terms` and `/i/<code>` load with a valid certificate. `www.nowza.app` redirects to `nowza.app`. `relay-1.nowza.app` and `ops.nowza.app` have valid certificates, and overandout.app is gone from Google Cloud.
 - [ ] On a TestFlight build:
   - the home screen, Lock Screen PushToTalk, About and invites say Nowza
-  - links on both domains open the app
+  - nowza.app invite links open the app
   - push → first audio is re-measured and recorded in the feasibility doc
 - [ ] App Store Connect shows "Nowza: Walkie Talkie + Watch" with nowza.app URLs.
 - [ ] HANDOFF.md "Start here" describes the rename and anything still pending.

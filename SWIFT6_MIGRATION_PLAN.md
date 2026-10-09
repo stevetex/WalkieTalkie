@@ -8,7 +8,7 @@ timing re-measurement are still to do; see "Implementation record" at the end.
 
 ## Objective and recommendation
 
-Adopt Swift 6 language mode in the Over&Out shared package, iPhone app, Watch app,
+Adopt Swift 6 language mode in the Nowza shared package, iPhone app, Watch app,
 and Watch notification service extension. Use the compiler's concurrency checks
 to make ownership of mutable state and transfers between execution contexts
 explicit, while preserving audio timing and existing behavior.

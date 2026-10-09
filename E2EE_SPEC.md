@@ -1,4 +1,4 @@
-# Over&Out end-to-end encryption: spec
+# Nowza end-to-end encryption: spec
 
 Oct 7, 2026 · Steve Teixeira
 
@@ -298,7 +298,7 @@ Measured 2026-10-07 (branch `opus-cbr`):
   of the new build); issues watch certificates; seals and opens; rotates keys. PushToTalk
   playback while locked works because the keys are after-first-unlock.
 - **Watch:** creates its keys and gets its certificate over the link. If the iPhone isn't
-  reachable yet, it can't send or hear encrypted messages; it says "Open Over&Out on your
+  reachable yet, it can't send or hear encrypted messages; it says "Open Nowza on your
   iPhone" (like the existing session path).
 - **Watch notification extension:** downloads the prefetch as today and keeps it encrypted on
   disk. The app opens it at the tap, so plaintext never touches the disk.
@@ -308,7 +308,7 @@ Measured 2026-10-07 (branch `opus-cbr`):
   (a small mark by the friend's name, on the watch and the iPhone), because a notice seen once
   is easy to miss. It never blocks a message.
 - **Invite fingerprint:** an invite link carries the inviter's phone key fingerprint in its
-  fragment, `overandout.app/i/<code>#k=<fingerprint>`. Browsers and universal links don't send
+  fragment, `nowza.app/i/<code>#k=<fingerprint>`. Browsers and universal links don't send
   the fragment to the server, and most invites travel by Messages or email, which our server
   doesn't carry. When the link is accepted, the app checks that the inviter's keys from the
   directory include that key. If they don't, the friendship still forms, but the friend's page
@@ -354,7 +354,7 @@ Store launch while every tester can be told to update.
 
 - **Relay and API:** `audioFormats` is `[2]` in `/v2/config`. Admission without
   `X-OAO-Audio-Formats` including 2, and a device registration without format 2, answer
-  `409 client-upgrade-required`, so a build from before E2EE shows "Update Over&Out" even
+  `409 client-upgrade-required`, so a build from before E2EE shows "Update Nowza" even
   without a minimum build. A registration without certificates is `400 bad-certificate`. A
   talk-start without `format: 2` is malformed (`error`, `unknown-message`); frames are checked
   as format 2 (a 16-byte tag). The relay never rings a device without keys.
@@ -462,10 +462,10 @@ later key change asks to verify again instead of only noting it.
 Steve asked whether someone could pose as our servers, for example with a DNS hack on the
 client. All of this is a possible future step, not planned.
 
-**What protects us today.** Release builds talk only to `https://relay-1.overandout.app` and
-`https://overandout.app` (plain HTTP only for localhost, in the simulator). No code overrides the
+**What protects us today.** Release builds talk only to `https://relay-1.nowza.app` and
+`https://nowza.app` (plain HTTP only for localhost, in the simulator). No code overrides the
 system's certificate checks, and the service can point apps only at HTTPS hosts under
-overandout.app (`ServiceConfigStore.approved`). So a DNS hack on the client, such as rogue Wi-Fi
+nowza.app (`ServiceConfigStore.approved`). So a DNS hack on the client, such as rogue Wi-Fi
 or a poisoned resolver, only stops the app connecting: the attacker can't show a valid
 certificate. Nothing is pinned, though: any certificate from a CA the device trusts is
 accepted.
@@ -491,7 +491,7 @@ changed".
 2. **CAA records** that allow only the CAs we use: Google Trust Services for the relay's
    Caddy (`setup-relay.sh`); Firebase Hosting's CA to be checked. Optionally RFC 8657's
    `accounturi`, which ties issuance to our own ACME account.
-3. **Certificate Transparency monitoring** for overandout.app: free services alert on any new
+3. **Certificate Transparency monitoring** for nowza.app: free services alert on any new
    certificate, so a wrongly issued one shows up within hours.
 4. **Sessions bound to a device key:** each request signed with the device's signing key
    (E2EE gives every device one), so a captured token alone is useless.

@@ -1,6 +1,6 @@
-# Over&Out service contract, version 2
+# Nowza service contract, version 2
 
-This directory freezes the contract between the Over&Out clients (iPhone, Apple Watch, the
+This directory freezes the contract between the Nowza clients (iPhone, Apple Watch, the
 watch's notification service extension, and later Android phones and Wear OS watches) and the
 service (the account API on Cloud Run and the relay nodes). It is Phase 0 of
 [ANDROID_WEAR_OS_PLAN.md](../ANDROID_WEAR_OS_PLAN.md): the first commercial Apple build speaks
@@ -55,7 +55,7 @@ These are what let a commercial client keep working when Android arrives.
 
 | Header | On | Meaning |
 | --- | --- | --- |
-| `Authorization: Bearer <token>` | every call but sign-in and config | the device's Over&Out session |
+| `Authorization: Bearer <token>` | every call but sign-in and config | the device's Nowza session |
 | `X-OAO-Client-Kind` | every v2 call; required on relay admission | `ios`, `watchos`, `android` or `wearos` |
 | `X-OAO-Client-Version` | every v2 call | the marketing version, e.g. `1.0` |
 | `X-OAO-Build` | every v2 call; required on relay admission | the build number, e.g. `165` |
@@ -73,7 +73,7 @@ only `session-ended`, `unauthorized` and `no-account` end the stored session.
 
 | Code | Status | Meaning, and detail fields |
 | --- | --- | --- |
-| `client-upgrade-required` | 409 | This build is below `minimumBuild`. Show "Update Over&Out"; keep the session |
+| `client-upgrade-required` | 409 | This build is below `minimumBuild`. Show "Update Nowza"; keep the session |
 | `unsupported-protocol` | 409 | Relay protocol not supported. `supported: {relayProtocols: [2]}` |
 | `unsupported-codec` | 409 | No codec in common. `supported: {codecs: [...]}` |
 | `ring-expired` | 410 | The ring was answered elsewhere, replaced by a newer ring, or ran out |
@@ -94,13 +94,13 @@ Unauthenticated and cacheable (`Cache-Control: public, max-age=300`). It holds n
 or user data. Clients fetch it at launch and on coming to the foreground, never on the ring
 path; they keep the last good copy and a bundled fallback relay. A relay `baseUrl` is used
 only if its host is approved: the bundled relay host, or `https` on a host under
-`overandout.app`.
+`nowza.app`.
 
 ```json
 {
   "schemaVersion": 1,
   "api": { "versions": [1, 2] },
-  "relay": { "baseUrl": "https://relay-1.overandout.app", "protocols": [2], "audioFormats": [2], "codecs": ["opus16k", "pcm16le16k"] },
+  "relay": { "baseUrl": "https://relay-1.nowza.app", "protocols": [2], "audioFormats": [2], "codecs": ["opus16k", "pcm16le16k"] },
   "features": { "googleSignIn": false, "fcmDelivery": false },
   "compatibility": { "minimumBuilds": { "ios": 0, "watchos": 0 }, "message": null },
   "timing": { "ringUnansweredMs": 35000, "answerJoinGraceMs": 30000, "conversationIdleMs": 45000 }

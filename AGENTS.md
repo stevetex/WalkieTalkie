@@ -1,6 +1,6 @@
 # **AGENTS.md**
 
-Over&Out: Watch Walkie Talkie (overandout.app) is a Walkie-Talkie app for Apple Watch and iPhone (and, later, Android and Android Wear), functionally modeled after the now-retired (with WatchOS 27)  Apple Watch Walkie-Talkie app. The watch and iPhone apps, accounts, the relay and API on Google Cloud, and the branded website are built and live. The app is currently targeting WatchOS 10.2 and higher and iOS 17 and higher, as these are the minimum simulator image versions supported by the latest XCode.
+Nowza: Walkie Talkie + Watch (nowza.app) is a Walkie-Talkie app for Apple Watch and iPhone (and, later, Android and Android Wear), functionally modeled after the now-retired (with WatchOS 27)  Apple Watch Walkie-Talkie app. The watch and iPhone apps, accounts, the relay and API on Google Cloud, and the branded website are built and live. It was called Over&Out (overandout.app, now retired) until 2026-10-09: bundle IDs, keychain and UserDefaults keys and `OverAndOut*` code names keep that name (RENAME_CHECKLIST.md, section 0). The app is currently targeting WatchOS 10.2 and higher and iOS 17 and higher, as these are the minimum simulator image versions supported by the latest XCode.
 
 Start by reading HANDOFF.md at the repo root. This file has been a running log of what's happened from one to the next prompt session. The "Start here" section usually contains what's just happened and what's ready to be done next. Keep this file up-to-date from session to session.
 
