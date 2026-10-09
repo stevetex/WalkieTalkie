@@ -9,24 +9,36 @@ friend's private device keys. The service controls the public-key directory and 
 list a separate phone identity whose private key it owns. Do not claim that the servers are
 incapable of listening under every circumstance. The server-side Test Bot decrypts messages
 addressed to it by design.
-The keyword list assumes the planned app name `Over&Out: Watch Walkie Talkie`
-and the subtitle below. Recheck duplicates if either changes.
+"By default" and "no unencrypted mode" rely on E2EE PR D (format 1 refused everywhere) being
+deployed. "Its own keys" for the watch relies on PR C: the watch registers its own device keys
+and every message is sealed to each of the friend's registered devices.
+## App name (28/30 characters)
 
-## Subtitle (26/30 characters)
+Nowza: Walkie Talkie + Watch
 
-End-to-end encrypted voice
+Renamed from Over&Out on 2026-10-09 (an earlier app, "Over-N-Out Walkie Talkie", has a
+confusingly similar name). The description below still says "Over&Out"; replace it with "Nowza"
+as part of RENAME_CHECKLIST.md. Keep "Walkie Talkie" as two words: App Store search matches whole
+words. The keyword list doesn't repeat any word in the name or subtitle. Recheck that if either
+changes. `phone` is in the keywords because the name has no room for it.
 
-## Promotional text (169/170 characters)
+## Subtitle (23/30 characters)
 
-Talk to close friends from Apple Watch or iPhone. Voice is end-to-end encrypted with 256-bit keys. Your private keys stay on your devices; our relay cannot decode audio.
+Every message encrypted
+
+## Promotional text (166/170 characters)
+
+Talk to close friends from Apple Watch or iPhone. Every message is end-to-end encrypted by default, all the way to your wrist. Your private keys stay on your devices.
 
 ## Description
 
-Over&Out is a walkie-talkie for close friends on Apple Watch and iPhone, with end-to-end encrypted voice. Hold the mascot's mouth to talk, then let go to listen. Ask a quick question, share a bit of news, or just say hi. Your friend can answer right back, and you can keep talking for as long as you like.
+Over&Out is a walkie-talkie for close friends on Apple Watch and iPhone, and every message is end-to-end encrypted by default, on your watch as well as your phone. Hold the mascot's mouth to talk, then let go to listen. Ask a quick question, share a bit of news, or just say hi. Your friend can answer right back, and you can keep talking for as long as you like.
 
 Here's how it works:
 
-• End-to-end encrypted voice. A fresh 256-bit key protects each message between friends. Your private keys stay on your devices, so our relay cannot decode the encrypted audio it carries. Your friend's device decrypts the message for them.
+• Every message encrypted, by default. There's nothing to turn on and no unencrypted mode. A fresh 256-bit key protects each message between friends. Your private keys stay on your devices, so our relay cannot decode the encrypted audio it carries.
+
+• Encrypted all the way to your wrist. Your Apple Watch has its own keys. Each message is encrypted separately for each of your friend's devices, so their watch decrypts it itself. It isn't decrypted on a phone or a server along the way.
 
 • Talk from your watch. When a friend starts a conversation, your watch taps your wrist. Tap the ring to hear the message, even if Over&Out was closed. Hold the mascot's mouth to answer. You can also start a conversation from a friend's Talk screen on your watch.
 
@@ -42,4 +54,4 @@ Start on your iPhone with Sign in with Apple. If you have an Apple Watch, instal
 
 ## Keywords
 
-ptt,push,intercom,radio,message,conversation,friend,lock screen,two way,live,e2ee,private,chat
+phone,ptt,push,intercom,radio,conversation,friend,lock screen,two way,live,e2ee,private,secure,chat
