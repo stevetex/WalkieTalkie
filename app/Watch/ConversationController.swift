@@ -385,9 +385,16 @@ final class ConversationController: NSObject, ObservableObject {
             return
         }
         let delivery: DeviceRegistration.Delivery = token.map { .alert(token: $0, environment: AppSettings.apnsEnvironment) } ?? .foreground
-        let keys: E2EEKeyStore.Registration?
+        let keys: E2EEKeyStore.Registration
         do {
-            keys = try account.e2ee.registration(userId: account.session!.userId, deviceId: account.deviceId, phone: false, now: Int64(Clock.nowMs()))
+            // Registered only with keys (the service refuses a device without them). The iPhone
+            // certifies this watch's key; its arrival registers again (onSessionChanged).
+            guard let certified = try account.e2ee.registration(userId: account.session!.userId, deviceId: account.deviceId,
+                                                                phone: false, now: Int64(Clock.nowMs())) else {
+                registrationStatus = "Waiting for keys from your iPhone"
+                return
+            }
+            keys = certified
         } catch {
             Telemetry.shared.event("e2eeFailed", ["reason": "key-storage"])
             return
@@ -399,12 +406,10 @@ final class ConversationController: NSObject, ObservableObject {
                 if let group = Prefetched.appGroup, let defaults = UserDefaults(suiteName: group) {
                     defaults.set(["token": token ?? "", "environment": AppSettings.apnsEnvironment,
                                   "notifications": notifications.rawValue], forKey: "e2eeWatchRegistration")
-                    if let keys {
-                        let last = defaults.string(forKey: "e2eeWatchEncCert")
-                        let current = keys.encCert.base64EncodedString()
-                        if last != nil && last != current { Telemetry.shared.event("keysRotated", [:]) }
-                        defaults.set(current, forKey: "e2eeWatchEncCert")
-                    }
+                    let last = defaults.string(forKey: "e2eeWatchEncCert")
+                    let current = keys.encCert.base64EncodedString()
+                    if last != nil && last != current { Telemetry.shared.event("keysRotated", [:]) }
+                    defaults.set(current, forKey: "e2eeWatchEncCert")
                 }
                 registrationStatus = "Registered" + (note.map { ", \($0)" } ?? "")
             } catch {
@@ -589,9 +594,7 @@ final class ConversationController: NSObject, ObservableObject {
                     securityNoticeVersion += 1
                     Telemetry.shared.event("keyChanged", ["friend": ring.from])
                 }
-                if burst.start.format == Int(E2EE.audioFormat) {
-                    conversation?.timeline.mark("bundleOpened", detail: "prefetch \(Int(Clock.nowMs() - startedAt)) ms", once: false)
-                }
+                conversation?.timeline.mark("bundleOpened", detail: "prefetch \(Int(Clock.nowMs() - startedAt)) ms", once: false)
             } catch {
                 Telemetry.shared.event("e2eeFailed", ["reason": (error as? E2EE.Failure)?.rawValue
                     ?? (error as? E2EEFlow.FlowError)?.rawValue ?? "bad-bundle"])
@@ -942,9 +945,7 @@ final class ConversationController: NSObject, ObservableObject {
                     securityNoticeVersion += 1
                     Telemetry.shared.event("keyChanged", ["friend": peer])
                 }
-                if message.format == Int(E2EE.audioFormat) {
-                    conversation?.timeline.mark("bundleOpened", detail: "\(Int(Clock.nowMs() - openedAt)) ms", once: false)
-                }
+                conversation?.timeline.mark("bundleOpened", detail: "\(Int(Clock.nowMs() - openedAt)) ms", once: false)
             } catch {
                 acceptingBurst = false
                 Telemetry.shared.event("e2eeFailed", ["reason": (error as? E2EE.Failure)?.rawValue
@@ -1049,14 +1050,11 @@ final class ConversationController: NSObject, ObservableObject {
         do {
             let startedAt = Clock.nowMs()
             let fresh = account.friends.first { $0.id == current.peerId }?.keys
-            if let sealed = try e2ee.start(peer: current.peerId, conversationId: current.conversationId,
-                                            burstId: id, codec: audio.codecName, keys: fresh, now: Int64(startedAt)) {
-                conversation?.conversationId = sealed.conversationId
-                relay.send(sealed.control)
-                conversation?.timeline.mark("bundleSealed", detail: "\(Int(Clock.nowMs() - startedAt)) ms", once: false)
-            } else {
-                relay.send(["type": "talk-start", "to": current.peerId, "burstId": id, "codec": audio.codecName])
-            }
+            let sealed = try e2ee.start(peer: current.peerId, conversationId: current.conversationId,
+                                        burstId: id, codec: audio.codecName, keys: fresh, now: Int64(startedAt))
+            conversation?.conversationId = sealed.conversationId
+            relay.send(sealed.control)
+            conversation?.timeline.mark("bundleSealed", detail: "\(Int(Clock.nowMs() - startedAt)) ms", once: false)
             refetchedKeys = false
         } catch {
             burstId = nil
@@ -1103,9 +1101,8 @@ final class ConversationController: NSObject, ObservableObject {
         _ = account.trust.update(account: userId, friend: current.peerId, keys: keys, now: Int64(Clock.nowMs()))
         guard let id = pendingBurstId else { return false }
         do {
-            guard let sealed = try e2ee.start(peer: current.peerId, conversationId: current.conversationId,
-                                               burstId: id, codec: audio.codecName, keys: keys,
-                                               now: Int64(Clock.nowMs())) else { return false }
+            let sealed = try e2ee.start(peer: current.peerId, conversationId: current.conversationId,
+                                        burstId: id, codec: audio.codecName, keys: keys, now: Int64(Clock.nowMs()))
             if !burstFinished { burstId = id }
             conversation?.conversationId = sealed.conversationId
             relay.send(sealed.control)

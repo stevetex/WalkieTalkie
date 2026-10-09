@@ -52,8 +52,10 @@ export interface TestBotOptions {
   minEchoFrames?: number;
   // Rings beyond this many conversations at once aren't answered.
   maxConversations?: number;
-  keys?: EndpointKeys;
-  recipientKeys?: (userId: string) => Promise<FriendKeysJSON>;
+  // Its own E2EE keys (endpoint-keys.ts): it opens what it hears and seals what it says.
+  keys: EndpointKeys;
+  // A caller's current keys, from the key directory, to seal to.
+  recipientKeys: (userId: string) => Promise<FriendKeysJSON>;
 }
 
 interface BotConversation {
@@ -65,7 +67,6 @@ interface BotConversation {
   hearing: Buffer[] | null;
   hearingCipher: FrameCipher | null;
   seenSeq: Set<number>;
-  format: 1 | 2;
   staleRetries: number;
   // Bursts waiting to be said: frames with their headers.
   queue: Buffer[][];
@@ -79,7 +80,7 @@ interface BotConversation {
 export class TestBot {
   private relay: Relay;
   private metrics: MetricsStore;
-  private opts: Required<Omit<TestBotOptions, "keys" | "recipientKeys">> & Pick<TestBotOptions, "keys" | "recipientKeys">;
+  private opts: Required<TestBotOptions>;
   private lobby: Peer;
   private conversations = new Map<string, BotConversation>();
   private answering = new Set<string>();
@@ -106,7 +107,6 @@ export class TestBot {
       userId: this.opts.userId,
       deviceId: this.opts.deviceId,
       e2eeDeviceId: this.opts.deviceId,
-      audioFormats: this.opts.keys ? [1, 2] : [1],
       noRings: true,
       sendJSON: (m) => {
         if (m.type === "ring") this.later(0, () => this.ringed(m.conversationId, m.from, m.ringId));
@@ -163,7 +163,6 @@ export class TestBot {
         hearing: null,
         hearingCipher: null,
         seenSeq: new Set(),
-        format: 1,
         staleRetries: 0,
         queue: [],
         lastSaid: null,
@@ -180,7 +179,6 @@ export class TestBot {
         userId: this.opts.userId,
         deviceId: `${this.opts.deviceId}.${this.nextPeer++}`,
         e2eeDeviceId: this.opts.deviceId,
-        audioFormats: this.opts.keys ? [1, 2] : [1],
         noRings: true,
         sendJSON: (m) => deliver(m),
         sendBinary: (frame) => deliver(Buffer.from(frame)),
@@ -203,11 +201,7 @@ export class TestBot {
   }
 
   private heard(conversation: BotConversation, frame: Buffer): void {
-    if (!conversation.hearing || conversation.hearing.length >= this.opts.maxEchoFrames) return;
-    if (!conversation.hearingCipher) {
-      conversation.hearing.push(frame);
-      return;
-    }
+    if (!conversation.hearing || !conversation.hearingCipher || conversation.hearing.length >= this.opts.maxEchoFrames) return;
     try {
       const opened = conversation.hearingCipher.open(frame);
       if (conversation.seenSeq.has(opened.seq)) return;
@@ -231,17 +225,14 @@ export class TestBot {
         conversation.hearing = [];
         conversation.hearingCipher = null;
         conversation.seenSeq.clear();
-        conversation.format = m.format === 2 ? 2 : 1;
-        if (m.format === 2) {
-          if (!this.opts.keys || !m.e2ee || !m.codec) { conversation.hearing = null; break; }
-          try {
-            conversation.hearingCipher = openBundle(m.e2ee,
-              { conversationId: conversation.id, burstId: m.burstId, codec: m.codec, from: m.from, to: this.opts.userId },
-              { deviceId: this.opts.deviceId, keys: this.opts.keys.encryption }, Date.now()).cipher;
-          } catch {
-            conversation.hearing = null;
-            break;
-          }
+        if (!m.codec) { conversation.hearing = null; break; }
+        try {
+          conversation.hearingCipher = openBundle(m.e2ee,
+            { conversationId: conversation.id, burstId: m.burstId, codec: m.codec, from: m.from, to: this.opts.userId },
+            { deviceId: this.opts.deviceId, keys: this.opts.keys.encryption }, Date.now()).cipher;
+        } catch {
+          conversation.hearing = null;
+          break;
         }
         this.resetIdle(conversation);
         break;
@@ -328,25 +319,20 @@ export class TestBot {
     const { conversation, frames, burstId } = talk;
     if (this.speaking !== talk) return;
     const codec = frames[0]?.[0] === Codec.pcm16le16k ? Codec.pcm16le16k : Codec.opus16k;
-    if (conversation.format === 2) {
-      if (!this.opts.keys || !this.opts.recipientKeys) return this.end(conversation, true);
-      try {
-        const directory = await this.opts.recipientKeys(conversation.caller);
-        const recipients = usableKeys(conversation.caller, directory, Date.now()).recipients;
-        if (this.speaking !== talk) return;
-        if (!recipients.length) return this.end(conversation, true);
-        const { bundle, cipher } = sealBundle(
-          { conversationId: conversation.id, burstId, codec: codec === Codec.opus16k ? "opus16k" : "pcm16le16k", from: this.opts.userId, to: conversation.caller },
-          this.opts.keys.sender, recipients, Date.now());
-        talk.cipher = cipher;
-        this.relay.handleMessage(conversation.peer, { type: "talk-start", to: conversation.caller, burstId, codec,
-          format: 2, conversationId: conversation.id, e2ee: bundle });
-      } catch (err) {
-        console.error(`[test-bot] cannot seal reply: ${(err as Error).message}`);
-        return this.end(conversation, true);
-      }
-    } else {
-      this.relay.handleMessage(conversation.peer, { type: "talk-start", to: conversation.caller, burstId, codec });
+    try {
+      const directory = await this.opts.recipientKeys(conversation.caller);
+      const recipients = usableKeys(conversation.caller, directory, Date.now()).recipients;
+      if (this.speaking !== talk) return;
+      if (!recipients.length) return this.end(conversation, true);
+      const { bundle, cipher } = sealBundle(
+        { conversationId: conversation.id, burstId, codec: codec === Codec.opus16k ? "opus16k" : "pcm16le16k", from: this.opts.userId, to: conversation.caller },
+        this.opts.keys.sender, recipients, Date.now());
+      talk.cipher = cipher;
+      this.relay.handleMessage(conversation.peer, { type: "talk-start", to: conversation.caller, burstId, codec,
+        format: 2, conversationId: conversation.id, e2ee: bundle });
+    } catch (err) {
+      console.error(`[test-bot] cannot seal reply: ${(err as Error).message}`);
+      return this.end(conversation, true);
     }
     talk.startedAt = performance.now();
     this.sendFrames();
@@ -356,7 +342,9 @@ export class TestBot {
   private sendFrames(): void {
     const talk = this.speaking;
     if (!talk) return;
-    const { conversation, frames } = talk;
+    const { conversation, frames, cipher } = talk;
+    // Sealed at talk-start; nothing goes out in plaintext.
+    if (!cipher) return;
     while (talk.next < frames.length) {
       const due = talk.startedAt + talk.next * this.opts.frameMs;
       if (this.opts.frameMs > 0 && due > performance.now()) {
@@ -367,8 +355,7 @@ export class TestBot {
         return;
       }
       const plain = withSeq(frames[talk.next], talk.next);
-      this.relay.handleAudio(conversation.peer, talk.cipher
-        ? talk.cipher.seal(plain[0]!, talk.next, plain.subarray(FRAME_HEADER_BYTES)) : plain);
+      this.relay.handleAudio(conversation.peer, cipher.seal(plain[0]!, talk.next, plain.subarray(FRAME_HEADER_BYTES)));
       talk.next++;
     }
     this.relay.handleMessage(conversation.peer, { type: "talk-end", burstId: talk.burstId });

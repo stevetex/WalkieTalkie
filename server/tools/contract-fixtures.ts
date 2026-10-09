@@ -1,12 +1,13 @@
-// Writes contracts/fixtures/frames.json and records.json: the binary audio format 1 and the
-// HTTPS transport's records, as hex, for every client's tests. The Opus packets are real ones
+// Writes contracts/fixtures/frames.json and records.json: the binary audio format 1 layout (which
+// format 2 keeps, sealing the payload; format 1 itself is no longer carried) and the HTTPS
+// transport's records, as hex, for every client's tests. The Opus packets are real ones
 // from macOS's encoder (the Test Bot's greeting), so a decoder on another platform can prove it
 // plays Apple's packets. Run again only if the format changes (it mustn't):
 //   node tools/contract-fixtures.ts
 
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { Codec, FRAME_HEADER_BYTES, isValidFrame } from "../src/protocol.ts";
+import { Codec, FRAME_HEADER_BYTES, FRAME_TAG_BYTES, isValidFrame } from "../src/protocol.ts";
 import { RecordType, encodeJSONRecord, encodeRecord } from "../src/records.ts";
 import { loadGreeting } from "../src/test-bot.ts";
 
@@ -37,7 +38,7 @@ const frames = [
   { name: "malformed-opus-empty", frame: frame(Codec.opus16k, 0, Buffer.alloc(0)) },
   { name: "malformed-opus-too-long", frame: frame(Codec.opus16k, 0, Buffer.alloc(1276, 7)) },
   { name: "malformed-header-only", frame: Buffer.from([1, 0, 0]) },
-].map(({ frame: f, ...rest }) => ({ ...rest, valid: isValidFrame(f), hex: f.toString("hex") }));
+].map(({ frame: f, ...rest }) => ({ ...rest, valid: isValidFrame(Buffer.concat([f, Buffer.alloc(FRAME_TAG_BYTES)])), hex: f.toString("hex") }));
 
 const ack = { type: "hello-ack", clientTime: 1790726400000, serverTime: 1790726400042 };
 const audio = Buffer.from(frames[0].hex, "hex");

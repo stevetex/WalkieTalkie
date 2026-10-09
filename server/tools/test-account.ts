@@ -49,7 +49,7 @@ import { Accounts } from "../src/accounts.ts";
 import { Firestore, gcloudAccessToken } from "../src/firestore.ts";
 import { SessionSigner, parseSigningKey } from "../src/session.ts";
 import { CANARY_DEVICE } from "../src/canary.ts";
-import { localEndpointKeys, openEndpointSecrets, type EndpointSecrets } from "../src/endpoint-keys.ts";
+import { createEndpointSecrets, localEndpointKeys, openEndpointSecrets, type EndpointSecrets } from "../src/endpoint-keys.ts";
 
 // OAO_BOT_TOKEN_FILE keeps a local bot (simulator testing) apart from the Google Cloud one.
 export const BOT_TOKEN_FILE = process.env.OAO_BOT_TOKEN_FILE ?? join(import.meta.dirname, "..", "data", "bot-token.json");
@@ -63,13 +63,15 @@ const BOT_REGISTRATION = {
   clientKind: "watchos" as const,
   delivery: { provider: "test" as const, mode: "connection" as const },
   availability: { enabled: true, notifications: "authorized" as const },
-  capabilities: { relayProtocols: [2], audioFormats: [1], decode: ["opus16k" as const, "pcm16le16k" as const], encode: ["opus16k" as const], features: [] },
+  capabilities: { relayProtocols: [2], audioFormats: [2], decode: ["opus16k" as const, "pcm16le16k" as const], encode: ["opus16k" as const], features: [] },
 };
 
+// Null without a keys file: a device registers only with its keys (format 2 only), and the relay
+// registers the Test Bot's own when it starts.
 function botRegistration(userId: string) {
-  if (!existsSync(BOT_KEYS_FILE)) return BOT_REGISTRATION;
+  if (!existsSync(BOT_KEYS_FILE)) return null;
   const keys = openEndpointSecrets(JSON.parse(readFileSync(BOT_KEYS_FILE, "utf8")) as EndpointSecrets, userId, BOT_DEVICE);
-  return { ...BOT_REGISTRATION, capabilities: { ...BOT_REGISTRATION.capabilities, audioFormats: [1, 2] }, e2ee: keys.registration };
+  return { ...BOT_REGISTRATION, e2ee: keys.registration };
 }
 
 export interface BotSession {
@@ -122,7 +124,7 @@ if (import.meta.main) {
   } else if (command === "register-keys") {
     const session = loadBotSession();
     const reg = botRegistration(session.userId);
-    if (!("e2ee" in reg)) throw new Error(`create ${BOT_KEYS_FILE} with the keys command first`);
+    if (!reg) throw new Error(`create ${BOT_KEYS_FILE} with the keys command first`);
     if (local) await api(base, session.token, "PUT", "/v2/me/device", reg);
     else {
       const accounts = new Accounts(new Firestore({ projectId: project, accessToken: gcloudAccessToken() }));
@@ -140,7 +142,8 @@ if (import.meta.main) {
         clientKind: "watchos",
       });
       session = { api: base, userId: res.user.id, name: res.user.name, token: res.token, expiresAt: res.expiresAt };
-      await api(base, session.token, "PUT", "/v2/me/device", botRegistration(session.userId));
+      const reg = botRegistration(session.userId);
+      if (reg) await api(base, session.token, "PUT", "/v2/me/device", reg);
     } else {
       // Straight to Firestore and Secret Manager, as the signed-in gcloud user.
       const accounts = new Accounts(new Firestore({ projectId: project, accessToken: gcloudAccessToken() }));
@@ -153,7 +156,8 @@ if (import.meta.main) {
       const sid = await accounts.createSession(user.id, BOT_DEVICE, "watchos");
       const { token, expiresAt } = signer.issue({ sub: user.id, sid, dev: BOT_DEVICE });
       session = { api: base, userId: user.id, name: user.name, token, expiresAt };
-      await accounts.registerDevice(user.id, BOT_DEVICE, botRegistration(user.id));
+      const reg = botRegistration(user.id);
+      if (reg) await accounts.registerDevice(user.id, BOT_DEVICE, reg);
     }
     save(session);
     console.log(`Test Bot is ${session.userId} ("${session.name}"); its token is in ${BOT_TOKEN_FILE}.`);
@@ -211,11 +215,14 @@ if (import.meta.main) {
     const deviceId = `android-${arg.toLowerCase()}`;
     const res = await api(base, null, "POST", "/v2/auth/google", { identityToken: `dev:${arg.toLowerCase()}`, nonce: "unused", name: arg, deviceId, clientKind: "android" });
     const session: BotSession = { api: base, userId: res.user.id, name: res.user.name, token: res.token, expiresAt: res.expiresAt };
+    const keys = openEndpointSecrets(createEndpointSecrets(session.userId, deviceId, "android"), session.userId, deviceId);
     await api(base, session.token, "PUT", "/v2/me/device", {
       clientKind: "android",
       delivery: { provider: "fcm", mode: "notification", token: `fcm-${deviceId}` },
       availability: { enabled: true, notifications: "authorized" },
-      capabilities: { relayProtocols: [2], audioFormats: [1], decode: ["opus16k", "pcm16le16k"], encode: ["opus16k", "pcm16le16k"] },
+      capabilities: { relayProtocols: [2], audioFormats: [2], decode: ["opus16k", "pcm16le16k"], encode: ["opus16k", "pcm16le16k"] },
+      // Throwaway keys: the synthetic account is rung, never heard.
+      e2ee: keys.registration,
       clientVersion: "synthetic",
       build: "1",
     });

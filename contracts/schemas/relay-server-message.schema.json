@@ -31,7 +31,7 @@
   "allOf": [
     { "if": { "properties": { "type": { "const": "ring" } } }, "then": { "$ref": "common.schema.json#/$defs/ringEnvelope" } },
     { "if": { "properties": { "type": { "const": "joined" } } }, "then": { "required": ["conversationId", "peer", "replayBursts"] } },
-    { "if": { "properties": { "type": { "const": "burst-start" } } }, "then": { "required": ["conversationId", "burstId", "from", "replay"] } },
+    { "if": { "properties": { "type": { "const": "burst-start" } } }, "then": { "required": ["conversationId", "burstId", "from", "replay", "format", "e2ee"] } },
     { "if": { "properties": { "type": { "const": "floor-granted" } } }, "then": { "required": ["burstId", "conversationId", "pushed"] } },
     { "if": { "properties": { "type": { "const": "talk-refused" } } }, "then": { "required": ["burstId", "reason"] } }
   ]

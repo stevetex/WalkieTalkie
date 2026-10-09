@@ -56,6 +56,8 @@ TESTFLIGHT_URL=""
 # ANDROID_WEAR_OS_PLAN.md), for deploy-api.sh and deploy-relay.sh:
 # MINIMUM_BUILDS: JSON of the lowest build of each client kind still admitted, e.g.
 # {"ios":170,"watchos":170}; older builds get "Update Over&Out". Empty = no minimum.
+# E2EE's PR D: set both to the first TestFlight build that refuses format 1, and deploy the API
+# and relay with it (E2EE_SPEC.md, "PR D").
 MINIMUM_BUILDS=""
 
 # The relay GET /v2/config names (deploy-api.sh). It must be under overandout.app: the apps

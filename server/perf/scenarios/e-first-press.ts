@@ -2,7 +2,7 @@
 // conversation, with no connection yet (the connection opens after the press) or with one the
 // Talk screen already opened. Over the WebSocket and the watch's HTTP stream.
 
-import { ONE_WAY_MS, bot, opus, pair, proxy, startRelay, talk, type Context } from "../harness.ts";
+import { ONE_WAY_MS, bot, opus, pair, proxy, seal, startRelay, talk, type Context } from "../harness.ts";
 
 export const name = "E. First press";
 
@@ -32,10 +32,13 @@ async function press(ctx: Context, relay: Awaited<ReturnType<typeof startRelay>>
   const link = await proxy(relay, delayMs);
   const alice = bot(link.url, people.a, transport);
   try {
+    // Sealed before the press: the bot's crypto isn't the relay's time.
+    const sound = opus(5);
+    const sealed = await seal(alice, people.b.id, sound);
     if (warm) await alice.connect();
     const pressedAt = performance.now();
     if (!warm) await alice.connect();
-    const sent = await talk(alice, people.b.id, opus(5), false, pressedAt);
+    const sent = await talk(alice, people.b.id, sound, false, pressedAt, sealed);
     ctx.results.fail(`${key}.integrity_failures`, sent.pushed ? [] : ["the first press didn't ring"]);
     return sent.grantedAt - pressedAt;
   } finally {

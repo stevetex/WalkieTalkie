@@ -40,8 +40,9 @@ export interface CanaryOptions {
   relayUrl: string;
   token: string;
   botUserId: string;
-  keys?: EndpointKeys;
-  botKeys?: FriendKeysJSON;
+  // The Canary's keys, and the Test Bot's from the key directory: every talk is format 2.
+  keys: EndpointKeys;
+  botKeys: FriendKeysJSON;
   timeoutMs?: number;
   now?: () => number;
 }
@@ -68,7 +69,7 @@ export async function runCanary(options: CanaryOptions): Promise<CanaryResult> {
         "x-oao-relay-protocol": "2",
         "x-oao-decode": "opus16k,pcm16le16k",
         "x-oao-encode": "pcm16le16k",
-        "x-oao-audio-formats": options.keys ? "1,2" : "1",
+        "x-oao-audio-formats": "2",
       },
     } as unknown as string[]);
     ws.binaryType = "arraybuffer";
@@ -102,14 +103,14 @@ export async function runCanary(options: CanaryOptions): Promise<CanaryResult> {
     stage = "go-ahead";
     const burstId = randomUUID();
     const conversationId = randomUUID();
-    const recipients = options.keys && options.botKeys ? usableKeys(options.botUserId, options.botKeys, Date.now()).recipients : [];
-    if (options.keys && !recipients.length) throw new Error("the Test Bot has no current encryption key");
-    const sealed = options.keys ? sealBundle(
+    const recipients = usableKeys(options.botUserId, options.botKeys, Date.now()).recipients;
+    if (!recipients.length) throw new Error("the Test Bot has no current encryption key");
+    const sealed = sealBundle(
       { conversationId, burstId, codec: "pcm16le16k", from: options.keys.secrets.userId, to: options.botUserId },
-      options.keys.sender, recipients, Date.now()) : null;
+      options.keys.sender, recipients, Date.now());
     const t1 = now();
     ws.send(JSON.stringify({ type: "talk-start", to: options.botUserId, burstId, codec: "pcm16le16k",
-      ...(sealed ? { format: 2, conversationId, e2ee: sealed.bundle } : {}) }));
+      format: 2, conversationId, e2ee: sealed.bundle }));
     const decision = await next((m) => !Buffer.isBuffer(m) && (m.type === "floor-granted" || m.type === "floor-denied" || m.type === "talk-refused" || m.type === "error"));
     if (Buffer.isBuffer(decision) || decision.type !== "floor-granted") throw new Error(Buffer.isBuffer(decision) ? "unexpected frame" : `${decision.type}${"reason" in decision ? ` ${decision.reason}` : ""}`);
     result.goAheadMs = Math.round(now() - t1);
@@ -118,22 +119,18 @@ export async function runCanary(options: CanaryOptions): Promise<CanaryResult> {
       const frame = Buffer.alloc(5 + 640);
       frame[0] = Codec.pcm16le16k;
       frame.writeUInt32BE(seq, 1);
-      ws.send(sealed ? sealed.cipher.seal(Codec.pcm16le16k, seq, frame.subarray(5)) : frame);
+      ws.send(sealed.cipher.seal(Codec.pcm16le16k, seq, frame.subarray(5)));
     }
     ws.send(JSON.stringify({ type: "talk-end", burstId }));
 
     stage = "the bot's greeting";
-    if (options.keys) {
-      const start = await next((m) => !Buffer.isBuffer(m) && m.type === "burst-start" && m.from === options.botUserId);
-      if (Buffer.isBuffer(start) || start.type !== "burst-start" || start.format !== 2 || !start.e2ee || !start.codec) throw new Error("the Test Bot sent plaintext");
-      const opened = openBundle(start.e2ee,
-        { conversationId: decision.conversationId, burstId: start.burstId, codec: start.codec, from: options.botUserId, to: options.keys.secrets.userId },
-        { deviceId: options.keys.secrets.deviceId, keys: options.keys.encryption }, Date.now());
-      const frame = await next((m) => Buffer.isBuffer(m));
-      opened.cipher.open(frame as Buffer);
-    } else {
-      await next((m) => Buffer.isBuffer(m));
-    }
+    const start = await next((m) => !Buffer.isBuffer(m) && m.type === "burst-start" && m.from === options.botUserId);
+    if (Buffer.isBuffer(start) || start.type !== "burst-start" || start.format !== 2 || !start.e2ee || !start.codec) throw new Error("the Test Bot sent plaintext");
+    const opened = openBundle(start.e2ee,
+      { conversationId: decision.conversationId, burstId: start.burstId, codec: start.codec, from: options.botUserId, to: options.keys.secrets.userId },
+      { deviceId: options.keys.secrets.deviceId, keys: options.keys.encryption }, Date.now());
+    const frame = await next((m) => Buffer.isBuffer(m));
+    opened.cipher.open(frame as Buffer);
     result.firstFrameMs = Math.round(now() - t1);
     result.ok = true;
     ws.send(JSON.stringify({ type: "leave", conversationId: decision.conversationId }));

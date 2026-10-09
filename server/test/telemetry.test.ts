@@ -24,6 +24,7 @@ import { createApi } from "../src/api.ts";
 import { MemoryDocs } from "../src/docs.ts";
 import { SessionSigner, SessionVerifier, generateSigningKey } from "../src/session.ts";
 import { SpikeClient } from "../tools/client.ts";
+import { CAPABILITIES, companionKeys, deviceKeys } from "./harness.ts";
 
 const server = (name: string, t: number, detail?: string): TimelineEntry => ({ source: "server", name, t, ...(detail ? { detail } : {}) });
 
@@ -289,11 +290,16 @@ test("through the relay and API: a record and summary per conversation, events, 
     (await call("POST", "/v2/auth/apple", null, { identityToken: sub, nonce: "n", name, deviceId, clientKind: "ios" })).body;
   try {
     const alice = await signIn("apple.alice", "Alice", "alice-phone");
+    // The iPhone registers its keys first: the watch's are certified by them.
+    const aliceKeys = deviceKeys(alice.user.id, "alice-phone", "ios");
+    const inApp = { clientKind: "ios", delivery: { provider: "relay", mode: "foreground" }, capabilities: CAPABILITIES, e2ee: aliceKeys.registration };
+    assert.equal((await call("PUT", "/v2/me/device", alice.token, inApp)).status, 200);
     const watch = (await call("POST", "/v2/auth/device", alice.token, { deviceId: "alice-watch", clientKind: "watchos", requestId: "r1" })).body.token;
+    const watchKeys = companionKeys(aliceKeys, "alice-watch", "watchos");
     const watchToken = "ab".repeat(32);
     const delivery = { provider: "apns", mode: "alert", token: watchToken, environment: "sandbox" };
-    assert.equal((await call("PUT", "/v2/me/device", watch, { clientKind: "watchos", delivery })).status, 200);
-    const [registration] = sink.of("oao.registration");
+    assert.equal((await call("PUT", "/v2/me/device", watch, { clientKind: "watchos", delivery, capabilities: CAPABILITIES, e2ee: watchKeys.registration })).status, 200);
+    const registration = sink.of("oao.registration").at(-1)!;
     assert.deepEqual([registration.userId, registration.deviceId, registration.platform, registration.clientKind], [alice.user.id, "alice-watch", "watch", "watchos"]);
     assert.doesNotMatch(JSON.stringify(registration), new RegExp(watchToken));
     const bob = await signIn("apple.bob", "Bob", "bob-phone");
@@ -301,11 +307,13 @@ test("through the relay and API: a record and summary per conversation, events, 
     await call("POST", `/v2/invites/${invite.body.code}/accept`, bob.token);
 
     // Bob rings Alice's watch, which answers.
-    const bobClient = new SpikeClient({ server: url, userId: "ignored", token: bob.token, clientKind: "ios" });
+    const directory = (friend: string) => accounts.friendKeys(friend);
+    const bobClient = new SpikeClient({ server: url, userId: bob.user.id, token: bob.token, clientKind: "ios",
+      e2ee: { keys: deviceKeys(bob.user.id, "bob-phone", "ios"), directory } });
     await bobClient.connect();
     const { conversationId } = await bobClient.talk(alice.user.id, Buffer.alloc(640 * 3, 1), { realtime: false });
     const { ringId } = pusher.sent[0].payload as { ringId: string };
-    const aliceWatch = new SpikeClient({ server: url, userId: "ignored", token: watch, transport: "http" });
+    const aliceWatch = new SpikeClient({ server: url, userId: alice.user.id, token: watch, transport: "http", e2ee: { keys: watchKeys, directory } });
     await aliceWatch.connect(conversationId, undefined, ringId);
     await aliceWatch.waitFor("burst-end");
     bobClient.close();

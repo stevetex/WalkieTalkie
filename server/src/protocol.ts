@@ -12,16 +12,18 @@ export const Codec = {
 } as const;
 
 export const FRAME_HEADER_BYTES = 5;
+// Format 2 frames end in a ChaCha20-Poly1305 tag (contracts/README.md, "Frames").
+export const FRAME_TAG_BYTES = 16;
 export const FRAME_MS = 20;
 // One 20 ms frame of 16 kHz mono PCM16 is 320 samples; the apps pad the last one.
 export const PCM_FRAME_BYTES = 640;
 // The largest Opus packet (RFC 6716).
 export const MAX_OPUS_PACKET_BYTES = 1275;
 
-// A frame the apps can decode: a known codec and a payload of the right size for it. The
-// relay drops anything else rather than forward it to a decoder.
-export function isValidFrame(frame: Buffer, format: 1 | 2 = 1): boolean {
-  const payload = frame.length - FRAME_HEADER_BYTES - (format === 2 ? 16 : 0);
+// A format 2 frame the apps can decode: a known codec and, after the 16-byte tag, a payload of
+// the right size for it. The relay drops anything else rather than forward it to a decoder.
+export function isValidFrame(frame: Buffer): boolean {
+  const payload = frame.length - FRAME_HEADER_BYTES - FRAME_TAG_BYTES;
   switch (frame[0]) {
     case Codec.pcm16le16k: return payload === PCM_FRAME_BYTES;
     case Codec.opus16k: return payload > 0 && payload <= MAX_OPUS_PACKET_BYTES;
@@ -37,7 +39,7 @@ export type ClientMessage =
   // First message after connecting. clientTime lets the client estimate clock offset.
   | { type: "hello"; clientTime: number }
   // Sender pressed Talk. Joins the sender to the conversation with `to`. codec: the burst's.
-  | { type: "talk-start"; to: string; burstId: string; codec: CodecId; format?: 1 | 2; conversationId?: string; e2ee?: KeyBundle }
+  | { type: "talk-start"; to: string; burstId: string; codec: CodecId; format: 2; conversationId: string; e2ee: KeyBundle }
   | { type: "talk-end"; burstId: string }
   // Receiver answered the ring: replay anything buffered, then go live. ringId: the ring being
   // answered (none for a rejoin or a move).
@@ -91,14 +93,11 @@ export function parseClientMessage(value: unknown): ClientMessage | null {
       if (!id(m.to) || !id(m.burstId)) return null;
       const codec = m.codec === "opus16k" ? Codec.opus16k : m.codec === "pcm16le16k" ? Codec.pcm16le16k : undefined;
       if (codec === undefined) return null;
-      if (m.format !== undefined && m.format !== 1 && m.format !== 2) return null;
-      if (m.format === 2) {
-        const bundle = parseKeyBundle(m.e2ee);
-        if (!id(m.conversationId) || !bundle) return null;
-        return { type: "talk-start", to: m.to, burstId: m.burstId, codec, format: 2, conversationId: m.conversationId, e2ee: bundle };
-      }
-      if (m.e2ee !== undefined || m.conversationId !== undefined) return null;
-      return { type: "talk-start", to: m.to, burstId: m.burstId, codec, format: 1 };
+      // Format 1 (plaintext) is retired (E2EE_SPEC.md, PR D).
+      if (m.format !== 2) return null;
+      const bundle = parseKeyBundle(m.e2ee);
+      if (!id(m.conversationId) || !bundle) return null;
+      return { type: "talk-start", to: m.to, burstId: m.burstId, codec, format: 2, conversationId: m.conversationId, e2ee: bundle };
     }
     case "talk-end":
       return id(m.burstId) ? { type: "talk-end", burstId: m.burstId } : null;
@@ -143,7 +142,7 @@ export type ServerMessage =
   | { type: "moved"; conversationId: string }
   // resumedFrames: on a rejoin with resume, how many frames of that burst are replayed.
   | { type: "joined"; conversationId: string; peer: string; replayBursts: number; resumedFrames?: number; ringId?: string }
-  | { type: "burst-start"; conversationId: string; burstId: string; from: string; replay: boolean; resumed?: boolean; codec?: string; format?: 1 | 2; e2ee?: KeyBundle }
+  | { type: "burst-start"; conversationId: string; burstId: string; from: string; replay: boolean; resumed?: boolean; codec?: string; format: 2; e2ee: KeyBundle }
   | { type: "burst-end"; conversationId: string; burstId: string }
   | { type: "peer-left"; conversationId: string; peer: string; reason: "ended" | "left" | "disconnected" }
   // The two may no longer talk (a block, an unfriending or a deleted account): the relay

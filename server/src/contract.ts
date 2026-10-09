@@ -6,7 +6,9 @@ import { Codec } from "./protocol.ts";
 
 export const API_VERSIONS = [2] as const;
 export const RELAY_PROTOCOLS = [2] as const;
-export const AUDIO_FORMATS = [1, 2] as const;
+// Binary audio formats the service carries: only format 2, end-to-end encrypted. Format 1
+// (plaintext) was retired by E2EE_SPEC.md's PR D; builds that speak only it are told to update.
+export const AUDIO_FORMATS = [2] as const;
 
 export const CLIENT_KINDS = ["ios", "watchos", "android", "wearos"] as const;
 export type ClientKind = (typeof CLIENT_KINDS)[number];
@@ -90,7 +92,7 @@ export interface Capabilities {
 }
 
 // What a device that didn't say is assumed to support: every Apple build plays both codecs and
-// sends Opus.
+// sends Opus. Builds that didn't name their audio formats spoke only the retired format 1.
 export const DEFAULT_CAPABILITIES: Capabilities = {
   relayProtocols: [2],
   audioFormats: [1],
@@ -187,17 +189,18 @@ export function parseAvailability(value: unknown): Availability {
 
 // What the device says it supports, intersected with what the service does. Unknown codecs and
 // protocols are dropped (a newer client may know more); nothing in common is refused.
-export function parseCapabilities(value: unknown): Capabilities {
-  if (value === undefined) return structuredClone(DEFAULT_CAPABILITIES);
-  if (!isObject(value)) throw new ContractError(400, "bad-request", "capabilities must be an object");
+export function parseCapabilities(given: unknown): Capabilities {
+  if (given !== undefined && !isObject(given)) throw new ContractError(400, "bad-request", "capabilities must be an object");
+  // Unsaid capabilities are the defaults, which still have to be ones the service supports.
+  const value = (given ?? {}) as Record<string, unknown>;
   const list = (v: unknown, name: string): unknown[] => {
     if (v === undefined) return [];
     if (!Array.isArray(v) || v.length > 64) throw new ContractError(400, "bad-request", `capabilities.${name} must be a short list`);
     return v;
   };
   const ints = (v: unknown, name: string, supported: readonly number[], fallback: number[]) => {
-    const given = list(v, name);
-    return v === undefined ? fallback : supported.filter((s) => given.includes(s));
+    const claimed = v === undefined ? fallback : list(v, name);
+    return supported.filter((s) => claimed.includes(s));
   };
   const codecs = (v: unknown, name: string, fallback: CodecName[]) => {
     const given = list(v, name);
@@ -211,7 +214,8 @@ export function parseCapabilities(value: unknown): Capabilities {
     features: list(value.features, "features").filter((f): f is string => typeof f === "string" && f.length <= 64).slice(0, 64),
   };
   if (!capabilities.relayProtocols.length) throw new ContractError(409, "unsupported-protocol", "no relay protocol in common", { supported: { relayProtocols: [...RELAY_PROTOCOLS] } });
-  if (!capabilities.audioFormats.length || !capabilities.decode.length) {
+  if (!capabilities.audioFormats.length) throw upgradeRequired();
+  if (!capabilities.decode.length) {
     throw new ContractError(409, "unsupported-codec", "no codec in common", { supported: { codecs: CODEC_NAMES } });
   }
   return capabilities;
@@ -239,8 +243,12 @@ export interface Admission {
   clientVersion?: string;
   protocol: 2;
   decode: CodecName[];
-  audioFormats: number[];
   encode: CodecName[];
+}
+
+// A build that speaks no audio format the service still carries (format 1 only) must update.
+function upgradeRequired(minimumBuild?: number): ContractError {
+  return new ContractError(409, "client-upgrade-required", "Update Over&Out to keep talking.", minimumBuild === undefined ? {} : { minimumBuild });
 }
 
 // Checks a relay request's headers before it opens a stream or joins anything
@@ -255,17 +263,14 @@ export function parseAdmission(header: (name: string) => string | undefined, min
     throw new ContractError(409, "unsupported-protocol", `relay protocol ${protocol ?? "(none)"} isn't supported`, { supported: { relayProtocols: [...RELAY_PROTOCOLS] } });
   }
   const minimum = minimumBuilds[clientKind];
-  if (minimum !== undefined && Number(build) < minimum) {
-    throw new ContractError(409, "client-upgrade-required", "Update Over&Out to keep talking.", { minimumBuild: minimum });
-  }
+  if (minimum !== undefined && Number(build) < minimum) throw upgradeRequired(minimum);
   const decode = parseCodecList(header("x-oao-decode")) ?? [...DEFAULT_CAPABILITIES.decode];
-  const claimedFormats = header("x-oao-audio-formats");
-  const audioFormats = claimedFormats === undefined ? [1] : AUDIO_FORMATS.filter((f) => claimedFormats.split(",").includes(String(f)));
-  if (!audioFormats.length) throw new ContractError(409, "unsupported-codec", "no audio format in common");
+  const claimedFormats = header("x-oao-audio-formats")?.split(",").map((f) => f.trim()) ?? [];
+  if (!AUDIO_FORMATS.some((f) => claimedFormats.includes(String(f)))) throw upgradeRequired(minimum);
   if (!decode.length) throw new ContractError(409, "unsupported-codec", "no codec in common", { supported: { codecs: CODEC_NAMES } });
   const encode = parseCodecList(header("x-oao-encode")) ?? [...DEFAULT_CAPABILITIES.encode];
   const clientVersion = header("x-oao-client-version");
-  return { clientKind, build, ...(clientVersion ? { clientVersion: clientVersion.slice(0, 32) } : {}), protocol: 2, decode, encode, audioFormats };
+  return { clientKind, build, ...(clientVersion ? { clientVersion: clientVersion.slice(0, 32) } : {}), protocol: 2, decode, encode };
 }
 
 // MINIMUM_BUILDS: {"ios": 170, "watchos": 170}. Unknown kinds and non-numbers are refused, so a

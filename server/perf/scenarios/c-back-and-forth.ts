@@ -4,8 +4,7 @@
 // telemetry record must count its changes of speaker (turns); a relay from before turns were
 // recorded (a PR's base) is skipped.
 
-import { randomUUID } from "node:crypto";
-import { ONE_WAY_MS, checkBurst, liveConversation, opus, proxy, startRelay, talk, type Context, type Recorder, type Talk } from "../harness.ts";
+import { ONE_WAY_MS, checkBurst, liveConversation, opus, proxy, seal, startRelay, talk, type Context, type Recorder, type Talk } from "../harness.ts";
 import type { SpikeClient } from "../../tools/client.ts";
 
 export const name = "C. Back-and-forth";
@@ -95,9 +94,11 @@ async function settled(heard: Recorder, last: Talk | null): Promise<void> {
 
 // Both press at the same moment: exactly one go-ahead and one floor-denied. Says who won.
 async function bothPress(a: SpikeClient, b: SpikeClient, names: { a: string; b: string }, aHeard: Recorder, bHeard: Recorder): Promise<{ problems: string[]; winner: SpikeClient | null }> {
-  const ids = { a: randomUUID(), b: randomUUID() };
-  a.send({ type: "talk-start", to: names.b, burstId: ids.a, codec: "opus16k" });
-  b.send({ type: "talk-start", to: names.a, burstId: ids.b, codec: "opus16k" });
+  // Sealed first, so the two talk-starts go out together.
+  const [sa, sb] = await Promise.all([seal(a, names.b, opus(1)), seal(b, names.a, opus(1))]);
+  const ids = { a: sa.burstId, b: sb.burstId };
+  a.send(sa.message);
+  b.send(sb.message);
   const decide = (client: SpikeClient, burstId: string) =>
     client.waitForMatch((m) => (m.type === "floor-granted" || m.type === "floor-denied") && m.burstId === burstId, "floor decision");
   const [da, db] = await Promise.all([decide(a, ids.a), decide(b, ids.b)]);

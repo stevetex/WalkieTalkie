@@ -1,5 +1,13 @@
 // What the scenarios share: the relay under test (in its own process), bots, a recorder for
 // what a bot hears, the integrity checks, and the results the run writes.
+//
+// Every Talk is format 2 (E2EE_SPEC.md), as the apps send it: each person's device registers
+// real certificates, and bursts are sealed to the friend's keys and opened by the listener. The
+// keys stay in this process (a registry by account), so sealing doesn't ask the API. Sealing a
+// burst (its bundle and every frame) happens before its press is timed, so press-to-grant
+// timings are the relay's and the network's, not the bot's crypto. Timings measured from an
+// earlier event (C's turn gap, from the previous release) do include it: about a millisecond.
+// A listener opens each frame as it arrives (microseconds for a 60-byte frame).
 
 import { fork, type ChildProcess } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
@@ -7,8 +15,10 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { SpikeClient } from "../tools/client.ts";
-import { Codec, type ServerMessage } from "../src/protocol.ts";
+import { SpikeClient, type WireMessage } from "../tools/client.ts";
+import { Codec, FRAME_HEADER_BYTES, type ServerMessage } from "../src/protocol.ts";
+import { createEndpointSecrets, openEndpointSecrets, type EndpointKeys } from "../src/endpoint-keys.ts";
+import type { FriendKeysJSON } from "../src/e2ee.ts";
 import { LatencyProxy } from "./latency-proxy.ts";
 import type { RelayStats } from "./relay-child.ts";
 
@@ -184,12 +194,15 @@ export function startRelay(relayDir: string, env: Record<string, string> = {}): 
 
 export type ClientKind = "ios" | "watchos";
 
-// A synthetic person: an account signed in on one device, registered to be rung.
+// A synthetic person: an account signed in on one device, registered to be rung, with that
+// device's E2EE keys.
 export interface Person {
   id: string;
   name: string;
   token: string;
   kind: ClientKind;
+  deviceId: string;
+  keys: EndpointKeys;
 }
 
 // How a person's device is rung: over its open relay connection (a bot, like the Test Bot), or
@@ -207,6 +220,21 @@ export function ids(prefix: string): { a: string; b: string } {
 // Session tokens by account, so the fetch hook below can tell whose POST it is.
 const owners = new Map<string, string>();
 
+// Everyone signed in, by account: the key directory the bots seal to.
+const people = new Map<string, Person>();
+
+// A friend's keys, as GET /v2/friends lists them.
+export async function directory(userId: string): Promise<FriendKeysJSON> {
+  const person = people.get(userId);
+  if (!person) return { phones: [], devices: [] };
+  const { phoneCert, deviceCert, encCert } = person.keys.registration;
+  return { phones: [phoneCert], devices: [{ deviceId: person.deviceId, clientKind: person.kind, deviceCert, encCert }], allDevicesHaveKeys: true };
+}
+
+// What every build since E2EE registers: format 2 only (a relay that also carries format 1, a
+// PR's base, takes it too).
+const CAPABILITIES = { relayProtocols: [2], audioFormats: [2], decode: ["opus16k", "pcm16le16k"], encode: ["opus16k", "pcm16le16k"], features: [] };
+
 async function api(relay: Relay, method: string, path: string, token: string | null, body?: unknown): Promise<any> {
   const res = await fetch(new URL(path, relay.url), {
     method,
@@ -221,14 +249,20 @@ async function api(relay: Relay, method: string, path: string, token: string | n
 // Signs `name` in with a dev Apple identity on one device of `kind` and registers it. Directly
 // with the relay (not through a proxy): setup isn't measured.
 export async function signIn(relay: Relay, name: string, kind: ClientKind, ringing: Ringing): Promise<Person> {
-  const signedIn = await api(relay, "POST", "/v2/auth/apple", null, { identityToken: `dev:${name}`, nonce: "perf", name, deviceId: `${name}-${kind}`, clientKind: kind });
+  const deviceId = `${name}-${kind}`;
+  const signedIn = await api(relay, "POST", "/v2/auth/apple", null, { identityToken: `dev:${name}`, nonce: "perf", name, deviceId, clientKind: kind });
   const token = signedIn.token as string;
+  const id = signedIn.user.id as string;
+  const keys = openEndpointSecrets(createEndpointSecrets(id, deviceId, kind), id, deviceId);
   const delivery = ringing === "connection"
     ? { provider: "test", mode: "connection" }
     : { provider: "apns", mode: kind === "ios" ? "pushtotalk" : "alert", token: createHash("sha256").update(name).digest("hex"), environment: "sandbox" };
-  await api(relay, "PUT", "/v2/me/device", token, { clientKind: kind, delivery, availability: { enabled: true, notifications: "authorized" } });
-  owners.set(token, signedIn.user.id);
-  return { id: signedIn.user.id, name, token, kind };
+  await api(relay, "PUT", "/v2/me/device", token, { clientKind: kind, delivery, availability: { enabled: true, notifications: "authorized" },
+    capabilities: CAPABILITIES, e2ee: keys.registration });
+  owners.set(token, id);
+  const person = { id, name, token, kind, deviceId, keys };
+  people.set(id, person);
+  return person;
 }
 
 // Friends, through an invite: rings need friendship.
@@ -253,7 +287,7 @@ export function kindFor(transport: "ws" | "http"): ClientKind {
 }
 
 export function bot(server: string, person: Person, transport: "ws" | "http" = "ws"): SpikeClient {
-  return new SpikeClient({ server, userId: person.id, token: person.token, clientKind: person.kind, transport });
+  return new SpikeClient({ server, userId: person.id, token: person.token, clientKind: person.kind, transport, e2ee: { keys: person.keys, directory } });
 }
 
 // The ring waiting for this person in this conversation, as its push carries it. Asked of the
@@ -314,10 +348,27 @@ export interface Talk {
   releasedAt: number;
 }
 
-// A Talk: talk-start, wait for the go-ahead, the frames (every 20 ms if realtime), talk-end.
-export async function talk(client: SpikeClient, to: string, sound: Audio, realtime: boolean, pressedAt = performance.now()): Promise<Talk> {
+// A burst sealed ahead of its press: the talk-start with its bundle, and each frame's payload
+// as it goes on the wire (ciphertext and tag).
+export interface Sealed {
+  burstId: string;
+  message: WireMessage;
+  frames: Buffer[];
+}
+
+export async function seal(client: SpikeClient, to: string, sound: Audio): Promise<Sealed> {
   const burstId = randomUUID();
-  client.send({ type: "talk-start", to, burstId, codec: sound.codec === Codec.opus16k ? "opus16k" : "pcm16le16k" });
+  const { message, cipher } = await client.sealedTalkStart(to, burstId, sound.codec === Codec.opus16k ? "opus16k" : "pcm16le16k");
+  const frames = sound.payloads.map((payload, seq) => cipher.seal(sound.codec, seq, payload).subarray(FRAME_HEADER_BYTES));
+  return { burstId, message, frames };
+}
+
+// A Talk: talk-start, wait for the go-ahead, the frames (every 20 ms if realtime), talk-end.
+// Sealed first unless `sealed` is given (a scenario that times from before its connection).
+export async function talk(client: SpikeClient, to: string, sound: Audio, realtime: boolean, pressedAt?: number, sealed?: Sealed): Promise<Talk> {
+  const { burstId, message, frames } = sealed ?? await seal(client, to, sound);
+  pressedAt ??= performance.now();
+  client.send(message);
   const decision = await client.waitForMatch(
     (m) => (m.type === "floor-granted" || m.type === "floor-denied" || m.type === "talk-refused") && m.burstId === burstId,
     "floor decision",
@@ -328,7 +379,7 @@ export async function talk(client: SpikeClient, to: string, sound: Audio, realti
   const sentAt: number[] = [];
   const start = performance.now();
   for (let seq = 0; seq < sound.payloads.length; seq++) {
-    client.sendFrame(sound.codec, seq, sound.payloads[seq]);
+    client.sendFrame(sound.codec, seq, frames[seq]);
     sentAt.push(performance.now());
     // The press ends as the last frame is captured, not 20 ms later.
     if (realtime && seq < sound.payloads.length - 1) await sleep(Math.max(0, start + (seq + 1) * 20 - performance.now()));

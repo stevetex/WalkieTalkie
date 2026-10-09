@@ -4,10 +4,11 @@ import Testing
 
 /// Swift → relay → Swift: the path the apps use, less the microphone and speaker, over the v2
 /// contract. Two dev accounts sign in through the API (an iPhone, and a watch that isn't
-/// connected), become friends by an invite, and the watch registers for alert rings. Speech
-/// encoded with the kit's encoder goes through a real relay to the watch; the watch finds the
-/// ring by the pending-ring lookup, answers it and joins it by its ID (in the stream request, as
-/// the app does), hears the replay, then a second burst live. Every frame must arrive as sent,
+/// connected), become friends by an invite, and the watch registers for alert rings with its
+/// keys. Speech encoded with the kit's encoder is sealed (format 2) to the watch's keys from the
+/// friends list and goes through a real relay to the watch; the watch finds the ring by the
+/// pending-ring lookup, answers it and joins it by its ID (in the stream request, as the app
+/// does), opens the replay, then a second burst live. Every frame must open to what was sent,
 /// and the decoded speech must keep its level. Runs only against a relay named by
 /// OAO_E2E_RELAY (CI starts one: kit.yml):
 ///
@@ -27,8 +28,36 @@ struct RelayEndToEndTests {
         let bob = try await bobAccount.signInWithApple(identityToken: "dev:kit-b-\(id)", nonce: "n", name: "Bob", deviceId: "kit-b-\(id)").session
         let invite = try await aliceAccount.createInvite()
         _ = try await bobAccount.acceptInvite(code: invite.code)
+
+        // Keys, as the apps keep them: Alice's phone, and Bob's watch certified by a phone of his.
+        let aliceKeys = E2EEKeyStore(service: "oao-e2e-test-\(id)-a")
+        let bobPhoneKeys = E2EEKeyStore(service: "oao-e2e-test-\(id)-bp")
+        let bobKeys = E2EEKeyStore(service: "oao-e2e-test-\(id)-b")
+        let suite = "oao-e2e-test-\(id)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer {
+            aliceKeys.signOut(userId: alice.userId, keepPhoneIdentity: false)
+            bobPhoneKeys.signOut(userId: bob.userId, keepPhoneIdentity: false)
+            bobKeys.signOut(userId: bob.userId, keepPhoneIdentity: false)
+            defaults.removePersistentDomain(forName: suite)
+        }
+        let now = Int64(Clock.nowMs())
+        _ = try aliceKeys.preparePhone(userId: alice.userId, deviceId: alice.deviceId, now: now)
+        _ = try bobPhoneKeys.preparePhone(userId: bob.userId, deviceId: "kit-bp-\(id)", now: now)
+        let certs = try bobPhoneKeys.certifyWatch(userId: bob.userId, phoneDeviceId: "kit-bp-\(id)", watchDeviceId: bob.deviceId,
+                                                  signingKey: try bobKeys.watchSigningKey(deviceId: bob.deviceId), now: now)
+        let watchKeys = try bobKeys.prepareWatch(userId: bob.userId, deviceId: bob.deviceId, phoneCert: certs.phone,
+                                                 deviceCert: certs.device, now: now)
         // An alert delivery the local relay only logs: the first Talk rings and the relay holds the audio.
-        try await bobAccount.registerDevice(DeviceRegistration(delivery: .alert(token: "e2e-\(id)", environment: "sandbox"), notifications: .authorized))
+        // The watch signed itself in (no parent phone session), so it names its phone's certificate.
+        try await bobAccount.registerDevice(DeviceRegistration(
+            delivery: .alert(token: "e2e-\(id)", environment: "sandbox"), notifications: .authorized,
+            e2ee: E2EEKeyStore.Registration(phoneCert: certs.phone, deviceCert: watchKeys.deviceCert, encCert: watchKeys.encCert)))
+        let bobDirectory = try #require(try await aliceAccount.friends().first { $0.id == bob.userId }?.keys)
+        let aliceFlow = E2EEFlow(store: aliceKeys, trust: E2EETrust(defaults: defaults), deviceId: alice.deviceId,
+                                 replayDefaults: defaults, userId: { alice.userId })
+        let bobFlow = E2EEFlow(store: bobKeys, trust: E2EETrust(defaults: defaults), deviceId: bob.deviceId,
+                               replayDefaults: defaults, userId: { bob.userId })
 
         let speech = try Signal.speech()
         let encoder = VoiceEncoder()
@@ -42,7 +71,7 @@ struct RelayEndToEndTests {
         sender.connect(baseURL: base, token: alice.token)
         defer { sender.close() }
         let first = UUID().uuidString
-        talk(sender, to: bob.userId, burstId: first, frames: replayed)
+        try talk(sender, with: aliceFlow, to: bob.userId, keys: bobDirectory, conversationId: nil, burstId: first, frames: replayed)
         try await pollUntil(seconds: 10) { senderHeard.contains { $0.type == "floor-granted" && $0.burstId == first } }
         let granted = try #require(senderHeard.first { $0.type == "floor-granted" && $0.burstId == first })
         #expect(granted.pushed == true, "the first Talk didn't ring")
@@ -60,15 +89,22 @@ struct RelayEndToEndTests {
         var current: String?
         var messages: [RelayMessage] = []
         var firstFrameAt: [String: Double] = [:]
+        var refused = 0
         receiver.onMessage = { message in
             messages.append(message)
-            if message.type == "burst-start" { current = message.burstId }
+            if message.type == "burst-start" {
+                current = message.burstId
+                do { try bobFlow.receive(message, peer: alice.userId, conversationId: message.conversationId ?? "", now: Int64(Clock.nowMs())) }
+                catch { refused += 1 }
+            }
             if message.type == "burst-end" { current = nil }
         }
         receiver.onFrame = { frame in
             guard let burst = current else { return }
             if firstFrameAt[burst] == nil { firstFrameAt[burst] = Clock.nowMs() }
-            heard[burst, default: []].append(frame)
+            do {
+                if let opened = try bobFlow.open(frame, burstId: burst, now: Int64(Clock.nowMs())) { heard[burst, default: []].append(opened) }
+            } catch { refused += 1 }
         }
         let answerAt = Clock.nowMs()
         receiver.connect(baseURL: base, token: bob.token, join: conversationId, ring: ring.ringId)
@@ -79,11 +115,12 @@ struct RelayEndToEndTests {
         // Now a burst while the watch is listening: forwarded live, not replayed.
         let second = UUID().uuidString
         let pressedAt = Clock.nowMs()
-        talk(sender, to: bob.userId, burstId: second, frames: live)
+        try talk(sender, with: aliceFlow, to: bob.userId, keys: bobDirectory, conversationId: conversationId, burstId: second, frames: live)
         try await pollUntil(seconds: 10) { messages.contains { $0.type == "burst-end" && $0.burstId == second } }
 
         let start = { (burst: String) in messages.first { $0.type == "burst-start" && $0.burstId == burst } }
-        var problems = 0
+        var problems = refused
+        #expect(refused == 0, "\(refused) bursts or frames didn't open")
         for (burst, sent, replay) in [(first, replayed, true), (second, live, false)] {
             let got = heard[burst] ?? []
             if got != sent { problems += 1 }
@@ -116,10 +153,14 @@ struct RelayEndToEndTests {
         }
     }
 
-    private func talk(_ connection: RelayConnection, to: String, burstId: String, frames: [Data]) {
-        connection.send(["type": "talk-start", "to": to, "burstId": burstId, "codec": "opus16k"])
-        for frame in frames { connection.send(frame: frame) }
+    private func talk(_ connection: RelayConnection, with flow: E2EEFlow, to: String, keys: FriendKeys,
+                      conversationId: String?, burstId: String, frames: [Data]) throws {
+        let sealed = try flow.start(peer: to, conversationId: conversationId, burstId: burstId, codec: "opus16k",
+                                    keys: keys, now: Int64(Clock.nowMs()))
+        connection.send(sealed.control)
+        for frame in frames { connection.send(frame: try flow.send(frame)) }
         connection.send(["type": "talk-end", "burstId": burstId])
+        flow.endSending()
     }
 }
 

@@ -12,8 +12,9 @@ public enum ServiceContract {
     public static let apiVersion = 2
     /// The relay protocol, said at admission (X-OAO-Relay-Protocol).
     public static let relayProtocol = 2
-    /// The binary audio format (unchanged since the spike).
-    public static let audioFormat = 1
+    /// The binary audio format: only format 2, end-to-end encrypted (E2EE_SPEC.md). Format 1
+    /// (plaintext) is retired; this build never sends or plays it.
+    public static let audioFormat = Int(E2EE.audioFormat)
     /// The ring envelope's, the watch link's and the prefetch metadata's.
     public static let schemaVersion = 2
     /// Every build plays both codecs (the contract requires it).
@@ -147,7 +148,7 @@ public struct ClientIdentity: Sendable, Equatable {
     public var relayHeaders: [String: String] {
         apiHeaders.merging([
             "X-OAO-Relay-Protocol": String(ServiceContract.relayProtocol),
-            "X-OAO-Audio-Formats": "1,2",
+            "X-OAO-Audio-Formats": String(ServiceContract.audioFormat),
             "X-OAO-Decode": ServiceContract.decodes.joined(separator: ","),
             "X-OAO-Encode": encodes.joined(separator: ","),
         ]) { $1 }
@@ -196,9 +197,11 @@ public struct DeviceRegistration: Sendable, Equatable {
     public var delivery: Delivery
     public var notifications: Notifications
     public var enabled: Bool
-    public var e2ee: E2EEKeyStore.Registration?
+    /// This device's certificates. The service refuses a registration without them: a device
+    /// without keys could neither send nor play anything.
+    public var e2ee: E2EEKeyStore.Registration
 
-    public init(delivery: Delivery, notifications: Notifications, enabled: Bool = true, e2ee: E2EEKeyStore.Registration? = nil) {
+    public init(delivery: Delivery, notifications: Notifications, enabled: Bool = true, e2ee: E2EEKeyStore.Registration) {
         self.delivery = delivery
         self.notifications = notifications
         self.enabled = enabled
@@ -213,7 +216,7 @@ public struct DeviceRegistration: Sendable, Equatable {
             "availability": ["enabled": enabled, "notifications": notifications.rawValue],
             "capabilities": [
                 "relayProtocols": [ServiceContract.relayProtocol],
-                "audioFormats": e2ee == nil ? [ServiceContract.audioFormat] : [ServiceContract.audioFormat, Int(E2EE.audioFormat)],
+                "audioFormats": [ServiceContract.audioFormat],
                 "decode": ServiceContract.decodes,
                 "encode": identity.encodes,
                 "features": [String](),
@@ -221,7 +224,7 @@ public struct DeviceRegistration: Sendable, Equatable {
             "clientVersion": identity.version,
             "build": identity.build,
         ]
-        if let e2ee { body["e2ee"] = e2ee.json }
+        body["e2ee"] = e2ee.json
         return body
     }
 }

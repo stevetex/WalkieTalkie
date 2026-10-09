@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { SchemaSet } from "./json-schema.ts";
-import { isValidFrame } from "../src/protocol.ts";
+import { FRAME_TAG_BYTES, isValidFrame } from "../src/protocol.ts";
 import { RecordParser } from "../src/records.ts";
 import {
   E2EEError, FrameCipher, MAX_BUNDLE_AGE_MS, MAX_CLOCK_AHEAD_MS, agreementKey, fingerprint, hpkeOpen, keyId, openBundle,
@@ -48,6 +48,8 @@ test("contracts: current and future examples follow their schemas; rejected ones
   }
 });
 
+// frames.json holds frames as they are before sealing (format 2 keeps format 1's header and seals
+// the payload), so each is checked as the relay sees it: with the 16-byte tag after it.
 test("contracts: binary frames are accepted or dropped exactly as the fixtures say", () => {
   const { frames } = JSON.parse(readFileSync(join(contracts, "fixtures", "frames.json"), "utf8")) as {
     frames: Array<{ name: string; valid: boolean; hex: string; codec?: string; seq?: number; payloadBytes?: number }>;
@@ -55,7 +57,9 @@ test("contracts: binary frames are accepted or dropped exactly as the fixtures s
   assert.ok(frames.some((f) => f.codec === "opus16k" && f.valid) && frames.some((f) => f.codec === "pcm16le16k" && f.valid));
   for (const f of frames) {
     const frame = Buffer.from(f.hex, "hex");
-    assert.equal(isValidFrame(frame), f.valid, f.name);
+    const sealed = Buffer.alloc(frame.length + FRAME_TAG_BYTES);
+    frame.copy(sealed);
+    assert.equal(isValidFrame(sealed), f.valid, f.name);
     if (!f.valid) continue;
     assert.equal(frame[0], f.codec === "opus16k" ? 1 : 2, f.name);
     assert.equal(frame.readUInt32BE(1), f.seq, f.name);

@@ -3,7 +3,7 @@
   "$id": "device-registration.schema.json",
   "title": "PUT /v2/me/device (request)",
   "type": "object",
-  "required": ["clientKind", "delivery"],
+  "required": ["clientKind", "delivery", "capabilities", "e2ee"],
   "properties": {
     "clientKind": { "$ref": "common.schema.json#/$defs/clientKind" },
     "delivery": {
@@ -47,9 +47,10 @@
     },
     "capabilities": {
       "type": "object",
+      "required": ["audioFormats"],
       "properties": {
         "relayProtocols": { "type": "array", "items": { "type": "integer" }, "maxItems": 16 },
-        "audioFormats": { "type": "array", "items": { "type": "integer" }, "maxItems": 16 },
+        "audioFormats": { "type": "array", "items": { "type": "integer" }, "maxItems": 16, "contains": { "const": 2 } },
         "decode": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/openCodec" }, "maxItems": 16 },
         "encode": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/openCodec" }, "maxItems": 16 },
         "features": { "type": "array", "items": { "type": "string", "maxLength": 64 }, "maxItems": 64 }

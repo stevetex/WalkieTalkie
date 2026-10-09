@@ -10,8 +10,9 @@ import { createApi } from "../src/api.ts";
 import { MemoryDocs } from "../src/docs.ts";
 import { SessionSigner, SessionVerifier, generateSigningKey } from "../src/session.ts";
 import { Codec, type RingPayload } from "../src/protocol.ts";
+import type { EndpointKeys } from "../src/endpoint-keys.ts";
 import { SpikeClient } from "../tools/client.ts";
-import { call, clientHeaders, pcm } from "./harness.ts";
+import { CAPABILITIES, call, clientHeaders, companionKeys, deviceKeys, pcm } from "./harness.ts";
 
 interface Harness {
   server: RunningServer;
@@ -20,6 +21,7 @@ interface Harness {
   now: { t: number };
   signer: SessionSigner;
   pusher: DryRunPusher;
+  accounts: Accounts;
 }
 
 // Apple is faked: the identity token is the Apple user ID, the nonce must be "nonce", and an
@@ -67,24 +69,28 @@ async function withApi(
     ...relayOptions,
   });
   try {
-    await fn({ server, url: `http://localhost:${server.port}`, revoked, now, signer, pusher });
+    await fn({ server, url: `http://localhost:${server.port}`, revoked, now, signer, pusher, accounts });
   } finally {
     await server.close();
   }
 }
 
+// A signed-in device: its session and its E2EE keys (registered with register()).
+interface Device { token: string; userId: string; deviceId: string; kind: "ios" | "watchos"; keys: EndpointKeys }
+
 // An iPhone signs in with Apple.
 async function signIn(url: string, sub: string, name: string, deviceId: string) {
   const res = await call(url, "POST", "/v2/auth/apple", null, { identityToken: sub, nonce: "nonce", name, deviceId, clientKind: "ios" });
   assert.equal(res.status, 200, JSON.stringify(res.body));
-  return res.body as { token: string; expiresAt: number; user: { id: string; name: string }; created: boolean };
+  const body = res.body as { token: string; expiresAt: number; user: { id: string; name: string }; created: boolean };
+  return { ...body, userId: body.user.id, deviceId, kind: "ios" as const, keys: deviceKeys(body.user.id, deviceId, "ios") };
 }
 
-// The iPhone gets its watch a session of its own.
-async function watchFor(url: string, phoneToken: string, deviceId: string): Promise<string> {
-  const res = await call(url, "POST", "/v2/auth/device", phoneToken, { deviceId, clientKind: "watchos", requestId: `req-${deviceId}` });
+// The iPhone gets its watch a session of its own, and certifies the watch's keys.
+async function watchFor(url: string, phone: Device, deviceId: string): Promise<Device> {
+  const res = await call(url, "POST", "/v2/auth/device", phone.token, { deviceId, clientKind: "watchos", requestId: `req-${deviceId}` });
   assert.equal(res.status, 200, JSON.stringify(res.body));
-  return res.body.token as string;
+  return { token: res.body.token as string, userId: phone.userId, deviceId, kind: "watchos", keys: companionKeys(phone.keys, deviceId, "watchos") };
 }
 
 async function befriend(url: string, inviterToken: string, inviteeToken: string) {
@@ -101,8 +107,9 @@ const alertTo = (token: string) => ({ clientKind: "watchos", delivery: { provide
 const pushToTalk = (token: string) => ({ clientKind: "ios", delivery: { provider: "apns", mode: "pushtotalk", token, environment: "sandbox" } });
 const inApp = { clientKind: "ios", delivery: { provider: "relay", mode: "foreground" } };
 
-async function register(url: string, token: string, registration: Record<string, unknown>) {
-  const res = await call(url, "PUT", "/v2/me/device", token, registration);
+// With the device's certificates: a watch's after its iPhone's, whose phone certificate it shares.
+async function register(url: string, device: Device, registration: Record<string, unknown>) {
+  const res = await call(url, "PUT", "/v2/me/device", device.token, { ...registration, capabilities: CAPABILITIES, e2ee: device.keys.registration });
   assert.equal(res.status, 200, JSON.stringify(res.body));
 }
 
@@ -113,21 +120,32 @@ function ringIn(pusher: DryRunPusher, token: string): RingPayload & { activeSpea
   return push.payload as RingPayload;
 }
 
-// A relay client on this session: an iPhone over the WebSocket, a watch over HTTP.
-function relayClient(url: string, userId: string, token: string, kind: "ios" | "watchos"): SpikeClient {
-  return new SpikeClient({ server: url, userId, token, clientKind: kind, ...(kind === "watchos" ? { transport: "http" as const } : {}) });
+// A relay client on this session: an iPhone over the WebSocket, a watch over HTTP. It seals to a
+// friend's keys from the key directory.
+function relayClient(url: string, accounts: Accounts, device: Device): SpikeClient {
+  return new SpikeClient({ server: url, userId: device.userId, token: device.token, clientKind: device.kind,
+    ...(device.kind === "watchos" ? { transport: "http" as const } : {}),
+    e2ee: { keys: device.keys, directory: (friend) => accounts.friendKeys(friend) } });
+}
+
+// A Talk sealed to the friend's keys, as the apps send it, with its frames' cipher.
+async function talkStart(client: SpikeClient, to: string, burstId: string) {
+  const sealed = await client.sealedTalkStart(to, burstId, "pcm16le16k");
+  client.send(sealed.message);
+  return sealed.cipher;
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 test("sign in, invite a friend, and ring them with session tokens", async () => {
-  await withApi(async ({ url }) => {
+  await withApi(async ({ url, accounts }) => {
     const alice = await signIn(url, "apple.alice", "Alice", "alice-phone");
     assert.equal(alice.created, true);
     assert.deepEqual((await call(url, "GET", "/v2/me", alice.token)).body, { ...alice.user, formFactors: [] });
-    // The iPhone gets the watch its own session.
-    const watchToken = await watchFor(url, alice.token, "alice-watch");
-    await register(url, watchToken, alertTo(WATCH));
+    // The iPhone registers its keys, then gets the watch its own session.
+    await register(url, alice, inApp);
+    const watch = await watchFor(url, alice, "alice-watch");
+    await register(url, watch, alertTo(WATCH));
 
     const bob = await signIn(url, "apple.bob", "Bob", "bob-phone");
     const invite = await call(url, "POST", "/v2/invites", alice.token);
@@ -137,14 +155,14 @@ test("sign in, invite a friend, and ring them with session tokens", async () => 
     assert.equal((await call(url, "POST", `/v2/invites/${invite.body.code}/accept`, bob.token)).body.friend.name, "Alice");
     assert.deepEqual((await call(url, "GET", "/v2/friends", alice.token)).body.friends.map((f: { name: string }) => f.name), ["Bob"]);
 
-    // Bob rings Alice's watch. His account comes from his token, not anything the client says.
-    const bobClient = relayClient(url, "ignored", bob.token, "ios");
+    // Bob rings Alice's watch. His account comes from his token (the ring says it's from him).
+    const bobClient = relayClient(url, accounts, bob);
     await bobClient.connect();
     const { conversationId, pushed } = await bobClient.talk(alice.user.id, pcm(10), { realtime: false });
     assert.equal(pushed, true);
-    const rings = (await call(url, "GET", "/v2/rings/pending", watchToken, undefined, clientHeaders("watchos"))).body.rings as RingPayload[];
+    const rings = (await call(url, "GET", "/v2/rings/pending", watch.token, undefined, clientHeaders("watchos"))).body.rings as RingPayload[];
     assert.deepEqual(rings.map((r) => [r.from, r.fromName, r.conversationId]), [[bob.user.id, "Bob", conversationId]]);
-    const aliceWatch = relayClient(url, "ignored", watchToken, "watchos");
+    const aliceWatch = relayClient(url, accounts, watch);
     await aliceWatch.connect(conversationId, undefined, rings[0].ringId);
     assert.equal((await aliceWatch.waitFor("joined")).peer, bob.user.id);
     await aliceWatch.waitFor("burst-end");
@@ -166,26 +184,26 @@ test("sign in, invite a friend, and ring them with session tokens", async () => 
 });
 
 test("an account can only ring its friends, and a block stops the rings", async () => {
-  await withApi(async ({ url, pusher }) => {
+  await withApi(async ({ url, pusher, accounts }) => {
     const alice = await signIn(url, "apple.alice", "Alice", "alice-phone");
     const bob = await signIn(url, "apple.bob", "Bob", "bob-phone");
     const carol = await signIn(url, "apple.carol", "Carol", "carol-phone");
-    await register(url, alice.token, pushToTalk(PHONE));
+    await register(url, alice, pushToTalk(PHONE));
     await befriend(url, alice.token, bob.token);
 
-    const carolClient = relayClient(url, "carol", carol.token, "ios");
+    const carolClient = relayClient(url, accounts, carol);
     await carolClient.connect();
-    carolClient.send({ type: "talk-start", to: alice.user.id, burstId: "b1", codec: "pcm16le16k" });
+    await talkStart(carolClient, alice.user.id, "b1");
     assert.equal((await carolClient.waitFor("talk-refused")).reason, "not-friends");
     carolClient.close();
     assert.equal(pusher.sent.length, 0);
 
     // Friends: Bob rings, Alice's iPhone answers, and both leave.
-    const bobClient = relayClient(url, "bob", bob.token, "ios");
+    const bobClient = relayClient(url, accounts, bob);
     await bobClient.connect();
     const first = await bobClient.talk(alice.user.id, pcm(2), { realtime: false });
     assert.equal(first.pushed, true);
-    const alicePhone = relayClient(url, "alice", alice.token, "ios");
+    const alicePhone = relayClient(url, accounts, alice);
     await alicePhone.connect();
     alicePhone.send({ type: "join", conversationId: first.conversationId, ringId: ringIn(pusher, PHONE).ringId });
     await alicePhone.waitFor("burst-end");
@@ -198,16 +216,16 @@ test("an account can only ring its friends, and a block stops the rings", async 
     assert.equal(report.status, 200);
     assert.deepEqual((await call(url, "GET", "/v2/friends", bob.token)).body.friends, []);
     assert.deepEqual((await call(url, "GET", "/v2/blocks", alice.token)).body.blocks.map((b: { name: string }) => b.name), ["Bob"]);
-    const again = relayClient(url, "bob", bob.token, "ios");
+    const again = relayClient(url, accounts, bob);
     await again.connect();
-    again.send({ type: "talk-start", to: alice.user.id, burstId: "b2", codec: "pcm16le16k" });
+    await talkStart(again, alice.user.id, "b2");
     assert.equal((await again.waitFor("talk-refused")).burstId, "b2");
     again.close();
   });
 });
 
 test("tokens: sessions can't read the operator's diagnostics, the admin token isn't a session, and bad sign-ins are refused", async () => {
-  await withApi(async ({ url }) => {
+  await withApi(async ({ url, accounts }) => {
     const alice = await signIn(url, "apple.alice", "Alice", "alice-phone");
     for (const path of ["/admin/status", "/admin/metrics", "/admin/metrics/c1"]) {
       assert.equal((await call(url, "GET", path, alice.token)).status, 401, path);
@@ -221,7 +239,7 @@ test("tokens: sessions can't read the operator's diagnostics, the admin token is
     const stream = await fetch(new URL("/v2/relay/stream", url), { headers: { authorization: "Bearer admin", ...clientHeaders("ios") } });
     assert.equal(stream.status, 401);
     await stream.body?.cancel();
-    await assert.rejects(relayClient(url, "admin", "admin", "ios").connect());
+    await assert.rejects(relayClient(url, accounts, { ...alice, token: "admin" }).connect());
     // No token, or one that's been tampered with.
     assert.equal((await call(url, "GET", "/v2/friends", null)).status, 401);
     assert.equal((await call(url, "GET", "/v2/rings/pending", `${alice.token}x`, undefined, clientHeaders("ios"))).status, 401);
@@ -313,14 +331,16 @@ test("deleting an account revokes the Apple token with a fresh code and removes 
 });
 
 // An account whose iPhone and watch both talk (design decisions 2026-09-27). The watch is rung
-// by APNs alert.
+// by APNs alert; the iPhone only in the app until a test puts it in its PushToTalk channel.
 async function twoDevices(url: string) {
   const alice = await signIn(url, "apple.alice", "Alice", "alice-phone");
-  const watchToken = await watchFor(url, alice.token, "alice-watch");
-  await register(url, watchToken, alertTo(WATCH));
+  await register(url, alice, inApp);
+  const watch = await watchFor(url, alice, "alice-watch");
+  await register(url, watch, alertTo(WATCH));
   const bob = await signIn(url, "apple.bob", "Bob", "bob-phone");
+  await register(url, bob, inApp);
   await befriend(url, alice.token, bob.token);
-  return { alice, watchToken, bob };
+  return { alice, watch, bob };
 }
 
 // Ends the conversation from Bob's side once its ring has timed out, so the next talk rings again.
@@ -331,18 +351,18 @@ async function hangUp(bob: SpikeClient, conversationId: string) {
 }
 
 test("an iPhone and a watch on one account stay connected together, and a conversation moves between them", async () => {
-  await withApi(async ({ url, pusher }) => {
-    const { alice, watchToken, bob } = await twoDevices(url);
-    const alicePhone = relayClient(url, "alice-phone", alice.token, "ios");
+  await withApi(async ({ url, pusher, accounts }) => {
+    const { alice, watch, bob } = await twoDevices(url);
+    const alicePhone = relayClient(url, accounts, alice);
     await alicePhone.connect();
-    const bobClient = relayClient(url, "bob", bob.token, "ios");
+    const bobClient = relayClient(url, accounts, bob);
     await bobClient.connect();
 
     // The watch rings (the default with a watch), and it joins while the iPhone stays connected.
     const first = await bobClient.talk(alice.user.id, pcm(3), { realtime: false });
     const ring = ringIn(pusher, WATCH);
     assert.equal(ring.conversationId, first.conversationId);
-    const aliceWatch = relayClient(url, "alice-watch", watchToken, "watchos");
+    const aliceWatch = relayClient(url, accounts, watch);
     await aliceWatch.connect(first.conversationId, undefined, ring.ringId);
     await aliceWatch.waitFor("burst-end");
     assert.equal(aliceWatch.frames.length, 3);
@@ -373,16 +393,16 @@ test("an iPhone and a watch on one account stay connected together, and a conver
 });
 
 test("one device rings: the watch by default, the iPhone when chosen, the other when one can't be reached", async () => {
-  await withApi(async ({ url, pusher }) => {
-    const { alice, watchToken, bob } = await twoDevices(url);
-    const bobClient = relayClient(url, "bob", bob.token, "ios");
+  await withApi(async ({ url, pusher, accounts }) => {
+    const { alice, watch, bob } = await twoDevices(url);
+    const bobClient = relayClient(url, accounts, bob);
     await bobClient.connect();
     // Rings only: each unanswered ring here also ends with its "Missed message" notice.
     const rings = () => pusher.sent.filter((p) => !(p.payload as { missed?: number }).missed);
     const pushes = () => rings().map((p) => [p.token, p.pushType ?? "alert"]);
 
     // The iPhone is in its PushToTalk channel, but the watch is the default.
-    await register(url, alice.token, pushToTalk(PHONE));
+    await register(url, alice, pushToTalk(PHONE));
     let ring = await bobClient.talk(alice.user.id, pcm(1), { realtime: false });
     assert.deepEqual(pushes(), [[WATCH, "alert"]]);
     await hangUp(bobClient, ring.conversationId);
@@ -396,14 +416,14 @@ test("one device rings: the watch by default, the iPhone when chosen, the other 
     await hangUp(bobClient, ring.conversationId);
 
     // Alice leaves the channel and the app isn't open: the watch rings instead.
-    await register(url, alice.token, inApp);
+    await register(url, alice, inApp);
     ring = await bobClient.talk(alice.user.id, pcm(1), { realtime: false });
     assert.deepEqual(pushes().at(-1), [WATCH, "alert"]);
     assert.equal(rings().length, 3);
     await hangUp(bobClient, ring.conversationId);
 
     // With the app on screen, the iPhone rings in the app, over its stream.
-    const alicePhone = relayClient(url, "alice-phone", alice.token, "ios");
+    const alicePhone = relayClient(url, accounts, alice);
     await alicePhone.connect();
     ring = await bobClient.talk(alice.user.id, pcm(1), { realtime: false });
     assert.equal((await alicePhone.waitFor("ring")).conversationId, ring.conversationId);
@@ -413,8 +433,8 @@ test("one device rings: the watch by default, the iPhone when chosen, the other 
     await sleep(50);
 
     // Neither can be rung (the watch signed out, the iPhone app closed): Bob hears so at once.
-    assert.equal((await call(url, "POST", "/v2/auth/signout", watchToken)).status, 200);
-    bobClient.send({ type: "talk-start", to: alice.user.id, burstId: "nobody", codec: "pcm16le16k" });
+    assert.equal((await call(url, "POST", "/v2/auth/signout", watch.token)).status, 200);
+    await talkStart(bobClient, alice.user.id, "nobody");
     assert.equal((await bobClient.waitFor("talk-refused")).reason, "unavailable");
 
     // Back to the default: with no watch, that's the iPhone.
@@ -434,17 +454,17 @@ test("one device rings: the watch by default, the iPhone when chosen, the other 
 });
 
 test("rollover: an unanswered watch rings the iPhone, within the first ring's time", async () => {
-  await withApi(async ({ url, pusher }) => {
+  await withApi(async ({ url, pusher, accounts }) => {
     const { alice, bob } = await twoDevices(url);
-    await register(url, alice.token, pushToTalk(PHONE));
+    await register(url, alice, pushToTalk(PHONE));
     const me = await call(url, "PATCH", "/v2/me", alice.token, { rollOver: true });
     assert.equal(me.body.rollOver, true);
     assert.equal((await call(url, "GET", "/v2/me", alice.token)).body.rollOver, true);
-    const bobClient = relayClient(url, "bob", bob.token, "ios");
+    const bobClient = relayClient(url, accounts, bob);
     await bobClient.connect();
     // Connected already (an open stream doesn't ring a PushToTalk iPhone), so its join after the
     // rollover is quick enough to beat the ring's deadline on a busy machine.
-    const alicePhone = relayClient(url, "alice-phone", alice.token, "ios");
+    const alicePhone = relayClient(url, accounts, alice);
     await alicePhone.connect();
     const pushToTalks = () => pusher.sent.filter((p) => p.pushType === "pushtotalk");
 
@@ -482,13 +502,13 @@ test("rollover: an unanswered watch rings the iPhone, within the first ring's ti
 });
 
 test("rollover: an iPhone that only played a rolled-over message doesn't keep the conversation", async () => {
-  await withApi(async ({ url, pusher }) => {
+  await withApi(async ({ url, pusher, accounts }) => {
     const { alice, bob } = await twoDevices(url);
-    await register(url, alice.token, pushToTalk(PHONE));
+    await register(url, alice, pushToTalk(PHONE));
     await call(url, "PATCH", "/v2/me", alice.token, { rollOver: true });
-    const bobClient = relayClient(url, "bob", bob.token, "ios");
+    const bobClient = relayClient(url, accounts, bob);
     await bobClient.connect();
-    const alicePhone = relayClient(url, "alice-phone", alice.token, "ios");
+    const alicePhone = relayClient(url, accounts, alice);
     await alicePhone.connect();
     const alerts = () => pusher.sent.filter((p) => (p.pushType ?? "alert") === "alert" && p.token === WATCH).length;
     const pushToTalks = () => pusher.sent.filter((p) => p.pushType === "pushtotalk").length;
@@ -515,15 +535,15 @@ test("rollover: an iPhone that only played a rolled-over message doesn't keep th
 });
 
 test("rollover: off by default, and an answer or a decline on the watch stops it", async () => {
-  await withApi(async ({ url, pusher }) => {
-    const { alice, watchToken, bob } = await twoDevices(url);
-    await register(url, alice.token, pushToTalk(PHONE));
-    const aliceWatch = relayClient(url, "alice-watch", watchToken, "watchos");
-    const bobClient = relayClient(url, "bob", bob.token, "ios");
+  await withApi(async ({ url, pusher, accounts }) => {
+    const { alice, watch, bob } = await twoDevices(url);
+    await register(url, alice, pushToTalk(PHONE));
+    const aliceWatch = relayClient(url, accounts, watch);
+    const bobClient = relayClient(url, accounts, bob);
     await bobClient.connect();
     const pushToTalks = () => pusher.sent.filter((p) => p.pushType === "pushtotalk");
     const ringCall = (action: "answer" | "decline", conversationId: string, ringId: string) =>
-      call(url, "POST", `/v2/rings/${action}`, watchToken, { conversationId, ringId }, clientHeaders("watchos"));
+      call(url, "POST", `/v2/rings/${action}`, watch.token, { conversationId, ringId }, clientHeaders("watchos"));
 
     // Off: the watch rings until the ring runs out, as before.
     let ring = await bobClient.talk(alice.user.id, pcm(1), { realtime: false });
@@ -554,11 +574,11 @@ test("rollover: off by default, and an answer or a decline on the watch stops it
 });
 
 test("rollover: the watch answering just after it keeps the message, and the iPhone gives way", async () => {
-  await withApi(async ({ url, pusher }) => {
-    const { alice, watchToken, bob } = await twoDevices(url);
-    await register(url, alice.token, pushToTalk(PHONE));
+  await withApi(async ({ url, pusher, accounts }) => {
+    const { alice, watch, bob } = await twoDevices(url);
+    await register(url, alice, pushToTalk(PHONE));
     await call(url, "PATCH", "/v2/me", alice.token, { rollOver: true });
-    const bobClient = relayClient(url, "bob", bob.token, "ios");
+    const bobClient = relayClient(url, accounts, bob);
     await bobClient.connect();
 
     const { conversationId } = await bobClient.talk(alice.user.id, pcm(3), { realtime: false });
@@ -567,15 +587,15 @@ test("rollover: the watch answering just after it keeps the message, and the iPh
 
     // Alice taps the watch's ring just as the iPhone is rung: the watch's answer arrives first.
     const ringId = ringIn(pusher, WATCH).ringId;
-    assert.equal((await call(url, "POST", "/v2/rings/answer", watchToken, { conversationId, ringId }, clientHeaders("watchos"))).status, 200);
-    const alicePhone = relayClient(url, "alice-phone", alice.token, "ios");
+    assert.equal((await call(url, "POST", "/v2/rings/answer", watch.token, { conversationId, ringId }, clientHeaders("watchos"))).status, 200);
+    const alicePhone = relayClient(url, accounts, alice);
     await alicePhone.connect();
     alicePhone.send({ type: "join", conversationId, ringId: ringIn(pusher, PHONE).ringId });
     assert.equal((await alicePhone.waitFor("moved")).conversationId, conversationId);
     assert.equal(alicePhone.received.some((m) => m.type === "joined"), false);
 
     // The watch connects and hears all of it.
-    const aliceWatch = relayClient(url, "alice-watch", watchToken, "watchos");
+    const aliceWatch = relayClient(url, accounts, watch);
     await aliceWatch.connect(conversationId, undefined, ringId);
     await aliceWatch.waitFor("burst-end");
     assert.equal(aliceWatch.frames.length, 3);
@@ -585,15 +605,15 @@ test("rollover: the watch answering just after it keeps the message, and the iPh
 });
 
 test("the device in use keeps the conversation: a reply rings the iPhone Alice talked from", async () => {
-  await withApi(async ({ url, pusher }) => {
+  await withApi(async ({ url, pusher, accounts }) => {
     const { alice, bob } = await twoDevices(url);
-    await register(url, alice.token, pushToTalk(PHONE));
-    await register(url, bob.token, inApp);
-    const bobClient = relayClient(url, "bob", bob.token, "ios");
+    await register(url, alice, pushToTalk(PHONE));
+    await register(url, bob, inApp);
+    const bobClient = relayClient(url, accounts, bob);
     await bobClient.connect();
 
     // Alice talks from her iPhone; Bob is rung in his app and joins.
-    const alicePhone = relayClient(url, "alice-phone", alice.token, "ios");
+    const alicePhone = relayClient(url, accounts, alice);
     await alicePhone.connect();
     const { conversationId } = await alicePhone.talk(bob.user.id, pcm(2), { realtime: false });
     const bobRing = await bobClient.waitFor("ring");
@@ -634,33 +654,33 @@ test("a token kept after signing out is refused, and can't make new sessions", a
 });
 
 test("blocking ends a conversation already under way, even mid-burst", async () => {
-  await withApi(async ({ url, pusher }) => {
-    const { alice, watchToken, bob } = await twoDevices(url);
-    const bobClient = relayClient(url, "bob", bob.token, "ios");
+  await withApi(async ({ url, pusher, accounts }) => {
+    const { alice, watch, bob } = await twoDevices(url);
+    const bobClient = relayClient(url, accounts, bob);
     await bobClient.connect();
-    const aliceWatch = relayClient(url, "alice-watch", watchToken, "watchos");
+    const aliceWatch = relayClient(url, accounts, watch);
 
     // Bob rings, Alice joins, and Bob keeps talking live.
-    bobClient.send({ type: "talk-start", to: alice.user.id, burstId: "b1", codec: "pcm16le16k" });
+    const cipher = await talkStart(bobClient, alice.user.id, "b1");
     const { conversationId } = await bobClient.waitFor("floor-granted");
     await aliceWatch.connect(conversationId, undefined, ringIn(pusher, WATCH).ringId);
     await aliceWatch.waitFor("burst-start");
-    bobClient.sendFrame(Codec.pcm16le16k, 0, Buffer.alloc(640, 1));
+    bobClient.sendSealedFrame(cipher, Codec.pcm16le16k, 0, Buffer.alloc(640, 1));
     while (aliceWatch.frames.length < 1) await sleep(5);
 
     // Alice blocks him. His audio is checked again (every frame here, with no grace period),
     // the conversation ends for both, and nothing more reaches her.
     assert.equal((await call(url, "POST", "/v2/blocks", alice.token, { userId: bob.user.id })).status, 200);
-    bobClient.sendFrame(Codec.pcm16le16k, 1, Buffer.alloc(640, 1));
+    bobClient.sendSealedFrame(cipher, Codec.pcm16le16k, 1, Buffer.alloc(640, 1));
     assert.equal((await bobClient.waitFor("talk-refused")).reason, "not-friends");
     assert.equal((await aliceWatch.waitFor("conversation-ended")).conversationId, conversationId);
     const heard = aliceWatch.frames.length;
-    for (let seq = 2; seq < 5; seq++) bobClient.sendFrame(Codec.pcm16le16k, seq, Buffer.alloc(640, 1));
+    for (let seq = 2; seq < 5; seq++) bobClient.sendSealedFrame(cipher, Codec.pcm16le16k, seq, Buffer.alloc(640, 1));
     await sleep(50);
     assert.equal(aliceWatch.frames.length, heard);
 
     // And a new Talk from him is refused.
-    bobClient.send({ type: "talk-start", to: alice.user.id, burstId: "b2", codec: "pcm16le16k" });
+    await talkStart(bobClient, alice.user.id, "b2");
     assert.equal((await bobClient.waitFor("talk-refused", (m) => m.burstId === "b2")).reason, "not-friends");
     bobClient.close();
     aliceWatch.close();
@@ -668,17 +688,17 @@ test("blocking ends a conversation already under way, even mid-burst", async () 
 });
 
 test("unfriending ends the conversation at the next Talk, whoever talks", async () => {
-  await withApi(async ({ url, pusher }) => {
-    const { alice, watchToken, bob } = await twoDevices(url);
-    const bobClient = relayClient(url, "bob", bob.token, "ios");
+  await withApi(async ({ url, pusher, accounts }) => {
+    const { alice, watch, bob } = await twoDevices(url);
+    const bobClient = relayClient(url, accounts, bob);
     await bobClient.connect();
-    const aliceWatch = relayClient(url, "alice-watch", watchToken, "watchos");
+    const aliceWatch = relayClient(url, accounts, watch);
     const { conversationId } = await bobClient.talk(alice.user.id, pcm(2), { realtime: false });
     await aliceWatch.connect(conversationId, undefined, ringIn(pusher, WATCH).ringId);
     await aliceWatch.waitFor("burst-end");
 
     assert.equal((await call(url, "DELETE", `/v2/friends/${bob.user.id}`, alice.token)).status, 200);
-    aliceWatch.send({ type: "talk-start", to: bob.user.id, burstId: "a1", codec: "pcm16le16k" });
+    await talkStart(aliceWatch, bob.user.id, "a1");
     assert.equal((await aliceWatch.waitFor("talk-refused")).reason, "not-friends");
     assert.equal((await bobClient.waitFor("conversation-ended")).conversationId, conversationId);
     bobClient.close();
@@ -701,14 +721,14 @@ class RejectingPusher extends DryRunPusher {
 
 test("a watch APNs no longer knows is unregistered, and the iPhone rings instead", async () => {
   const pusher = new RejectingPusher("dead-watch-token");
-  await withApi(async ({ url }) => {
+  await withApi(async ({ url, accounts }) => {
     const alice = await signIn(url, "apple.alice", "Alice", "alice-phone");
-    const watchToken = await watchFor(url, alice.token, "alice-watch");
-    await register(url, watchToken, alertTo("dead-watch-token"));
-    await register(url, alice.token, pushToTalk(PHONE));
+    await register(url, alice, pushToTalk(PHONE));
+    const watch = await watchFor(url, alice, "alice-watch");
+    await register(url, watch, alertTo("dead-watch-token"));
     const bob = await signIn(url, "apple.bob", "Bob", "bob-phone");
     await befriend(url, alice.token, bob.token);
-    const bobClient = relayClient(url, "bob", bob.token, "ios");
+    const bobClient = relayClient(url, accounts, bob);
     await bobClient.connect();
 
     const ring = await bobClient.talk(alice.user.id, pcm(1), { realtime: false });
@@ -722,14 +742,14 @@ test("a watch APNs no longer knows is unregistered, and the iPhone rings instead
 
 test("when APNs turns away the only device, the sender hears nobody can be rung", async () => {
   const pusher = new RejectingPusher("dead-phone-token");
-  await withApi(async ({ url }) => {
+  await withApi(async ({ url, accounts }) => {
     const alice = await signIn(url, "apple.alice", "Alice", "alice-phone");
-    await register(url, alice.token, pushToTalk("dead-phone-token"));
+    await register(url, alice, pushToTalk("dead-phone-token"));
     const bob = await signIn(url, "apple.bob", "Bob", "bob-phone");
     await befriend(url, alice.token, bob.token);
-    const bobClient = relayClient(url, "bob", bob.token, "ios");
+    const bobClient = relayClient(url, accounts, bob);
     await bobClient.connect();
-    bobClient.send({ type: "talk-start", to: alice.user.id, burstId: "b1", codec: "pcm16le16k" });
+    await talkStart(bobClient, alice.user.id, "b1");
     assert.equal((await bobClient.waitFor("talk-refused")).reason, "unavailable");
     bobClient.close();
   }, { pusher });

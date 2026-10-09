@@ -2,7 +2,8 @@
 
 Oct 7, 2026 · Steve Teixeira
 
-A plan, not yet built. Nothing in the apps, the relay or the API has changed for it.
+Built in PRs 0, A, B and C (released in TestFlight build 246 and the services at `c6492f7`). PR D,
+enforcement, is on branch `e2ee-enforcement`: format 1 is refused everywhere once it's deployed.
 
 ## Summary
 
@@ -343,7 +344,46 @@ Store launch while every tester can be told to update.
    first), then device runs.
 5. **PR D: enforcement.** Raise `minimumBuilds` to that build, refuse format 1 in the relay and
    the apps, drop format 1 from `/v2/config`, update the privacy policy and support page, and
-   answer export compliance again. Deploys and App Store Connect changes need Steve.
+   answer export compliance again. Deploys and App Store Connect changes need Steve. Built
+   2026-10-09 on branch `e2ee-enforcement` (see "PR D" below).
+
+### PR D (2026-10-09)
+
+- **Relay and API:** `audioFormats` is `[2]` in `/v2/config`. Admission without
+  `X-OAO-Audio-Formats` including 2, and a device registration without format 2, answer
+  `409 client-upgrade-required`, so a build from before E2EE shows "Update Over&Out" even
+  without a minimum build. A registration without certificates is `400 bad-certificate`. A
+  talk-start without `format: 2` is malformed (`error`, `unknown-message`); frames are checked
+  as format 2 (a 16-byte tag). The relay never rings a device without keys.
+- **Devices left without keys** (decision, answering PR C's open question): only format 2 is
+  carried, so a device without keys can't be rung or sealed to. The key directory now leaves
+  such registrations out (a phone or watch on a build before 246 that was never updated), and
+  `allDevicesHaveKeys` is true whenever it lists a device; the relay no longer answers
+  `keys-stale` because of them. In PR C one such device made every friend's talk fail closed,
+  because the alternative was format 1; with format 1 gone, leaving it out costs nothing (a
+  server that hides a device only stops it ringing). The apps seal to every listed device and
+  fail with `no-current-key` when there's none.
+- **Apps:** they send and play only format 2: `E2EEFlow` no longer has a plaintext path, a
+  format 1 burst-start is dropped as `downgrade` whoever it's from, registration always
+  carries keys (a watch waits for its iPhone's certificate before registering: "Waiting for
+  keys from your iPhone"), admission says `X-OAO-Audio-Formats: 2`, and the service's relay is
+  used only if it lists format 2.
+- **The Test Bot** talks only format 2; without its keys (`TEST_BOT_E2EE_SECRET` on Google
+  Cloud, `DATA_DIR/test-bot-keys.json` locally) it's off. The Canary always seals and fails if
+  the bot has no current key. `bot.ts` needs the bot's keys file.
+- **Rollout order** (each step needs Steve): a TestFlight build from this branch, given to
+  House and submitted to Early Testers (`asc.ts beta-review`); **wait until Beta App Review
+  approves it**, because the deploy turns away every build before E2EE at once, whatever the
+  minimum (Early Testers have only 216 and 208 since 246 was withdrawn), and they need a build
+  to update to; then `MINIMUM_BUILDS='{"ios":<that build>,"watchos":<that build>}'` in
+  `deploy/gcp/config.sh`; then the API, relay and website deploys together. Until the services
+  are deployed, the new build works with the current ones (they carry format 2 already), except
+  that until then a friend with a device left without keys can't be talked to, as with build 246.
+- **Unfriending mid-conversation:** a Talk refused as `not-friends` now ends the conversation
+  for both (`conversation-ended`), as format 1's path did; PR B's format 2 path only refused
+  the sender.
+- **The Test Bot's keys** failing to open (an expired certificate, if the secret isn't rotated
+  within 30 days) turn the bot off with an error, instead of stopping the relay from starting.
 
 ## Testing
 
@@ -371,11 +411,22 @@ Store launch while every tester can be told to update.
 ## Outside the code
 
 - **Export compliance.** All three Info.plists say `ITSAppUsesNonExemptEncryption = NO`, and
-  `asc.ts` checks the answer. Encrypting people's content changes it. Using only CryptoKit (the
-  encryption in Apple's operating system) may keep the app out of the paperwork path, but check
-  Apple's current questions and the US mass-market rules before PR D, and note that App Store
-  Connect also asks about distribution in France. The Android app, which bundles its own
-  crypto library, will need the same review.
+  `asc.ts` checks the answer. Reviewed for PR D (2026-10-09; research, not legal advice; Steve
+  to confirm): **keep NO**. The apps' encryption is all CryptoKit, Apple's operating-system
+  framework, with standard algorithms. Apple's documentation says NO is right when an app uses
+  only encryption that's exempt from export documentation, and gives the OS's own encryption
+  as the example; in App Store Connect's questions that's "None of the algorithms mentioned
+  above" (the alternative, "standard encryption algorithms instead of, or in addition to,
+  using or accessing the encryption within Apple's operating system", would apply only to a
+  bundled library). Under the US rules the app is mass-market encryption software (5D992.c,
+  License Exception ENC 740.17(b)(1)); since BIS's 2021 rule no annual self-classification
+  report is due for it, and no CCATS. Keep a short internal note of that classification.
+  **France** is the open point: App Store Connect doesn't ask about it on this path, but French
+  law puts a declaration duty on whoever supplies encryption there, and its exemption list
+  doesn't clearly cover app-level end-to-end encryption. A free declaration to ANSSI (at least
+  a month before release) is cheap insurance; decide with counsel before the App Store launch.
+  The Android app, which bundles its own crypto library, will need the "standard algorithms"
+  answer and the France question.
 - **Privacy policy and App Privacy label.** "Your voice" says the relay can't hear messages;
   the friends list now shares device kinds with friends. Review the App Privacy answers for
   audio.
@@ -452,7 +503,8 @@ changed".
 2. ~~Which RFC 9180 package for Node?~~ None: built from node:crypto and checked against the
    RFC's vectors (PR A).
 3. The Secret Manager secret for the Test Bot's keys (Steve's OK).
-4. Export compliance answers (before PR D).
+4. ~~Export compliance answers (before PR D).~~ Keep `ITSAppUsesNonExemptEncryption = NO`
+   (PR D, "Outside the code"); France's ANSSI declaration is Steve's call.
 5. Does the universal link hand the app the URL with its fragment, and can the invite web page
    keep it through the TestFlight or App Store install for someone without the app?
 6. ~~The exact replay age limit?~~ 180 s old, 60 s ahead (PR A).

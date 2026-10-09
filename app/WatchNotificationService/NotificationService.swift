@@ -13,7 +13,8 @@ import UserNotifications
 /// buffered message then, into the app group. The app plays it as soon as the ring is
 /// tapped (ConversationController.playPrefetched) and skips those frames in the replay.
 ///
-/// Kept free of OverAndOutKit so the extension stays small: it only moves bytes. The file
+/// It only moves bytes: the audio stays encrypted on disk, and the app opens it at the tap. It
+/// uses OverAndOutKit only for the relay's admission headers and its key rotation. The file
 /// layout is shared with Watch/Prefetch.swift, and the session (the account's token) is the
 /// one WatchAccount keeps in the Keychain under the app group (KeychainSessionStore).
 ///
@@ -81,7 +82,8 @@ final class NotificationService: UNNotificationServiceExtension {
 
         var request = URLRequest(url: url, timeoutInterval: 20)
         request.setValue("Bearer \(session.token)", forHTTPHeaderField: "Authorization")
-        for (name, value) in Self.relayHeaders() { request.setValue(value, forHTTPHeaderField: name) }
+        // Relay admission's headers, as the app sends them (the extension is a watchos client too).
+        for (name, value) in ClientIdentity.current.relayHeaders { request.setValue(value, forHTTPHeaderField: name) }
         let state = state
         let requestId = requestId
         let task = URLSession.shared.dataTask(with: request) { data, response, error in
@@ -169,20 +171,6 @@ final class NotificationService: UNNotificationServiceExtension {
         components?.queryItems = [URLQueryItem(name: "conversationId", value: conversationId),
                                   URLQueryItem(name: "ringId", value: ringId)]
         return components?.url
-    }
-
-    /// Relay admission's headers, as the kit's ClientIdentity sends them for a watch.
-    private static func relayHeaders() -> [String: String] {
-        let info = Bundle.main.infoDictionary ?? [:]
-        return [
-            "X-OAO-Client-Kind": "watchos",
-            "X-OAO-Client-Version": info["CFBundleShortVersionString"] as? String ?? "0",
-            "X-OAO-Build": info["CFBundleVersion"] as? String ?? "0",
-            "X-OAO-Relay-Protocol": "2",
-            "X-OAO-Audio-Formats": "1,2",
-            "X-OAO-Decode": "opus16k,pcm16le16k",
-            "X-OAO-Encode": "opus16k,pcm16le16k",
-        ]
     }
 
     private static func nowMs() -> Double { Date().timeIntervalSince1970 * 1000 }

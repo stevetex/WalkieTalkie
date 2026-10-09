@@ -31,39 +31,29 @@ public final class E2EEFlow {
         self.replayDefaults = replayDefaults; self.userId = userId
     }
 
-    /// Nil means the friend has not registered keys yet and format 1 is still allowed in PR C.
-    /// Any previously seen key makes missing or expired directory keys a hard failure.
+    /// A sealed talk-start (format 2) for the friend's devices in the key directory. Format 1 is
+    /// retired, so a friend with no current key can't be talked to (`noCurrentKey`): never
+    /// plaintext instead. It's sealed to each listed device with a valid, unexpired key; one
+    /// without (a watch left unused past its key's 30 days) is left out, as the relay leaves it
+    /// out of the ring. The directory lists only devices with keys; a device listed twice is
+    /// sealed to once (its first usable key).
     public func start(peer: String, conversationId: String?, burstId: String, codec: String,
-                      keys freshKeys: FriendKeys? = nil, now: Int64) throws -> (control: [String: Any], conversationId: String)? {
+                      keys freshKeys: FriendKeys? = nil, now: Int64) throws -> (control: [String: Any], conversationId: String) {
+        sending = nil
         guard let userId = userId() else { throw FlowError.notProvisioned }
-        let state = trust.state(account: userId, friend: peer)
-        let keys = freshKeys ?? state.keys
-        let hasSeenKeys = trust.hasSeenKeys(account: userId, friend: peer)
-        guard let keys else {
-            if hasSeenKeys { throw FlowError.noCurrentKey }
-            sending = nil
-            return nil
-        }
-        if keys.allDevicesHaveKeys != true {
-            if !hasSeenKeys && keys.phones.isEmpty && keys.devices.isEmpty { sending = nil; return nil }
-            throw FlowError.noCurrentKey
-        }
-        let usable = E2EE.usableKeys(of: peer, keys, now: now)
-        guard usable.recipients.count == keys.devices.count,
-              Set(usable.recipients.map(\.deviceId)).count == keys.devices.count else { throw FlowError.noCurrentKey }
-        guard !usable.recipients.isEmpty else {
-            if hasSeenKeys || !keys.phones.isEmpty { throw FlowError.noCurrentKey }
-            sending = nil
-            return nil
-        }
+        guard let keys = freshKeys ?? trust.state(account: userId, friend: peer).keys,
+              keys.allDevicesHaveKeys == true else { throw FlowError.noCurrentKey }
+        var listed = Set<String>()
+        let recipients = E2EE.usableKeys(of: peer, keys, now: now).recipients.filter { listed.insert($0.deviceId).inserted }
+        guard !recipients.isEmpty else { throw FlowError.noCurrentKey }
         guard let sender = try store.sender(userId: userId, deviceId: deviceId) else { throw FlowError.notProvisioned }
         let id = conversationId ?? UUID().uuidString.lowercased()
         guard Self.fitsWire([id, burstId, codec, userId, peer, sender.deviceId]),
-              usable.recipients.count <= Int(UInt16.max),
-              usable.recipients.allSatisfy({ Self.fitsWire([$0.deviceId, $0.keyId]) })
+              recipients.count <= Int(UInt16.max),
+              recipients.allSatisfy({ Self.fitsWire([$0.deviceId, $0.keyId]) })
         else { throw FlowError.noCurrentKey }
         let context = BundleContext(conversationId: id, burstId: burstId, codec: codec, from: userId, to: peer)
-        let sealed = try E2EE.seal(context, from: sender, to: usable.recipients, sentAt: now)
+        let sealed = try E2EE.seal(context, from: sender, to: recipients, sentAt: now)
         sending = sealed.cipher
         let encoded = try JSONEncoder().encode(sealed.bundle)
         let bundle = try JSONSerialization.jsonObject(with: encoded)
@@ -72,7 +62,7 @@ public final class E2EEFlow {
     }
 
     public func send(_ frame: Data) throws -> Data {
-        guard let sending else { return frame }
+        guard let sending else { throw FlowError.noCurrentKey }
         guard let decoded = VoiceFrame.decode(frame) else { throw E2EE.Failure.decrypt }
         return try sending.seal(codec: decoded.codec, seq: decoded.seq, payload: decoded.payload)
     }
@@ -85,10 +75,10 @@ public final class E2EEFlow {
         receiving = nil
         changedSender = false
         justChanged = false
+        // Format 1 (plaintext) is retired: never played, whoever it claims to be from.
         if message.format != Int(E2EE.audioFormat) {
             guard message.format == nil || message.format == 1 else { throw FlowError.invalidFormat }
-            if trust.hasSeenKeys(account: userId, friend: peer) { throw FlowError.downgrade }
-            return true
+            throw FlowError.downgrade
         }
         guard let bundle = message.e2ee, let codec = message.codec else { throw FlowError.missingBundle }
         guard Self.fitsWire([conversationId, burstId, codec, peer, userId, deviceId, bundle.sender.deviceId]),
@@ -111,17 +101,11 @@ public final class E2EEFlow {
     /// the playback ledger, so a valid retransmission of it can still play.
     public func open(_ frame: Data, burstId: String, now: Int64) throws -> Data? {
         guard burstId == incomingBurstId else { throw FlowError.missingBundle }
-        let decoded: (codec: VoiceFrame.Codec, seq: UInt32, payload: Data)
-        if let receiving { decoded = try receiving.open(frame) }
-        else {
-            guard let plain = VoiceFrame.decode(frame) else { throw E2EE.Failure.decrypt }
-            decoded = plain
-        }
+        guard let receiving else { throw FlowError.missingBundle }
+        let decoded = try receiving.open(frame)
         guard ledger.accept(burstId: burstId, sequence: decoded.seq, now: now) else { return nil }
-        if receiving != nil {
-            guard let account = userId(), try rememberPlayedSequence(account: account, burstId: burstId,
-                                                                      sequence: decoded.seq, now: now) else { return nil }
-        }
+        guard let account = userId(), try rememberPlayedSequence(account: account, burstId: burstId,
+                                                                  sequence: decoded.seq, now: now) else { return nil }
         return VoiceFrame.encode(codec: decoded.codec, seq: decoded.seq, payload: decoded.payload)
     }
 

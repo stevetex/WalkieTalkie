@@ -4,10 +4,14 @@ import type { AccountDevice, Accounts } from "../src/accounts.ts";
 import { RecordParser, encodeJSONRecord } from "../src/records.ts";
 import { DryRunPusher } from "../src/apns.ts";
 import { DEFAULT_CAPABILITIES, formFactorOf, type ClientKind, type CodecName, type Delivery } from "../src/contract.ts";
-import { Codec, type ServerMessage } from "../src/protocol.ts";
+import { randomUUID } from "node:crypto";
+import { sealBundle, usableKeys, type FriendKeysJSON } from "../src/e2ee.ts";
+import type { EndpointKeys } from "../src/endpoint-keys.ts";
+import { Codec, type ClientMessage, type ServerMessage } from "../src/protocol.ts";
 import { Relay, type Peer } from "../src/relay.ts";
 import { JsonMetricsStore } from "../src/store.ts";
-import { befriend, call, clientHeaders, friends, pcm, user, withServer, type TestServer, type TestUser } from "./harness.ts";
+import type { SpikeClient } from "../tools/client.ts";
+import { befriend, call, clientHeaders, deviceKeys, friends, pcm, user, withServer, type TestServer, type TestUser } from "./harness.ts";
 
 // A real-looking APNs token: rings go through the pusher, and the push carries the ring.
 const WATCH_PUSH = { apns: "alert", token: "abcdef0123456789" } as const;
@@ -16,6 +20,19 @@ const WATCH_PUSH = { apns: "alert", token: "abcdef0123456789" } as const;
 function pushed(h: TestServer, n: number): Record<string, unknown> & { ringId: string; conversationId: string; aps: Record<string, unknown> } {
   return h.pusher.sent[n].payload as never;
 }
+
+// A Talk sealed to the friend's keys, as the apps send it. Returns what sends the burst's
+// frames, sealed: by default a frame of its codec, or any payload in any codec, to send frames
+// the apps couldn't decode.
+async function talkStart(client: SpikeClient, to: string, burstId: string, codec: "pcm16le16k" | "opus16k" = "pcm16le16k") {
+  const { message, cipher } = await client.sealedTalkStart(to, burstId, codec);
+  client.send(message);
+  return (seq: number, payload = Buffer.alloc(codec === "pcm16le16k" ? 640 : 60), frameCodec: number = Codec[codec]) =>
+    client.sendSealedFrame(cipher, frameCodec, seq, payload);
+}
+
+// A sealed PCM frame on the wire: header, 640 bytes and the 16-byte tag.
+const SEALED_PCM = 5 + 640 + 16;
 
 // Ring calls go through admission, like the app's.
 function ringCall(h: TestServer, who: TestUser, method: string, path: string, body?: unknown) {
@@ -96,16 +113,16 @@ test("a burst still in progress when the recipient joins continues live", async 
     await b.connect();
 
     const burstId = "b1";
-    a.send({ type: "talk-start", to: bob.id, burstId, codec: "pcm16le16k" });
+    const frame = await talkStart(a, bob.id, burstId);
     const granted = await a.waitFor("floor-granted");
     const ring = await b.waitFor("ring");
     assert.equal(ring.conversationId, granted.conversationId);
 
-    for (let seq = 0; seq < 3; seq++) a.sendFrame(2, seq, Buffer.alloc(640));
+    for (let seq = 0; seq < 3; seq++) frame(seq);
     await new Promise((r) => setTimeout(r, 50));
     b.send({ type: "join", conversationId: ring.conversationId, ringId: ring.ringId });
     await b.waitFor("burst-start");
-    for (let seq = 3; seq < 6; seq++) a.sendFrame(2, seq, Buffer.alloc(640));
+    for (let seq = 3; seq < 6; seq++) frame(seq);
     a.send({ type: "talk-end", burstId });
     await b.waitFor("burst-end");
     assert.deepEqual(
@@ -126,19 +143,19 @@ test("a member whose stream drops mid-burst rejoins and resumes from the first f
     await b.connect();
 
     const burstId = "b1";
-    a.send({ type: "talk-start", to: bob.id, burstId, codec: "pcm16le16k" });
+    const frame = await talkStart(a, bob.id, burstId);
     await a.waitFor("floor-granted");
     const ring = await b.waitFor("ring");
     b.send({ type: "join", conversationId: ring.conversationId, ringId: ring.ringId });
     await b.waitFor("burst-start");
-    for (let seq = 0; seq < 3; seq++) a.sendFrame(2, seq, Buffer.alloc(640));
+    for (let seq = 0; seq < 3; seq++) frame(seq);
     await new Promise((r) => setTimeout(r, 50));
     assert.deepEqual(b.frames.map((f) => f.readUInt32BE(1)), [0, 1, 2]);
 
     // Run 106: the stream dies (airplane mode) while the friend keeps talking and finishes.
     b.close();
     await new Promise((r) => setTimeout(r, 50));
-    for (let seq = 3; seq < 8; seq++) a.sendFrame(2, seq, Buffer.alloc(640));
+    for (let seq = 3; seq < 8; seq++) frame(seq);
     a.send({ type: "talk-end", burstId });
     await new Promise((r) => setTimeout(r, 50));
 
@@ -169,16 +186,16 @@ test("a rejoin can resume a burst that's still going, then hear the rest live", 
     await b.connect();
 
     const burstId = "b1";
-    a.send({ type: "talk-start", to: bob.id, burstId, codec: "pcm16le16k" });
+    const frame = await talkStart(a, bob.id, burstId);
     await a.waitFor("floor-granted");
     const ring = await b.waitFor("ring");
     b.send({ type: "join", conversationId: ring.conversationId, ringId: ring.ringId });
     await b.waitFor("burst-start");
-    for (let seq = 0; seq < 2; seq++) a.sendFrame(2, seq, Buffer.alloc(640));
+    for (let seq = 0; seq < 2; seq++) frame(seq);
     await new Promise((r) => setTimeout(r, 50));
     b.close();
     await new Promise((r) => setTimeout(r, 50));
-    for (let seq = 2; seq < 4; seq++) a.sendFrame(2, seq, Buffer.alloc(640));
+    for (let seq = 2; seq < 4; seq++) frame(seq);
     await new Promise((r) => setTimeout(r, 50));
 
     // The apps rejoin in the request that opens the stream (?join=…&resumeBurst=…&resumeFrom=…).
@@ -187,7 +204,7 @@ test("a rejoin can resume a burst that's still going, then hear the rest live", 
     assert.equal((await back.waitFor("joined")).resumedFrames, 2);
     await back.waitFor("burst-start");
     await new Promise((r) => setTimeout(r, 50));
-    for (let seq = 4; seq < 6; seq++) a.sendFrame(2, seq, Buffer.alloc(640));
+    for (let seq = 4; seq < 6; seq++) frame(seq);
     a.send({ type: "talk-end", burstId });
     await back.waitFor("burst-end");
     assert.deepEqual(back.frames.map((f) => f.readUInt32BE(1)), [2, 3, 4, 5]);
@@ -204,19 +221,19 @@ test("half duplex: the floor is denied while the other side is talking", async (
     await a.connect();
     await b.connect();
 
-    a.send({ type: "talk-start", to: bob.id, burstId: "a1", codec: "pcm16le16k" });
+    await talkStart(a, bob.id, "a1");
     const { conversationId } = await a.waitFor("floor-granted");
     const ring = await b.waitFor("ring");
     b.send({ type: "join", conversationId: ring.conversationId, ringId: ring.ringId });
     await b.waitFor("joined");
 
-    b.send({ type: "talk-start", to: alice.id, burstId: "b1", codec: "pcm16le16k" });
+    await talkStart(b, alice.id, "b1");
     const denied = await b.waitFor("floor-denied");
     assert.equal(denied.holder, alice.id);
 
     a.send({ type: "talk-end", burstId: "a1" });
     await b.waitFor("burst-end");
-    b.send({ type: "talk-start", to: alice.id, burstId: "b2", codec: "pcm16le16k" });
+    await talkStart(b, alice.id, "b2");
     const granted = await b.waitFor("floor-granted");
     assert.equal(granted.conversationId, conversationId);
     assert.equal(granted.pushed, false);
@@ -449,10 +466,10 @@ test("a slow ring lookup buffers early audio and rings only once", async () => {
     await a.connect();
 
     // Frames sent before the floor is granted, and a second burst, while the lookup runs.
-    a.send({ type: "talk-start", to: bob.id, burstId: "a1", codec: "pcm16le16k" });
-    for (let seq = 0; seq < 3; seq++) a.sendFrame(2, seq, Buffer.alloc(640));
+    const frame = await talkStart(a, bob.id, "a1");
+    for (let seq = 0; seq < 3; seq++) frame(seq);
     a.send({ type: "talk-end", burstId: "a1" });
-    a.send({ type: "talk-start", to: bob.id, burstId: "a2", codec: "pcm16le16k" });
+    await talkStart(a, bob.id, "a2");
     const first = await a.waitFor("floor-granted", (m) => m.burstId === "a1");
     const second = await a.waitFor("floor-granted", (m) => m.burstId === "a2");
     assert.equal(first.pushed, true);
@@ -543,7 +560,7 @@ test("prefetch: no second push if the recipient joined first, and none unless en
         const b = bob.client();
         await a.connect();
         await b.connect();
-        a.send({ type: "talk-start", to: bob.id, burstId: "a1", codec: "pcm16le16k" });
+        await talkStart(a, bob.id, "a1");
         const { conversationId } = await a.waitFor("floor-granted");
         b.send({ type: "join", conversationId, ringId: pushed(h, 0).ringId });
         await b.waitFor("joined");
@@ -586,8 +603,11 @@ test("malformed messages get an error, and the relay keeps going", async () => {
     const bob = await user(h, "Bob");
     const b = bob.client();
     await b.connect();
-    // null is valid JSON; so are messages missing their fields, and a talk-start without its codec.
-    const bad = [null, 42, [], {}, { type: "talk-start" }, { type: "talk-start", to: "x", burstId: "b" }, { type: "join", conversationId: 7 }, { type: "join", conversationId: "c", ringId: "nope" }, { type: "nope" }];
+    // null is valid JSON; so are messages missing their fields, a talk-start without its codec,
+    // and format 1's talk-start (plaintext, retired), with or without its format.
+    const bad = [null, 42, [], {}, { type: "talk-start" }, { type: "talk-start", to: "x", burstId: "b" },
+      { type: "talk-start", to: "x", burstId: "b", codec: "pcm16le16k" }, { type: "talk-start", to: "x", burstId: "b", codec: "pcm16le16k", format: 1 },
+      { type: "join", conversationId: 7 }, { type: "join", conversationId: "c", ringId: "nope" }, { type: "nope" }];
     for (const message of bad) b.send(message as never);
     for (let i = 0; i < bad.length; i++) {
       const error = await b.waitFor("error", (m) => m.message === "invalid message");
@@ -619,28 +639,31 @@ test("frames the apps can't decode aren't relayed", async () => {
     const b = bob.client();
     await a.connect();
     await b.connect();
-    a.send({ type: "talk-start", to: bob.id, burstId: "b1", codec: "pcm16le16k" });
+    const frame = await talkStart(a, bob.id, "b1");
     const ring = await b.waitFor("ring");
     b.send({ type: "join", conversationId: ring.conversationId, ringId: ring.ringId });
     await b.waitFor("burst-start");
-    a.sendFrame(2, 0, Buffer.alloc(1282)); // PCM that isn't 320 samples
-    a.sendFrame(2, 1, Buffer.alloc(0));
-    a.sendFrame(1, 2, Buffer.alloc(2000)); // bigger than any Opus packet
-    a.sendFrame(9, 3, Buffer.alloc(640)); // no such codec
-    a.sendFrame(2, 4, Buffer.alloc(640));
-    a.sendFrame(1, 5, Buffer.alloc(60)); // Opus, but the burst is PCM
+    // All sealed, so Bob could open any the relay let through.
+    frame(0, Buffer.alloc(1282)); // PCM that isn't 320 samples
+    frame(1, Buffer.alloc(0));
+    frame(2, Buffer.alloc(2000), Codec.opus16k); // bigger than any Opus packet
+    frame(3, Buffer.alloc(640), 9); // no such codec
+    frame(4);
+    frame(5, Buffer.alloc(60), Codec.opus16k); // Opus, but the burst is PCM
+    frame(6, Buffer.alloc(640 - 16)); // a format 1 frame's size: no room for the tag
+    a.sendFrame(Codec.pcm16le16k, 7, Buffer.alloc(640)); // format 1 (plaintext, no tag)
     a.send({ type: "talk-end", burstId: "b1" });
     await b.waitFor("burst-end");
     assert.deepEqual(b.frames.map((f) => f.readUInt32BE(1)), [4]);
 
     // An Opus burst takes Opus packets, up to the largest there is.
     b.frames.length = 0;
-    a.send({ type: "talk-start", to: bob.id, burstId: "b2", codec: "opus16k" });
+    const opus = await talkStart(a, bob.id, "b2", "opus16k");
     assert.equal((await b.waitFor("burst-start")).codec, "opus16k");
-    a.sendFrame(1, 0, Buffer.alloc(2000));
-    a.sendFrame(2, 1, Buffer.alloc(640));
-    a.sendFrame(1, 2, Buffer.alloc(60));
-    a.sendFrame(1, 3, Buffer.alloc(1275));
+    opus(0, Buffer.alloc(2000));
+    opus(1, Buffer.alloc(640), Codec.pcm16le16k);
+    opus(2);
+    opus(3, Buffer.alloc(1275));
     a.send({ type: "talk-end", burstId: "b2" });
     await b.waitFor("burst-end");
     assert.deepEqual(b.frames.map((f) => f.readUInt32BE(1)), [2, 3]);
@@ -656,11 +679,11 @@ test("audio heard live isn't kept, and a burst that never ends is ended", async 
     const b = bob.client();
     await a.connect();
     await b.connect();
-    a.send({ type: "talk-start", to: bob.id, burstId: "b1", codec: "pcm16le16k" });
+    const frame = await talkStart(a, bob.id, "b1");
     const ring = await b.waitFor("ring");
     b.send({ type: "join", conversationId: ring.conversationId, ringId: ring.ringId });
     await b.waitFor("burst-start");
-    for (let seq = 0; seq < 5; seq++) a.sendFrame(2, seq, Buffer.alloc(640));
+    for (let seq = 0; seq < 5; seq++) frame(seq);
     while (b.frames.length < 5) await new Promise((r) => setTimeout(r, 5));
     assert.equal(h.server.relay.snapshot()[0].floor, alice.id);
     assert.equal(h.server.relay.snapshot()[0].bufferedBytes, 0);
@@ -681,15 +704,15 @@ test("a conversation holds only so much audio for someone who hasn't heard it", 
     const a = alice.client();
     await a.connect();
     // Bob is rung but doesn't answer, so it buffers: room for 5 frames.
-    a.send({ type: "talk-start", to: bob.id, burstId: "b1", codec: "pcm16le16k" });
+    const frame = await talkStart(a, bob.id, "b1");
     assert.equal((await a.waitFor("floor-granted")).pushed, true);
-    for (let seq = 0; seq < 8; seq++) a.sendFrame(2, seq, Buffer.alloc(640));
+    for (let seq = 0; seq < 8; seq++) frame(seq);
     const error = await a.waitFor("error");
     assert.deepEqual([error.code, error.message], ["too-much-audio", "too much audio waiting"]);
-    assert.equal(h.server.relay.snapshot()[0].bufferedBytes, 5 * 645);
+    assert.equal(h.server.relay.snapshot()[0].bufferedBytes, 5 * SEALED_PCM);
     assert.equal(h.server.relay.snapshot()[0].floor, null);
     a.close();
-  }, { maxBufferedBytes: 5 * 645 + 100 });
+  }, { maxBufferedBytes: 5 * SEALED_PCM + 100 });
 });
 
 test("a burst sent faster than real time is cut off at the longest burst's worth of frames", async () => {
@@ -697,40 +720,44 @@ test("a burst sent faster than real time is cut off at the longest burst's worth
     const [alice, bob] = await friends(h, "Alice", ["Bob", { ringing: WATCH_PUSH }]);
     const a = alice.client();
     await a.connect();
-    a.send({ type: "talk-start", to: bob.id, burstId: "b1", codec: "pcm16le16k" });
+    const frame = await talkStart(a, bob.id, "b1");
     await a.waitFor("floor-granted");
     // 10 frames = 200 ms; the 11th ends the burst long before its timer would.
-    for (let seq = 0; seq < 15; seq++) a.sendFrame(2, seq, Buffer.alloc(640));
+    for (let seq = 0; seq < 15; seq++) frame(seq);
     const error = await a.waitFor("error", () => true, 150);
     assert.deepEqual([error.code, error.message], ["burst-too-long", "burst too long"]);
-    assert.equal(h.server.relay.snapshot()[0].bufferedBytes, 10 * 645);
+    assert.equal(h.server.relay.snapshot()[0].bufferedBytes, 10 * SEALED_PCM);
     a.close();
   }, { maxBurstMs: 200 });
 });
 
 // ---- The Ops dashboard's live view (GET /admin/stats) ----
 
-function fakeDevice(id: string, clientKind: ClientKind, delivery: Delivery): AccountDevice {
+function fakeDevice(keys: EndpointKeys, clientKind: ClientKind, delivery: Delivery): AccountDevice {
   return {
-    id,
+    id: keys.secrets.deviceId,
     clientKind,
     formFactor: formFactorOf(clientKind),
     delivery,
     receiveMode: "tap",
     availability: { enabled: true, notifications: "authorized" },
-    capabilities: structuredClone(DEFAULT_CAPABILITIES),
+    capabilities: { ...structuredClone(DEFAULT_CAPABILITIES), audioFormats: [2] },
+    e2ee: keys.registration,
     lastActiveAt: 0,
     updatedAt: 0,
   };
 }
 
-function fakePeer(userId: string, clientKind: ClientKind, decode?: CodecName[]): Peer & { got: ServerMessage[] } {
+// A connection with its device's keys (the device ID is the peer's).
+function fakePeer(userId: string, clientKind: ClientKind, decode?: CodecName[]): Peer & { got: ServerMessage[]; keys: EndpointKeys } {
   const got: ServerMessage[] = [];
-  return { userId, deviceId: `${userId}-${clientKind}`, clientKind, ...(decode ? { decode } : {}), got, sendJSON: (m) => got.push(m), sendBinary: () => {} };
+  const deviceId = `${userId}-${clientKind}`;
+  return { userId, deviceId, clientKind, ...(decode ? { decode } : {}), keys: deviceKeys(userId, deviceId, clientKind), got, sendJSON: (m) => got.push(m), sendBinary: () => {} };
 }
 
+// A sealed PCM frame's size; the relay only reads its header.
 function pcmFrame(seq: number): Buffer {
-  const frame = Buffer.alloc(5 + 640);
+  const frame = Buffer.alloc(SEALED_PCM);
   frame[0] = Codec.pcm16le16k;
   frame.writeUInt32BE(seq, 1);
   return frame;
@@ -740,14 +767,42 @@ const settle = () => new Promise((r) => setTimeout(r, 20));
 
 test("the live view: states, anonymous rows, turns, peaks, pcmOnly, and the bots left out", async () => {
   let now = Date.parse("2026-10-02T10:00:00Z");
-  // Who rings how: the watch by an APNs alert, the Wear OS watch and the bot over a connection.
+  const a = fakePeer("u_a", "ios");
+  const b = fakePeer("u_b", "watchos");
+  // An Android build without Opus.
+  const c = fakePeer("u_c", "android", ["pcm16le16k"]);
+  const d = fakePeer("u_d", "wearos");
+  const bot = fakePeer("u_bot", "watchos");
+  const canary = fakePeer("u_canary", "ios");
+  // Who rings how: the watch by an APNs alert, the Wear OS watch and the bot over a connection;
+  // the others are only ever talked to while connected.
   const devices: Record<string, AccountDevice[]> = {
-    u_b: [fakeDevice("b-watch", "watchos", { provider: "apns", mode: "alert", token: "abcdef0123456789", environment: "sandbox" })],
-    u_d: [fakeDevice("d-wear", "wearos", { provider: "test", mode: "connection" })],
-    u_bot: [fakeDevice("bot", "watchos", { provider: "test", mode: "connection" })],
+    u_a: [fakeDevice(a.keys, "ios", { provider: "relay", mode: "foreground" })],
+    u_b: [fakeDevice(b.keys, "watchos", { provider: "apns", mode: "alert", token: "abcdef0123456789", environment: "sandbox" })],
+    u_c: [fakeDevice(c.keys, "android", { provider: "relay", mode: "foreground" })],
+    u_d: [fakeDevice(d.keys, "wearos", { provider: "test", mode: "connection" })],
+    u_bot: [fakeDevice(bot.keys, "watchos", { provider: "test", mode: "connection" })],
+  };
+  const friendKeys = async (userId: string): Promise<FriendKeysJSON> => ({
+    phones: (devices[userId] ?? []).map((device) => device.e2ee!.phoneCert),
+    devices: (devices[userId] ?? []).map((device) => ({ deviceId: device.id, clientKind: device.clientKind, deviceCert: device.e2ee!.deviceCert, encCert: device.e2ee!.encCert })),
+  });
+  // A Talk sealed to the friend's devices, in their conversation (a new one when there's none).
+  const conversations = new Map<string, string>();
+  const talkStart = async (from: typeof a, to: string, burstId: string): Promise<ClientMessage> => {
+    const pair = [from.userId, to].sort().join(" ");
+    const conversationId = conversations.get(pair) ?? randomUUID();
+    conversations.set(pair, conversationId);
+    const { bundle } = sealBundle({ conversationId, burstId, codec: "pcm16le16k", from: from.userId, to }, from.keys.sender,
+      usableKeys(to, await friendKeys(to), now).recipients, now);
+    return { type: "talk-start", to, burstId, codec: Codec.pcm16le16k, format: 2, conversationId, e2ee: bundle };
   };
   const relay = new Relay({
-    accounts: { ringLookup: async (_from, to) => ({ allowed: true, fromName: "Someone", devices: devices[to] ?? [] }) },
+    accounts: {
+      ringLookup: async (_from, to) => ({ allowed: true, fromName: "Someone", devices: devices[to] ?? [] }),
+      friendKeys,
+      devices: async (userId) => devices[userId] ?? [],
+    },
     pusher: new DryRunPusher(),
     metrics: new JsonMetricsStore(null),
     now: () => now,
@@ -757,17 +812,10 @@ test("the live view: states, anonymous rows, turns, peaks, pcmOnly, and the bots
   const log = console.log;
   console.log = () => {};
   try {
-    const a = fakePeer("u_a", "ios");
-    const b = fakePeer("u_b", "watchos");
-    // An Android build without Opus.
-    const c = fakePeer("u_c", "android", ["pcm16le16k"]);
-    const d = fakePeer("u_d", "wearos");
-    const bot = fakePeer("u_bot", "watchos");
-    const canary = fakePeer("u_canary", "ios");
     for (const p of [a, b, c, d, bot, canary]) relay.connect(p);
 
     // 1. iPhone → watch, rung by an APNs alert; still talking, then held for the watch.
-    relay.handleMessage(a, { type: "talk-start", to: "u_b", burstId: "a1", codec: Codec.pcm16le16k });
+    relay.handleMessage(a, await talkStart(a, "u_b", "a1"));
     await settle();
     for (let i = 0; i < 3; i++) relay.handleAudio(a, pcmFrame(i));
     assert.equal(relay.stats().live[0].state, "talking");
@@ -775,20 +823,20 @@ test("the live view: states, anonymous rows, turns, peaks, pcmOnly, and the bots
 
     // 2. Android → Wear OS: rung over its connection, joined, and a reply: one back-and-forth.
     now += 1000;
-    relay.handleMessage(c, { type: "talk-start", to: "u_d", burstId: "c1", codec: Codec.pcm16le16k });
+    relay.handleMessage(c, await talkStart(c, "u_d", "c1"));
     await settle();
     relay.handleAudio(c, pcmFrame(0));
     relay.handleMessage(c, { type: "talk-end", burstId: "c1" });
     const ring = d.got.find((m) => m.type === "ring") as Extract<ServerMessage, { type: "ring" }>;
     relay.handleMessage(d, { type: "join", conversationId: ring.conversationId, ringId: ring.ringId });
-    relay.handleMessage(d, { type: "talk-start", to: "u_c", burstId: "d1", codec: Codec.pcm16le16k });
+    relay.handleMessage(d, await talkStart(d, "u_c", "d1"));
     relay.handleMessage(d, { type: "talk-end", burstId: "d1" });
 
     // 3. The iPhone rings the Test Bot (shown, marked), and the Canary talks to it (left out).
     now += 1000;
-    relay.handleMessage(a, { type: "talk-start", to: "u_bot", burstId: "a2", codec: Codec.pcm16le16k });
+    relay.handleMessage(a, await talkStart(a, "u_bot", "a2"));
     relay.handleMessage(a, { type: "talk-end", burstId: "a2" });
-    relay.handleMessage(canary, { type: "talk-start", to: "u_bot", burstId: "k1", codec: Codec.pcm16le16k });
+    relay.handleMessage(canary, await talkStart(canary, "u_bot", "k1"));
     relay.handleMessage(canary, { type: "talk-end", burstId: "k1" });
     await settle();
 
@@ -797,7 +845,7 @@ test("the live view: states, anonymous rows, turns, peaks, pcmOnly, and the bots
     assert.deepEqual(stats.streams, { ios: 1, watchos: 1, android: 1, wearos: 1 });
     assert.equal(stats.pcmOnly, 1);
     assert.deepEqual(stats.conversations, { open: 3, talking: 0, ringing: 2, waiting: 1 });
-    assert.deepEqual(stats.held, { bursts: 2, bytes: 3 * 645 });
+    assert.deepEqual(stats.held, { bursts: 2, bytes: 3 * SEALED_PCM });
     assert.deepEqual(stats.live, [
       { state: "ringing", from: "ios", to: "watchos", ageMs: 3000, turns: 0, held: 1, ring: "test/connection", rolledOver: false, testBot: true },
       { state: "waiting", from: "android", to: "wearos", ageMs: 4000, turns: 1, held: 0, ring: "test/connection", rolledOver: false },

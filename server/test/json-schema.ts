@@ -64,6 +64,11 @@ export class SchemaSet {
       if (typeof s.minItems === "number" && value.length < s.minItems) errors.push(`${path}: fewer than ${s.minItems} items`);
       if (typeof s.maxItems === "number" && value.length > s.maxItems) errors.push(`${path}: more than ${s.maxItems} items`);
       if (s.items !== undefined) value.forEach((item, i) => this.check(s.items as Schema, item, `${path}[${i}]`, base, errors));
+      if (s.contains !== undefined && !value.some((item, i) => {
+        const e: string[] = [];
+        this.check(s.contains as Schema, item, `${path}[${i}]`, base, e);
+        return e.length === 0;
+      })) errors.push(`${path}: contains no ${JSON.stringify(s.contains)}`);
     }
     if (isType(value, "object")) {
       const object = value as Record<string, unknown>;
