@@ -1,4 +1,4 @@
-# Over&Out Ops dashboard: implementation spec
+# Nowza Ops dashboard: implementation spec
 
 Oct 2, 2026 · Steve Teixeira
 
@@ -6,7 +6,7 @@ This file is an export of the [Claude Doc](https://claude.ai/code/artifact/6f558
 
 ## Summary
 
-We're building Over&Out Ops: a product dashboard on Cloud Run that answers what's happening on the service and how people use it, with Google sign-in for a list of accounts Steve manages. It sits beside the existing Cloud Monitoring dashboard "Over&Out Beta" (service graphs and alerts), and each links to the other. The design is the [Over&Out Ops mockup](https://claude.ai/artifact/ALzAW7f1o2kmZGsZY6xzph); this spec says how to build it.
+We're building Nowza Ops: a product dashboard on Cloud Run that answers what's happening on the service and how people use it, with Google sign-in for a list of accounts Steve manages. It sits beside the existing Cloud Monitoring dashboard "Nowza Beta" (service graphs and alerts), and each links to the other. The design is the [Nowza Ops mockup](https://claude.ai/artifact/ALzAW7f1o2kmZGsZY6xzph); this spec says how to build it.
 
 Decided with Steve on 2026-10-01:
 
@@ -38,7 +38,7 @@ Where the build differs from the text above:
 - **Regenerate** needs `roles/run.jobsExecutorWithOverrides` on the `stats` job (`run.invoker` can't pass arguments), and a custom request header against cross-site posts.
 - **Page CSP:** scripts and style sheets only from the service (fonts from Google); style attributes are allowed, for bar and meter widths.
 - **Accounts today** come from the rolling job (it already lists accounts for the provider split), not the daily snapshot plus sign-ups.
-- **Monitoring:** the Canary's `oao_canary_first_frame_ms` and `oao_canary_failures` metrics and two charts; links go into every `Over&Out:` and `Relay down:` policy's documentation.
+- **Monitoring:** the Canary's `oao_canary_first_frame_ms` and `oao_canary_failures` metrics and two charts; links go into every `Nowza:` and `Relay down:` policy's documentation.
 - **Not built:** the Spend panel (no billing budget), the TestFlight feedback counts in the cloud (no App Store Connect key there), the e2-micro ceiling (not measured). Each says so on the page.
 
 ## Architecture
@@ -117,7 +117,7 @@ Yes: Identity-Aware Proxy (IAP) puts Google sign-in in front of the `ops` servic
 
 The project has no Google Cloud organization, so IAP can't use Google's managed OAuth client and the client can't be created from the command line ([custom OAuth](https://docs.cloud.google.com/iap/docs/custom-oauth-configuration)):
 
-1. **OAuth consent screen:** user type External, app name "Over&Out" (the app's name, not the dashboard's; see below), support email overandout@cypressoakstudios.com, privacy policy overandout.app/privacy, scopes only name, email and profile, no logo for now.
+1. **OAuth consent screen:** user type External, app name "Nowza" (the app's name, not the dashboard's; see below), support email nowza@cypressoakstudios.com, privacy policy nowza.app/privacy, scopes only name, email and profile, no logo for now.
 2. **Publishing status:** In production, so anyone Steve grants can sign in without also being a test user. With only the basic scopes this should need no Google verification; to confirm when Steve publishes it. If Google asks for verification, stay in Testing, which allows 100 test users, and add each person as a test user too.
 3. **OAuth client:** a Web application client for IAP. `setup-ops.sh` then passes its ID and secret to IAP's settings.
 
@@ -143,7 +143,7 @@ IAP sends `X-Goog-Authenticated-User-Email` with each request. `ops` writes it i
 
 ### Address
 
-The service's `run.app` address works with IAP as it stands. A friendlier `ops.overandout.app` would need a Cloud Run domain mapping (still preview) or a load balancer, so it waits; the page is bookmarked, not typed.
+The service's `run.app` address works with IAP as it stands. A friendlier `ops.nowza.app` would need a Cloud Run domain mapping (still preview) or a load balancer, so it waits; the page is bookmarked, not typed.
 
 ## Relay and telemetry changes
 
@@ -349,16 +349,16 @@ Anything needing per-account history beyond 30 days would need a longer log rete
 
 ## Linking with Cloud Monitoring
 
-The two dashboards link to each other, and alert emails link to both. Cloud Monitoring stays the place for raw service graphs and alerting; Over&Out Ops is for the product questions.
+The two dashboards link to each other, and alert emails link to both. Cloud Monitoring stays the place for raw service graphs and alerting; Nowza Ops is for the product questions.
 
 | From | To | How |
 | --- | --- | --- |
-| "Over&Out Beta" dashboard | Over&Out Ops | A Text widget across the top, `{"text": {"content": "[Open Over&Out Ops](…)", "format": "MARKDOWN"}}` ([widget reference](https://docs.cloud.google.com/monitoring/api/ref_v3/rest/v1/projects.dashboards)), added in `telemetry-monitoring.ts` from a new `OPS_URL` in `config.sh` |
-| Over&Out Ops header | "Over&Out Beta" dashboard | A "Service graphs" link |
+| "Nowza Beta" dashboard | Nowza Ops | A Text widget across the top, `{"text": {"content": "[Open Nowza Ops](…)", "format": "MARKDOWN"}}` ([widget reference](https://docs.cloud.google.com/monitoring/api/ref_v3/rest/v1/projects.dashboards)), added in `telemetry-monitoring.ts` from a new `OPS_URL` in `config.sh` |
+| Nowza Ops header | "Nowza Beta" dashboard | A "Service graphs" link |
 | Ops "Service health" card | Monitoring's incidents and uptime checks | "Alerts" and "Uptime checks" links next to those rows |
 | The 7 alert policies | Both dashboards | Each policy's documentation (Markdown, included in the alert email) gets the two links |
 
-`telemetry-monitoring.ts validate` checks the new widget like the rest, and `apply` updates the dashboard in place. The dashboard keeps its name; renaming it "Over&Out Service" would make the split clearer, if Steve wants that.
+`telemetry-monitoring.ts validate` checks the new widget like the rest, and `apply` updates the dashboard in place. The dashboard keeps its name; renaming it "Nowza Service" would make the split clearer, if Steve wants that.
 
 Since Phase 0 the relay logs FCM and simulated deliveries as `oao.push`, never `oao.apns`, so the existing APNs alerts and charts stay APNs-only. An FCM alert policy and chart in `telemetry-monitoring.ts` belong to Phase 2, when FCM goes live.
 
@@ -426,7 +426,7 @@ Five pull requests, each independent enough to review and deploy alone. Nothing 
 - [ ] Each deploy: relay, API, ops, dashboard
 - [ ] Optional: a Billing budget for the Spend panel
 - [ ] Optional: an App Store Connect key for TestFlight feedback in the cloud
-- [ ] Optional: rename the Monitoring dashboard "Over&Out Service"
+- [ ] Optional: rename the Monitoring dashboard "Nowza Service"
 
 ### Open questions
 

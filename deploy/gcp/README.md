@@ -3,13 +3,13 @@
 Three pieces, all in the project `walkie-talkie-relay`:
 
 - **Relay nodes** carry the audio (below).
-- **The account API** (`server/src/api.ts`) is the Cloud Run service `api`: Sign in with Apple, sessions, friends, invites, blocks, reports and account deletion. See "The account API and overandout.app".
-- **overandout.app** is on Firebase Hosting: invite links, the apple-app-site-association file, the home, privacy and support pages, and `/v2/*` forwarded to the API.
+- **The account API** (`server/src/api.ts`) is the Cloud Run service `api`: Sign in with Apple, sessions, friends, invites, blocks, reports and account deletion. See "The account API and the website".
+- **nowza.app** is on Firebase Hosting: invite links, the apple-app-site-association file, the home, privacy and support pages, and `/v2/*` forwarded to the API.
 
 The relay runs on **relay nodes** (option E in the feasibility doc): small VMs in a managed instance group on Container-Optimized OS (COS), each running one container. Server data (devices and metrics timelines) lives in Firestore, so a node holds nothing that matters. Restarts, OS updates (a deploy or the monthly node replacement) and replacing a failed node are automatic.
 
 ```
-watch ──HTTPS──▶ relay-1.overandout.app ──▶ [ Caddy :443 ──▶ relay 127.0.0.1:8080 ] ──▶ Firestore (us-central1)
+watch ──HTTPS──▶ relay-1.nowza.app ──▶ [ Caddy :443 ──▶ relay 127.0.0.1:8080 ] ──▶ Firestore (us-central1)
                   static IP, Standard tier     one container on COS, e2-micro           devices, timelines
                                                /data: certificates (stateful disk)      Secret Manager: token, APNs key
 ```
@@ -48,13 +48,13 @@ gcloud publicca external-account-keys create --format=json | gcloud secrets vers
 Then:
 
 ```bash
-deploy/gcp/add-node.sh relay-1 --ip walkie-relay-ip --hostnames "relay-1.overandout.app walkie.cypressoakstudios.com"
+deploy/gcp/add-node.sh relay-1 --ip walkie-relay-ip --hostnames "relay-1.nowza.app walkie.cypressoakstudios.com"
 ```
 
 Finally, add uptime checks that email `ALERT_EMAIL`:
 
 ```bash
-deploy/gcp/setup-uptime.sh relay-1.overandout.app
+deploy/gcp/setup-uptime.sh relay-1.nowza.app
 ```
 
 ## Deploying
@@ -95,10 +95,10 @@ gcloud run jobs executions list --job=node-replacement --region=us-central1 --pr
 
 After a replacement, `gcloud compute ssh` refuses the node's new host key; see Everyday commands. The container image (Node, Caddy and their Debian base) is only rebuilt by a deploy of a new commit; this replaces the OS underneath it.
 
-## The account API and overandout.app
+## The account API and the website
 
 ```
-iPhone, watch ──HTTPS──▶ overandout.app (Firebase Hosting) ──/v2/*──▶ Cloud Run "api" ──▶ Firestore
+iPhone, watch ──HTTPS──▶ nowza.app (Firebase Hosting) ──/v2/*──▶ Cloud Run "api" ──▶ Firestore
                           /i/<code>, apple-app-site-association,       scales to zero      users, friends, invites,
                           home, privacy, support (web/public)                             blocks, reports, sessions
 ```
@@ -117,7 +117,7 @@ deploy/gcp/setup-api.sh
 deploy/gcp/deploy-web.sh setup
 ```
 
-`setup-api.sh` enables Cloud Run, creates the `account-api` service account, generates the session keys straight into Secret Manager, stores the Sign in with Apple key (`APPLE_SIWA_KEY_FILE`), adds the invites TTL policy, and creates the report alert. `deploy-web.sh setup` creates the Hosting site and the custom domain, and prints the DNS records to add at GoDaddy (`deploy-web.sh dns` shows their state).
+`setup-api.sh` enables Cloud Run, creates the `account-api` service account, generates the session keys straight into Secret Manager, stores the Sign in with Apple key (`APPLE_SIWA_KEY_FILE`), adds the invites TTL policy, and creates the report alert. `deploy-web.sh setup` creates the Hosting site and the custom domain (`WEB_DOMAIN`, default nowza.app; `WEB_DOMAIN=www.nowza.app REDIRECT_TO=nowza.app` for the www redirect), and prints the DNS records to add at Porkbun (`deploy-web.sh dns` shows their state).
 
 To deploy the API (from committed code) and the site:
 
@@ -151,13 +151,13 @@ Use these flags on every command below:
 | --- | --- |
 | Nodes and their health | `gcloud compute instance-groups managed list-instances relay` |
 | Relay logs | `gcloud compute ssh relay-1 -- sudo journalctl -u relay -n 100` |
-| Revision a node serves | `curl https://relay-1.overandout.app/healthz` |
+| Revision a node serves | `curl https://relay-1.nowza.app/healthz` |
 | Restart a node's container | `gcloud compute ssh relay-1 -- sudo systemctl restart relay` |
 | Recreate a node | `gcloud compute instance-groups managed recreate-instances relay --instances=relay-1` |
-| Relay state | `curl -H "Authorization: Bearer $SPIKE_TOKEN" https://relay-1.overandout.app/admin/status` |
+| Relay state | `curl -H "Authorization: Bearer $SPIKE_TOKEN" https://relay-1.nowza.app/admin/status` |
 | Rotate the relay token | new value in `config.sh` (`openssl rand -hex 24`), then `grep -o 'SPIKE_TOKEN="[^"]*"' deploy/gcp/config.sh \| cut -d'"' -f2 \| tr -d '\n' \| gcloud secrets versions add relay-token --data-file=-`, redeploy the relay, and destroy the old version (Secret Manager bills versions beyond 6) |
 | API logs | `gcloud logging read 'resource.labels.service_name="api"' --limit=50` |
-| API revision | `curl https://overandout.app/v2/health` |
+| API revision | `curl https://nowza.app/v2/health` |
 
 Logs also go to Cloud Logging, in Logs Explorer under the VM instance.
 
@@ -186,18 +186,18 @@ For the Beta, the one charge is the static IP, about $3.65 a month. One e2-micro
 - Nodes read the relay token, the APNs key and the session public keys from Secret Manager at startup. Only the `relay-node` service account can read them. Only the `account-api` service account can read the session signing key and the Sign in with Apple key.
 - The container runs as an unprivileged user with every capability dropped except binding ports 80 and 443.
 
-## The Over&Out Ops dashboard
+## The Nowza Ops dashboard
 
 The product dashboard ([OPS_DASHBOARD_SPEC.md](../../OPS_DASHBOARD_SPEC.md)): a Cloud Run service `ops` behind Identity-Aware Proxy, the rolling job `stats-rolling` with the Canary, and nightly reports. In order, each with Steve's OK:
 
-1. Console: the "Over&Out" OAuth consent screen and an IAP web client with the redirect URI `https://iap.googleapis.com/v1/oauth/clientIds/<client ID>:handleRedirect` (`setup-ops.sh`'s header has the settings); put the client's ID and secret in `config.sh` (`OPS_OAUTH_CLIENT_ID`, `OPS_OAUTH_CLIENT_SECRET`).
+1. Console: the "Nowza" OAuth consent screen and an IAP web client with the redirect URI `https://iap.googleapis.com/v1/oauth/clientIds/<client ID>:handleRedirect` (`setup-ops.sh`'s header has the settings); put the client's ID and secret in `config.sh` (`OPS_OAUTH_CLIENT_ID`, `OPS_OAUTH_CLIENT_SECRET`).
 2. `node server/tools/test-account.ts canary` (with `TEST_BOT_USER_ID` set) makes the Canary; put its ID in `config.sh` as `CANARY_USER_ID`.
 3. `deploy/gcp/setup-ops.sh`: the `ops-viewer` account, the `ops-stats-token` secret, the service behind IAP. Put the URL it prints in `config.sh` as `OPS_URL`.
 4. `deploy/gcp/deploy-relay.sh` (about 2 minutes without the relay): the relay reads the token and leaves the Canary out of its live view.
 5. `deploy/gcp/setup-stats.sh`: the `stats-rolling` job and its Scheduler job (the third free one), the bots' IDs for both jobs, TTL policies on `statsLive` and reports' `history`.
 6. `deploy/gcp/ops-access.sh add <email>` (or `add group:<email>`) for each person.
-7. `deploy/gcp/setup-telemetry.sh` (or `node deploy/gcp/telemetry-monitoring.ts apply` with `OPS_URL`): the link row on "Over&Out Beta", both links in every alert email, the Canary's charts.
+7. `deploy/gcp/setup-telemetry.sh` (or `node deploy/gcp/telemetry-monitoring.ts apply` with `OPS_URL`): the link row on "Nowza Beta", both links in every alert email, the Canary's charts.
 
-8. `deploy/gcp/setup-ops-redirect.sh`: `ops.overandout.app` as a friendly address, a second Firebase Hosting site (`overandout-ops`, no files) that redirects every path to `OPS_URL` with a 302. Steve adds the CNAME it prints at GoDaddy; `setup-ops-redirect.sh dns` shows the certificate's progress. The dashboard stays on its `run.app` address behind IAP (a custom domain there would need a Cloud Run domain mapping, still preview, or a load balancer).
+8. `deploy/gcp/setup-ops-redirect.sh`: `ops.nowza.app` as a friendly address, a second Firebase Hosting site (`overandout-ops`, no files) that redirects every path to `OPS_URL` with a 302. Steve adds the CNAME it prints at GoDaddy; `setup-ops-redirect.sh dns` shows the certificate's progress. The dashboard stays on its `run.app` address behind IAP (a custom domain there would need a Cloud Run domain mapping, still preview, or a load balancer).
 
 `deploy-api.sh` keeps the `ops` service and both stats jobs on the API's image. Locally: `OPS_LOCAL=1 STATS_LOCAL_DIR=<DATA_DIR> RELAY_NODES=http://localhost:8080 OPS_STATS_TOKEN=<the relay's> node server/src/ops-main.ts`, after `rolling-main.ts` with the same `STATS_LOCAL_DIR`.

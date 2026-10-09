@@ -1,4 +1,4 @@
-# Over&Out: Android and Wear OS specification and implementation plan
+# Nowza: Android and Wear OS specification and implementation plan
 
 Date: 2026-09-29
 
@@ -8,7 +8,7 @@ Scope of this document: planning only. No application changes, migrations, deplo
 
 ## 1. Objective and release boundary
 
-Add native Android phone and Wear OS clients that communicate with iPhone and Apple Watch clients through the existing Over&Out account service and voice relay. Preserve the existing Apple product, including iPhone PushToTalk behavior.
+Add native Android phone and Wear OS clients that communicate with iPhone and Apple Watch clients through the existing Nowza account service and voice relay. Preserve the existing Apple product, including iPhone PushToTalk behavior.
 
 **Complete Phase 0 before the first commercial/non-tester client release.** Phase 0 changes the Apple clients and service contracts while all affected users are testers. Android implementation can follow later as an additive release. A commercial Apple client built at the end of Phase 0 must be able to talk to a future Android client without an app update, new account, new friendship, or changed invite link.
 
@@ -18,7 +18,7 @@ That guarantee is specific to the Android expansion described here. It is not a 
 
 | Area | Decision |
 | --- | --- |
-| Authentication | Apple sign-in on iPhone; Google sign-in on Android. Watches receive their own Over&Out sessions from their ecosystem's phone app. |
+| Authentication | Apple sign-in on iPhone; Google sign-in on Android. Watches receive their own Nowza sessions from their ecosystem's phone app. |
 | Account identity | One login provider per account. Apple and Google logins create separate accounts even for the same human or email address. No linking, matching, merging, or migration between them. |
 | Interoperability | Friendships, invitations, blocking, and conversations work between accounts regardless of provider. |
 | Android receiving | Notification, then tap to listen for the first message. Automatic playback from an idle/locked state is deferred. |
@@ -55,7 +55,7 @@ The native Swift package imports Apple UI/audio/security frameworks. Reuse its b
 
 ### 4.1 Android phone
 
-1. Sign in with Google; choose a name and existing Over&Out mascot or profile photo. Explain that Google and Apple logins are separate Over&Out accounts.
+1. Sign in with Google; choose a name and existing Nowza mascot or profile photo. Explain that Google and Apple logins are separate Nowza accounts.
 2. Explain notifications and microphone access in context. Denied notifications must produce a visible “Notifications are off” state; the app must not present itself as reliably ringable in the background. Request microphone permission before first transmission, not merely to listen.
 3. Show friends/favorites and the existing hold-to-talk interaction. Buffer the sender's opening words while the recipient decides whether to answer, following the existing relay behavior.
 4. When idle, show a time-sensitive incoming-message notification with the sender's name and “Tap to listen.” Tapping opens the conversation and attempts to join that exact ring. No incoming speech plays solely because an idle app receives a push. When already open but outside an accepted conversation, show an in-app Answer/Decline prompt.
@@ -70,7 +70,7 @@ No full-screen incoming-call UI, permanent idle microphone service, battery-opti
 
 ### 4.2 Wear OS
 
-- Before provisioning, show “Open Over&Out on your Android phone to finish setup,” with installation/open-phone assistance. Show the account being transferred; do not silently select a different Google account on the watch.
+- Before provisioning, show “Open Nowza on your Android phone to finish setup,” with installation/open-phone assistance. Show the account being transferred; do not silently select a different Google account on the watch.
 - Use the paired Android Data Layer for session provisioning and sign-out assistance only. Fetch friends, refresh the watch's own session, receive FCM, and stream audio directly through the backend. The phone need not remain connected after setup. [Data Layer guidance](https://developer.android.com/training/wearables/data/overview), [networking and FCM](https://developer.android.com/training/wearables/data/network-communication).
 - Preserve the watch interaction in the accepted decisions. Support round screens, rotary navigation, accessible labels, adequate touch targets, haptics, and finger-release/cancel handling on the Talk control.
 - When the wrist drops, the screen times out, or another activity interrupts, end active capture. Continue an already accepted listening session only while the supported service/audio lifecycle remains valid; otherwise leave cleanly and require another user action. Measure this behavior rather than assuming ambient mode keeps the app running.
@@ -135,7 +135,7 @@ Use one provider-neutral delivery interface with outcomes `accepted`, `permanent
 - Introduce `/v2` for the account API and relay endpoints before commercial release. Keep the existing `/v1` behavior only for the tester migration window; do not silently change its shapes in place.
 - Add an unauthenticated, cacheable `/v2/config` containing supported API/relay versions, deployment-controlled feature availability, compatibility guidance, and the approved relay base URL. It contains no credentials or user data. Keep a bundled approved relay fallback for temporary config unavailability; do not insert a new mandatory round trip into every ring.
 - Require client kind/build and relay protocol version on v2 relay admission, before opening a stream or joining a conversation. Use headers for client metadata and bearer authentication. Keep API version, relay protocol version, and binary audio format version distinct.
-- Preserve existing API operations under v2 with the revised identity/device/settings/deletion models. Provider-specific login endpoints are `/v2/auth/apple` and, later, `/v2/auth/google`. Both return the same Over&Out session/profile shape. Preserve provider-independent friend/invite payloads.
+- Preserve existing API operations under v2 with the revised identity/device/settings/deletion models. Provider-specific login endpoints are `/v2/auth/apple` and, later, `/v2/auth/google`. Both return the same Nowza session/profile shape. Preserve provider-independent friend/invite payloads.
 - Keep errors as stable `{ error, message }` objects with optional detail fields. Define `client-upgrade-required`, `unsupported-protocol`, `unsupported-codec`, `ring-expired`, `session-ended`, and `provider-unavailable`. Use HTTP 409 for incompatible client/protocol negotiation and include supported-version details. Clients show a useful state and do not retry indefinitely or erase credentials for every error.
 - Readers ignore unknown optional JSON fields. Extensible descriptive enums use an explicit unknown/fallback representation instead of failing the entire account. Unknown device kinds are not selectable; unknown avatars use the existing default; unknown optional control events are ignored. Unknown required features/protocols are rejected during admission. Malformed audio is rejected, not treated as an ignorable JSON extension.
 - Servers validate write values strictly. Tolerant response decoding must not allow clients to request unsupported delivery modes, codecs, permissions, or lifecycle actions.
@@ -267,7 +267,7 @@ Measure notification arrival, tap-to-first-audio, Talk-to-first-frame, turn swit
 **Dependency:** Phase 0; can overlap Phase 1 using staging.
 
 - Implement `/v2/auth/google` with Credential Manager's server-audience token flow and provider-namespaced account creation. Test same-email Apple/Google users remain distinct. Use a maintained Google verification library rather than duplicating cryptographic verification merely to retain the server's current dependency-free implementation.
-- Implement Google reauthentication/account deletion under the v2 proof contract. Validate the provider subject before destructive work. Delete Over&Out identities, sessions, tokens, profile data, and friendship edges; handle Google consent disconnection according to the actual integration. Do not require Apple's authorization code for Google accounts.
+- Implement Google reauthentication/account deletion under the v2 proof contract. Validate the provider subject before destructive work. Delete Nowza identities, sessions, tokens, profile data, and friendship edges; handle Google consent disconnection according to the actual integration. Do not require Apple's authorization code for Google accounts.
 - Add FCM HTTP v1 delivery, credentials/IAM configuration, token rotation, permanent-error cleanup, bounded retries, and provider-neutral telemetry. Keep a server kill switch for new Android sign-ins and FCM enrollment that does not disable Apple traffic.
 - Use high-priority messages for actual visible incoming rings, not silent keepalive. Render immediately, keep the receive handler short, and validate the effective received priority where relevant. Background audio/prefetch work must not be assumed to finish inside the FCM callback. [FCM priority guidance](https://firebase.google.com/docs/cloud-messaging/android-message-priority).
 - Set FCM lifetime to the remaining ring deadline, discard already-expired requests, deduplicate by ring ID, and revalidate with the server on tap. Provider expiry supplements, rather than replaces, server checks. [FCM lifetime](https://firebase.google.com/docs/cloud-messaging/customize-messages/setting-message-lifespan).
@@ -280,7 +280,7 @@ Measure notification arrival, tap-to-first-audio, Talk-to-first-frame, turn swit
 
 **Dependencies:** Phase 1 phone feasibility and Phase 2.
 
-Complete onboarding, profiles/photos/mascots, friends/favorites/invites, Talk UI, preferences, block/report, sign-out/delete, diagnostics, and accessibility. Implement secure device-session storage, token refresh, notification permission/channel states, incoming-notification deduplication, and all conversation states from section 4.1. Keep Google provider tokens out of persistent storage unless a justified provider flow requires them; store the device's Over&Out session using platform-protected storage.
+Complete onboarding, profiles/photos/mascots, friends/favorites/invites, Talk UI, preferences, block/report, sign-out/delete, diagnostics, and accessibility. Implement secure device-session storage, token refresh, notification permission/channel states, incoming-notification deduplication, and all conversation states from section 4.1. Keep Google provider tokens out of persistent storage unless a justified provider flow requires them; store the device's Nowza session using platform-protected storage.
 
 Implement playback/capture service transitions, explicit capture start/stop, audio focus, output route changes, and network reconnection. Do not keep an idle relay connection or microphone service indefinitely just to appear available; use FCM for idle incoming rings. Show expired, unavailable, offline, and permission-denied states plainly. App resume and reboot recovery must re-establish only the state allowed by the OS and the user's availability setting.
 
@@ -361,6 +361,6 @@ Engineering can settle codec implementation, transport choice, exact module boun
 
 ## 11. Reference basis
 
-Repository links above describe the inspected implementation. External links support platform constraints, not proof that Over&Out already implements them. Official Android/Firebase/Google documentation was reviewed on 2026-09-29; recheck target SDK, service declarations, signing, account deletion, and Play distribution requirements when building/submitting the Android releases.
+Repository links above describe the inspected implementation. External links support platform constraints, not proof that Nowza already implements them. Official Android/Firebase/Google documentation was reviewed on 2026-09-29; recheck target SDK, service declarations, signing, account deletion, and Play distribution requirements when building/submitting the Android releases.
 
 The separation between accepted product defaults and proposed implementation details is intentional. Changing a default (for example, requiring automatic idle playback or independent watch sign-in) requires revisiting scope and feasibility; choosing a different compliant codec library does not.

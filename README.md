@@ -1,7 +1,9 @@
-# Over&Out: Watch Walkie Talkie
+# Nowza: Walkie Talkie + Watch
 
-A walkie-talkie for Apple Watch and iPhone (overandout.app), modeled on the Walkie-Talkie app
-Apple removed in watchOS 27. The current state and next steps are in [HANDOFF.md](HANDOFF.md).
+A walkie-talkie for Apple Watch and iPhone (nowza.app), modeled on the Walkie-Talkie app
+Apple removed in watchOS 27. It was called Over&Out (overandout.app) until 2026-10-09; internal
+identifiers (bundle IDs, keychain names, `OverAndOut*` targets) keep that name
+([RENAME_CHECKLIST.md](RENAME_CHECKLIST.md), section 0). The current state and next steps are in [HANDOFF.md](HANDOFF.md).
 
 ```
 app/         The iPhone app, the watch app, the watch's notification extension, and the
@@ -10,7 +12,7 @@ server/      The relay and the account API (Node 24+, TypeScript, no dependencie
 contracts/   The service contract the apps and the server share: spec, JSON Schemas,
              examples and binary fixtures (contracts/README.md)
 deploy/      Google Cloud (deploy/gcp/README.md) and App Store Connect (deploy/appstore)
-web/         overandout.app's pages
+web/         nowza.app's pages
 ```
 
 The project began as a ring-to-start spike: a watch-only app (`watch/WalkieSpike`) against the

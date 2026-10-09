@@ -1,4 +1,7 @@
-# Over&Out artwork provenance
+# Nowza artwork provenance
+
+The prompts below are recorded as they were run; the earlier ones predate the rename from
+Over&Out (2026-10-09).
 
 Created September 27, 2026 using the built-in image-generation tool. Approved reference: option 09, Chrome Tomorrow, with rotary knob eyes and a circular speaker mouth. No CLI fallback was used.
 
