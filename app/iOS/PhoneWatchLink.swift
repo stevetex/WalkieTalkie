@@ -28,17 +28,28 @@ final class PhoneWatchLink: NSObject, ObservableObject {
         /// The watch's request (v2), so a retry gets the same session.
         let requestId: String?
         let signingKey: Data?
+        /// The watch's device ID and account, if it's signed in and asked only for certificates.
+        let keysFor: (deviceId: String, account: String)?
 
         init(_ payload: [String: Any]) {
-            sessionFor = payload[WatchLink.request] as? String == WatchLink.sessionRequest ? payload[WatchLink.deviceId] as? String : nil
+            let kind = payload[WatchLink.request] as? String
+            let deviceId = payload[WatchLink.deviceId] as? String
+            sessionFor = kind == WatchLink.sessionRequest ? deviceId : nil
             requestId = payload[WatchLink.requestId] as? String
             signingKey = payload[WatchLink.signingKey] as? Data
+            if kind == WatchLink.keysRequest, let deviceId, let account = payload[WatchLink.keysFor] as? String {
+                keysFor = (deviceId, account)
+            } else {
+                keysFor = nil
+            }
         }
     }
 
     /// Makes a session for the watch's device ID with this request ID; nil when signed out.
     var makeSession: ((_ deviceId: String, _ requestId: String) async throws -> AccountSession?)?
-    var certifyWatch: ((_ deviceId: String, _ signingKey: Data) throws -> (phone: Data, device: Data))?
+    /// Certifies the watch's signing key. `account`: the watch's, which must be this iPhone's
+    /// (nil when the certificate goes with a session made here).
+    var certifyWatch: ((_ deviceId: String, _ account: String?, _ signingKey: Data) throws -> (phone: Data, device: Data))?
 
     /// Every payload says which version of the link it is.
     private static func payload(_ fields: [String: Any]) -> [String: Any] {
@@ -91,9 +102,39 @@ final class PhoneWatchLink: NSObject, ObservableObject {
 
     private func answerWaitingWatch() {
         let context = WCSession.default.receivedApplicationContext
-        guard let deviceId = context[WatchLink.deviceId] as? String,
-              context[WatchLink.needsSession] as? Bool == true else { return }
-        send(to: deviceId, signingKey: context[WatchLink.signingKey] as? Data, reply: nil)
+        guard let deviceId = context[WatchLink.deviceId] as? String else { return }
+        if context[WatchLink.needsSession] as? Bool == true {
+            send(to: deviceId, signingKey: context[WatchLink.signingKey] as? Data, reply: nil)
+        } else if let account = context[WatchLink.keysFor] as? String {
+            sendKeys(to: deviceId, account: account, signingKey: context[WatchLink.signingKey] as? Data, reply: nil)
+        }
+    }
+
+    /// A watch signed in before E2EE: only its certificates, so its session stays. A new
+    /// session would end the one its requests in flight use, and sign it out.
+    private func sendKeys(to deviceId: String, account: String, signingKey: Data?, reply: Reply?) {
+        guard signedIn, let signingKey else {
+            reply?(Self.payload([:]))
+            return
+        }
+        let certs: (phone: Data, device: Data)
+        if let cached = recentCerts[deviceId], cached.signingKey == signingKey {
+            certs = (cached.phone, cached.device)
+        } else {
+            guard let made = try? certifyWatch?(deviceId, account, signingKey) else {
+                reply?(Self.payload([:]))
+                return
+            }
+            certs = made
+            recentCerts[deviceId] = (signingKey, made.phone, made.device)
+        }
+        let fields = Self.payload([WatchLink.phoneCert: certs.phone, WatchLink.deviceCert: certs.device])
+        if let reply {
+            reply(fields)
+        } else {
+            WCSession.default.transferUserInfo(fields)
+        }
+        lastSentAt = Date()
     }
 
     /// Replies directly if the watch is waiting on a reply, or queues user info otherwise.
@@ -119,7 +160,7 @@ final class PhoneWatchLink: NSObject, ObservableObject {
                     if let cached = recentCerts[deviceId], cached.signingKey == signingKey {
                         certs = (cached.phone, cached.device)
                     } else {
-                        certs = try certifyWatch?(deviceId, signingKey)
+                        certs = try certifyWatch?(deviceId, nil, signingKey)
                         if let certs { recentCerts[deviceId] = (signingKey, certs.phone, certs.device) }
                     }
                     if let certs {
@@ -161,6 +202,8 @@ final class PhoneWatchLink: NSObject, ObservableObject {
         if let deviceId = request.sessionFor {
             answered.remove(deviceId)
             send(to: deviceId, requestId: request.requestId, signingKey: request.signingKey, reply: reply)
+        } else if let keys = request.keysFor {
+            sendKeys(to: keys.deviceId, account: keys.account, signingKey: request.signingKey, reply: reply)
         } else {
             reply?([:])
         }

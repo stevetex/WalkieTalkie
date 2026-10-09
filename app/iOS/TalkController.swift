@@ -89,6 +89,8 @@ final class TalkController: ObservableObject {
     private var pendingBurstId: String?
     private var burstFinished = false
     private var staleRetries = 0
+    /// The friends list was fetched again after this press's keys looked missing.
+    private var refetchedKeys = false
     private var awaitingFloor = false
     private var sentFirstFrame = false
     private var idleTimer: Timer?
@@ -680,12 +682,25 @@ final class TalkController: ObservableObject {
             } else {
                 relay.send(["type": "talk-start", "to": current.peerId, "burstId": id, "codec": audio.codecName])
             }
+            refetchedKeys = false
         } catch {
-            Telemetry.shared.event("e2eeFailed", ["reason": (error as? E2EEFlow.FlowError)?.rawValue ?? "seal"])
             burstId = nil
             pendingBurstId = nil
             awaitingFloor = false
             e2ee.endSending()
+            // The friends list can predate the friend's new keys (a sign-in, a watch given its
+            // keys): fetch it once and try again before giving up.
+            if error as? E2EEFlow.FlowError == .noCurrentKey, !refetchedKeys {
+                refetchedKeys = true
+                conversation?.timeline.mark("keysRefetched", once: false)
+                Task {
+                    await AppModel.shared.refreshFriends()
+                    startBurstIfReady()
+                }
+                return
+            }
+            refetchedKeys = false
+            Telemetry.shared.event("e2eeFailed", ["reason": (error as? E2EEFlow.FlowError)?.rawValue ?? "seal"])
             statusLine = "Can't reach \(current.peerName) right now"
             return
         }
@@ -746,6 +761,8 @@ final class TalkController: ObservableObject {
             relay.send(sealed.control)
             for frame in pendingFrames { relay.send(frame: try e2ee.send(frame)) }
             if burstFinished { relay.send(["type": "talk-end", "burstId": id]) }
+            // The next press seals to the current keys instead of being refused again.
+            Task { await AppModel.shared.refreshFriends() }
             return true
         } catch {
             Telemetry.shared.event("e2eeFailed", ["reason": "stale-key"])

@@ -499,10 +499,15 @@ bytes 5..   ChaCha20-Poly1305 ciphertext of the payload, then its 16-byte tag
 
 Over WatchConnectivity, every message carries `schemaVersion: 2`:
 
-- watch → phone: `{request: "session", deviceId, requestId, schemaVersion}`; application
-  context `{deviceId, needsSession, schemaVersion}`;
-- phone → watch: `{session: <data>, schemaVersion}` (the session's JSON, with `parentDeviceId`
-  and `clientKind`), or `{signedOut: true, schemaVersion}`; context `{signedIn, schemaVersion}`.
+- watch → phone: `{request: "session", deviceId, requestId, signingKey, schemaVersion}`; a
+  watch signed in without E2EE certificates (signed in before E2EE) asks only for them,
+  `{request: "keys", deviceId, keysFor: <its account ID>, signingKey, schemaVersion}`;
+  application context `{deviceId, needsSession, keysFor?, signingKey, schemaVersion}`;
+- phone → watch: `{session: <data>, phoneCert, deviceCert, schemaVersion}` (the session's JSON,
+  with `parentDeviceId` and `clientKind`), or, for a keys request from the same account,
+  `{phoneCert, deviceCert, schemaVersion}` with no new session (a new one would end the
+  watch's current session while its requests are in flight); or `{signedOut: true,
+  schemaVersion}`; context `{signedIn, schemaVersion}`.
 
 A message without `schemaVersion` comes from a tester build before Phase 0: the phone still
 answers it, and the watch still adopts a session from it. A session reply for another device

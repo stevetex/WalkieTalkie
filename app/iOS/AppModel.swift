@@ -121,8 +121,10 @@ final class AppModel: ObservableObject {
             guard client.session != nil else { return nil }
             return try await client.makeSession(forDevice: deviceId, requestId: requestId)
         }
-        watch.certifyWatch = { [e2ee] deviceId, signingKey in
-            guard let session = self.client.session else { throw E2EEKeyStore.StoreError.notProvisioned }
+        watch.certifyWatch = { [e2ee] deviceId, account, signingKey in
+            guard let session = self.client.session, account == nil || account == session.userId else {
+                throw E2EEKeyStore.StoreError.notProvisioned
+            }
             return try e2ee.certifyWatch(userId: session.userId, phoneDeviceId: session.deviceId,
                                          watchDeviceId: deviceId, signingKey: signingKey, now: Int64(Clock.nowMs()))
         }
