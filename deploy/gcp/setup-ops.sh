@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The Over&Out Ops dashboard (OPS_DASHBOARD_SPEC.md): the Cloud Run service "ops" behind
+# The Nowza Ops dashboard (OPS_DASHBOARD_SPEC.md): the Cloud Run service "ops" behind
 # Identity-Aware Proxy, its service account "ops-viewer", and the relay's ops-stats-token.
 # Safe to re-run: it updates the service to this commit's image and settings.
 #
@@ -7,10 +7,10 @@
 #
 # Before the first run, Steve sets up in the console (the project has no organization, so IAP
 # can't use Google's managed OAuth client and the client can't be made from the command line):
-#   1. APIs & Services → OAuth consent screen: External, app name "Over&Out", support email
-#      overandout@cypressoakstudios.com, privacy policy https://overandout.app/privacy, scopes
+#   1. APIs & Services → OAuth consent screen: External, app name "Nowza", support email
+#      nowza@cypressoakstudios.com, privacy policy https://nowza.app/privacy, scopes
 #      name, email and profile only, no logo; publishing status In production.
-#   2. Google Auth Platform → Clients → Create client → Web application, "Over&Out Ops (IAP)".
+#   2. Google Auth Platform → Clients → Create client → Web application, "Nowza Ops (IAP)".
 #      Copy the secret at once (it's shown only then). Then edit the client and add the
 #      authorized redirect URI https://iap.googleapis.com/v1/oauth/clientIds/<client ID>:handleRedirect
 #      Put the ID and secret in config.sh as OPS_OAUTH_CLIENT_ID and OPS_OAUTH_CLIENT_SECRET
@@ -42,7 +42,7 @@ gc services enable iap.googleapis.com
 
 if ! gc iam service-accounts describe "$sa" >/dev/null 2>&1; then
   echo "Creating the $sa_name service account…"
-  gc iam service-accounts create "$sa_name" --display-name="Over&Out Ops dashboard (read-only)"
+  gc iam service-accounts create "$sa_name" --display-name="Nowza Ops dashboard (read-only)"
 fi
 # Read Firestore and Cloud Monitoring; nothing else in the project.
 for role in roles/datastore.viewer roles/monitoring.viewer; do
@@ -77,7 +77,7 @@ stage=$(mktemp -d)
 trap 'rm -rf "$stage"' EXIT
 {
   echo "OPS_STATS_TOKEN_SECRET: ops-stats-token"
-  echo "RELAY_NODES: \"${RELAY_NODES:-https://relay-1.overandout.app}\""
+  echo "RELAY_NODES: \"${RELAY_NODES:-https://relay-1.nowza.app}\""
   echo "REGION: $REGION"
   echo "MONITORING_DASHBOARD: \"${MONITORING_DASHBOARD:-https://console.cloud.google.com/monitoring/dashboards?project=$PROJECT_ID}\""
 } >"$stage/env.yaml"

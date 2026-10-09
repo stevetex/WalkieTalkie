@@ -53,7 +53,7 @@ export async function jobContext(env: NodeJS.ProcessEnv): Promise<JobContext> {
 
 // RELAY_NODES: comma-separated base URLs (default the one relay node).
 export function relayNodes(env: NodeJS.ProcessEnv): string[] {
-  const nodes = (env.RELAY_NODES || "https://relay-1.overandout.app").split(",").map((n) => n.trim().replace(/\/+$/, "")).filter(Boolean);
+  const nodes = (env.RELAY_NODES || "https://relay-1.nowza.app").split(",").map((n) => n.trim().replace(/\/+$/, "")).filter(Boolean);
   for (const node of nodes) if (!/^https?:\/\//.test(node)) throw new Error(`RELAY_NODES: not a URL: ${node}`);
   return nodes;
 }

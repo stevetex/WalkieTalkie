@@ -4,7 +4,7 @@ import Security
 
 // Accounts, shared by the iPhone and watch apps (design decisions 2026-09-27): Sign in with
 // Apple on the iPhone, a session token per device, the watch's session minted by the iPhone
-// and sent over WatchConnectivity, and the account API at overandout.app/v2 (server/src/api.ts;
+// and sent over WatchConnectivity, and the account API at nowza.app/v2 (server/src/api.ts;
 // the contract is contracts/README.md).
 
 /// The two Apple device kinds, as telemetry labels them ("iphone", "watch"). The service's own
@@ -185,7 +185,7 @@ public struct AccountAPIError: LocalizedError, Equatable, Sendable {
             (status == 404 && code == "no-account")
     }
 
-    /// This build is too old for the service: show "Update Over&Out", keep the session.
+    /// This build is too old for the service: show "Update Nowza", keep the session.
     public var requiresUpgrade: Bool { code == "client-upgrade-required" }
 
     public var errorDescription: String? {
@@ -196,15 +196,15 @@ public struct AccountAPIError: LocalizedError, Equatable, Sendable {
         case "too-many-invites": return "You've sent a lot of invites today. Try again tomorrow."
         case "apple-token-rejected": return "Sign in with Apple didn't work. Try again."
         case "apple-revoke-failed": return "Couldn't reach Apple to finish deleting your account. Try again in a moment."
-        case "wrong-apple-id": return "Sign in with the Apple ID you use for Over&Out."
+        case "wrong-apple-id": return "Sign in with the Apple ID you use for Nowza."
         case "bad-name": return "Enter a name."
         case "no-account", "not-signed-in", "unauthorized", "session-ended": return "You're signed out. Sign in again."
-        case "client-upgrade-required": return message.isEmpty ? "Update Over&Out to keep talking." : message
+        case "client-upgrade-required": return message.isEmpty ? "Update Nowza to keep talking." : message
         case "ring-expired": return "This conversation has expired."
         case "ring-answered-elsewhere": return "You answered on another device."
         case "provider-unavailable": return "That isn't available yet."
         case "wrong-provider": return "This account doesn't sign in that way."
-        case "temporarily-unavailable": return "Over&Out is busy. Try again in a moment."
+        case "temporarily-unavailable": return "Nowza is busy. Try again in a moment."
         default: return message.isEmpty ? "Something went wrong (\(status) \(code))." : message
         }
     }

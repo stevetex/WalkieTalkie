@@ -15,7 +15,7 @@ final class WatchAccount: NSObject, ObservableObject {
     @Published private(set) var session: AccountSession?
     @Published private(set) var friends: [Friend] = []
     @Published private(set) var friendsLoaded = false
-    /// Waiting for the iPhone: "Open Over&Out on your iPhone" until a session arrives.
+    /// Waiting for the iPhone: "Open Nowza on your iPhone" until a session arrives.
     @Published private(set) var phoneSignedIn: Bool?
     /// The service no longer supports this build: the friends list asks for an update (which
     /// comes with the iPhone app's). The session stays.

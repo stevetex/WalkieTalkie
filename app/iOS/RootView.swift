@@ -54,9 +54,9 @@ struct RootView: View {
                     .keyboardShortcut(choice == .watchOnly ? .defaultAction : nil)
             }
         } message: {
-            Text("Over&Out is on your Apple Watch and this iPhone. With Apple Watch, Then iPhone, your iPhone rings if you don't answer your watch within 20 seconds. You can change this in Settings.")
+            Text("Nowza is on your Apple Watch and this iPhone. With Apple Watch, Then iPhone, your iPhone rings if you don't answer your watch within 20 seconds. You can change this in Settings.")
         }
-        .alert("Over&Out", isPresented: errorBinding) {
+        .alert("Nowza", isPresented: errorBinding) {
             Button("OK", role: .cancel) {}
         } message: {
             Text(model.errorMessage ?? "")

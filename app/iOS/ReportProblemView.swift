@@ -20,7 +20,7 @@ struct ReportProblemView: View {
                         Label("Thanks. We'll look into it.", systemImage: "checkmark.circle.fill")
                             .foregroundStyle(Brand.primary)
                     } footer: {
-                        Text(includeDiagnostics ? "Your iPhone sent its diagnostics log; your watch sends its own the next time Over&Out opens there." : "")
+                        Text(includeDiagnostics ? "Your iPhone sent its diagnostics log; your watch sends its own the next time Nowza opens there." : "")
                     }
                 } else {
                     Section {

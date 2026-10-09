@@ -142,7 +142,7 @@ struct TalkView: View {
     @ViewBuilder
     private var availabilityNote: some View {
         if ptt.isAvailable && !ptt.isJoined && model.ringChoice != .watchOnly {
-            Text("This iPhone can't ring while it's locked, so friends reach it only while Over&Out is open. Turn on Allow iPhone to Ring When Locked in Settings.")
+            Text("This iPhone can't ring while it's locked, so friends reach it only while Nowza is open. Turn on Allow iPhone to Ring When Locked in Settings.")
                 .font(.footnote)
                 .foregroundStyle(Brand.silver)
                 .multilineTextAlignment(.center)

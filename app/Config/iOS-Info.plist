@@ -12,7 +12,7 @@
 		<true/>
 	</dict>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Over&amp;Out records your voice only while you hold the Talk button.</string>
+	<string>Nowza records your voice only while you hold the Talk button.</string>
 	<key>OAOServerHost</key>
 	<string>$(OAO_SERVER_HOST)</string>
 	<key>UIBackgroundModes</key>

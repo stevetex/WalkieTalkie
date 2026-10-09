@@ -4,7 +4,7 @@ import PushToTalk
 import UIKit
 import UserNotifications
 
-/// The iPhone's one PushToTalk channel, "Over&Out" (design decision 2026-09-27). Being in the
+/// The iPhone's one PushToTalk channel, "Nowza" (design decision 2026-09-27). Being in the
 /// channel is being available: the relay rings this iPhone with a PushToTalk push, the system
 /// wakes the app and activates its audio, and the message plays with no tap. The channel's
 /// descriptor names the friend of the current conversation, so the system's Talk button (on
@@ -191,7 +191,7 @@ final class PushToTalkChannel: NSObject, ObservableObject {
     }
 
     private func descriptor(friendName: String?) -> PTChannelDescriptor {
-        PTChannelDescriptor(name: friendName ?? "Over&Out", image: UIImage(named: "OverAndOutMascot"))
+        PTChannelDescriptor(name: friendName ?? "Nowza", image: UIImage(named: "OverAndOutMascot"))
     }
 
     private func emit(_ event: Event) {
@@ -293,7 +293,7 @@ extension PushToTalkChannel: PTChannelManagerDelegate {
 extension PushToTalkChannel: PTChannelRestorationDelegate {
     /// Returns at once, from what's cached (no network).
     nonisolated func channelDescriptor(restoredChannelUUID channelUUID: UUID) -> PTChannelDescriptor {
-        let name = UserDefaults.standard.string(forKey: Self.friendNameKey) ?? "Over&Out"
+        let name = UserDefaults.standard.string(forKey: Self.friendNameKey) ?? "Nowza"
         return PTChannelDescriptor(name: name, image: UIImage(named: "OverAndOutMascot"))
     }
 }
@@ -318,8 +318,8 @@ enum WalkieTalkieOffNotice {
         // (run 58).
         content.title = "iPhone walkie-talkie is off"
         content.body = ringsWatch
-            ? "Friends' messages ring your Apple Watch instead. Open Over&Out on your iPhone to turn it back on."
-            : "Friends' messages won't play on your iPhone. Open Over&Out to turn it back on."
+            ? "Friends' messages ring your Apple Watch instead. Open Nowza on your iPhone to turn it back on."
+            : "Friends' messages won't play on your iPhone. Open Nowza to turn it back on."
         content.sound = .default
         let request = UNNotificationRequest(identifier: identifier, content: content, trigger: nil)
         UNUserNotificationCenter.current().add(request) { error in

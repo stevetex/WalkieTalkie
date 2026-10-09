@@ -1,11 +1,11 @@
 import OverAndOutKit
 import SwiftUI
 
-/// Settings → About Over&Out: the logo, version, contact and legal lines.
+/// Settings → About Nowza: the logo, version, contact and legal lines.
 struct AboutView: View {
     @EnvironmentObject private var model: AppModel
 
-    private static let supportEmail = "overandout@cypressoakstudios.com"
+    private static let supportEmail = "nowza@cypressoakstudios.com"
 
     private var version: String {
         let info = Bundle.main.infoDictionary ?? [:]
@@ -25,7 +25,7 @@ struct AboutView: View {
                             .frame(width: 160, height: 160)
                             .clipShape(RoundedRectangle(cornerRadius: 34, style: .continuous))
                             .accessibilityLabel("Nowza")
-                        Text("Watch Walkie Talkie")
+                        Text("Walkie Talkie + Watch")
                             .font(.title3.weight(.semibold))
                             .padding(.top, 8)
                         Text("for iPhone and Apple Watch")
@@ -44,7 +44,7 @@ struct AboutView: View {
                     Link(destination: URL(string: "mailto:\(Self.supportEmail)")!) {
                         LabeledContent("Contact", value: Self.supportEmail)
                     }
-                    Link("overandout.app", destination: URL(string: "https://\(model.linkDomain)")!)
+                    Link(model.linkDomain, destination: URL(string: "https://\(model.linkDomain)")!)
                     Link("Privacy Policy", destination: URL(string: "https://\(model.linkDomain)/privacy")!)
                     Link("Terms of Use", destination: URL(string: "https://\(model.linkDomain)/terms")!)
                     Link("Help and Support", destination: URL(string: "https://\(model.linkDomain)/support")!)
@@ -55,8 +55,8 @@ struct AboutView: View {
                     // Placeholder until there's an App Store listing; then open its
                     // write-review page (apps.apple.com/app/id<ID>?action=write-review).
                     VStack(alignment: .leading, spacing: 2) {
-                        Label("Rate Over&Out", systemImage: "star")
-                        Text("Available once Over&Out is on the App Store")
+                        Label("Rate Nowza", systemImage: "star")
+                        Text("Available once Nowza is on the App Store")
                             .font(.footnote)
                             .foregroundStyle(Brand.secondary)
                     }

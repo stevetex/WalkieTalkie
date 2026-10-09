@@ -262,7 +262,7 @@ test("through the relay and API: a record and summary per conversation, events, 
     verifier,
     apple: { verify: async (identityToken) => ({ sub: identityToken }) },
     revoker: null,
-    inviteBaseUrl: "https://overandout.app/i/",
+    inviteBaseUrl: "https://nowza.app/i/",
     log: (line) => lines.push(line),
     telemetry: sink,
   });

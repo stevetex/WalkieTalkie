@@ -38,7 +38,7 @@
 //       instead of sending. Needs a local relay run with SERVE_API=1 DEV_GOOGLE_SIGNIN=1
 //       FCM_STUB=1. Saves its session to OAO_BOT_TOKEN_FILE for bot.ts --client-kind android.
 //
-// OAO_API is the account API (default https://overandout.app); GCP_PROJECT the Google Cloud
+// OAO_API is the account API (default https://nowza.app); GCP_PROJECT the Google Cloud
 // project (default walkie-talkie-relay).
 
 import { parseArgs } from "node:util";
@@ -109,7 +109,7 @@ if (import.meta.main) {
     allowPositionals: true,
     options: { name: { type: "string", default: "Test Bot" } },
   });
-  const base = process.env.OAO_API ?? "https://overandout.app";
+  const base = process.env.OAO_API ?? "https://nowza.app";
   const project = process.env.GCP_PROJECT ?? "walkie-talkie-relay";
   const local = new URL(base).hostname === "localhost" || new URL(base).hostname === "127.0.0.1";
   const [command, arg] = positionals;

@@ -21,7 +21,7 @@ gc services enable artifactregistry.googleapis.com cloudbuild.googleapis.com sec
 if ! gc artifacts repositories describe relay --location="$REGION" >/dev/null 2>&1; then
   echo "Creating the relay image repository in ${REGION}…"
   gc artifacts repositories create relay --location="$REGION" --repository-format=docker \
-    --description="Over&Out relay node images"
+    --description="Nowza relay node images"
 fi
 gc artifacts repositories add-iam-policy-binding relay --location="$REGION" \
   --member="serviceAccount:$node_sa" --role=roles/artifactregistry.reader >/dev/null

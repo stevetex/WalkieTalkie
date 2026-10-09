@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Who can open the Over&Out Ops dashboard: Google accounts (Gmail included) or a Google Group,
+# Who can open the Nowza Ops dashboard: Google accounts (Gmail included) or a Google Group,
 # granted IAP's "IAP-secured Web App User" on the ops service (OPS_DASHBOARD_SPEC.md, "Sign-in
 # and access"). Changes take effect within a minute or so.
 #

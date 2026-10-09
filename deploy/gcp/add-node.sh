@@ -4,7 +4,7 @@
 # for. Its data disk is kept by the group's stateful policy, even after the node is
 # deleted, so delete a test node's disk by hand (the script prints the command).
 #
-#   deploy/gcp/add-node.sh relay-1 --ip walkie-relay-ip --hostnames "relay-1.overandout.app walkie.example.com"
+#   deploy/gcp/add-node.sh relay-1 --ip walkie-relay-ip --hostnames "relay-1.nowza.app walkie.example.com"
 #   deploy/gcp/add-node.sh relay-canary          (ephemeral IP, plain HTTP)
 #
 # DNS for each hostname must already point at the IP, or Caddy can't get certificates.

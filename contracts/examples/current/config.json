@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "api": { "versions": [2] },
-  "relay": { "baseUrl": "https://relay-1.overandout.app", "protocols": [2], "audioFormats": [2], "codecs": ["opus16k", "pcm16le16k"] },
+  "relay": { "baseUrl": "https://relay-1.nowza.app", "protocols": [2], "audioFormats": [2], "codecs": ["opus16k", "pcm16le16k"] },
   "features": { "googleSignIn": false, "fcmDelivery": false },
   "compatibility": { "minimumBuilds": {}, "message": null },
   "timing": { "ringUnansweredMs": 35000, "answerJoinGraceMs": 30000, "conversationIdleMs": 45000 }

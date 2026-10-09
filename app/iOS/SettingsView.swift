@@ -76,13 +76,13 @@ struct SettingsView: View {
                     Link("Privacy Policy", destination: URL(string: "https://\(model.linkDomain)/privacy")!)
                     Link("Terms of Use", destination: URL(string: "https://\(model.linkDomain)/terms")!)
                     Link("Help and Support", destination: URL(string: "https://\(model.linkDomain)/support")!)
-                    NavigationLink("About Over&Out") { AboutView() }
+                    NavigationLink("About Nowza") { AboutView() }
                 }
 
                 Section {
                     // Each dialog hangs off its own button, so it opens next to the row that was tapped.
                     Button("Sign Out") { confirmingSignOut = true }
-                        .confirmationDialog("Sign out of Over&Out?", isPresented: $confirmingSignOut, titleVisibility: .visible) {
+                        .confirmationDialog("Sign out of Nowza?", isPresented: $confirmingSignOut, titleVisibility: .visible) {
                             Button("Sign Out", role: .destructive) { Task { await model.signOut() } }
                         } message: {
                             Text("Your watch is signed out too. Your friends stay.")
@@ -111,7 +111,7 @@ struct SettingsView: View {
 
     private var watchStatus: String {
         if !watch.isPaired { return "No watch paired" }
-        if !watch.isWatchAppInstalled { return "Over&Out isn't installed" }
+        if !watch.isWatchAppInstalled { return "Nowza isn't installed" }
         if let sent = watch.lastSentAt { return "Signed in \(sent.formatted(.relative(presentation: .named)))" }
         return "Installed"
     }
@@ -239,7 +239,7 @@ struct WalkieTalkieSection: View {
             }
             #else
             if model.reachability.hasPrefix("Not registered") {
-                Text("Friends can't reach this iPhone right now. Check your connection, then open Over&Out again.")
+                Text("Friends can't reach this iPhone right now. Check your connection, then open Nowza again.")
                     .font(.footnote)
                     .foregroundStyle(Brand.secondary)
             }
@@ -257,27 +257,27 @@ struct WalkieTalkieSection: View {
         if !watch.isPaired { return "No Apple Watch is paired with this iPhone, so friends ring this iPhone." }
         if !model.watchCanRing {
             return watch.isWatchAppInstalled
-                ? "Once Over&Out on your Apple Watch is signed in, you can choose which one rings."
-                : "Install Over&Out on your Apple Watch to choose which one rings."
+                ? "Once Nowza on your Apple Watch is signed in, you can choose which one rings."
+                : "Install Nowza on your Apple Watch to choose which one rings."
         }
         let lockedOff = ptt.isAvailable && !ptt.isJoined
         switch choice {
         case .watchOnly:
-            return "If your watch can't be reached, this iPhone rings while Over&Out is open on it."
+            return "If your watch can't be reached, this iPhone rings while Nowza is open on it."
         case .watchThenPhone:
-            return lockedOff ? "Allow iPhone to Ring When Locked is off, so your iPhone rings only while Over&Out is open on it." : nil
+            return lockedOff ? "Allow iPhone to Ring When Locked is off, so your iPhone rings only while Nowza is open on it." : nil
         case .phoneOnly:
             return lockedOff
-                ? "Allow iPhone to Ring When Locked is off, so this iPhone rings only while Over&Out is open on it. Otherwise your watch rings."
+                ? "Allow iPhone to Ring When Locked is off, so this iPhone rings only while Nowza is open on it. Otherwise your watch rings."
                 : "If this iPhone can't be reached, your watch rings."
         }
     }
 
     private var phoneFooter: String {
-        guard ptt.isAvailable else { return "Friends can reach this iPhone while Over&Out is open." }
+        guard ptt.isAvailable else { return "Friends can reach this iPhone while Nowza is open." }
         if choice == .watchOnly { return "Choose a setting with iPhone above to let this iPhone ring when it's locked." }
         return ptt.isJoined
             ? "Friends' messages play on this iPhone right away, even when it's locked. You can talk back from the Lock Screen."
-            : "Friends can reach this iPhone only while Over&Out is open."
+            : "Friends can reach this iPhone only while Nowza is open."
     }
 }

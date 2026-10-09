@@ -98,7 +98,7 @@ function bars(items: Array<[string, number]>, unit = ""): string {
 
 function page(report: Report, generatedAt: number, since: Date, until: Date, body: string): string {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>${escape(report.title)} · Over&amp;Out Ops</title>
+<title>${escape(report.title)} · Nowza Ops</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@600;700&family=Barlow:wght@400;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
 <style>
 :root{--bg:#f6efdd;--panel:#fffcf3;--ink:#10161b;--muted:#56607a;--line:#e4d9bd;--accent:#a64700;--fill:#ff8b1a;--s2:#4252a3;--warn:#a8660b;--warn-bg:#f8ead0;--indigo:#252a51;color-scheme:light}
@@ -116,7 +116,7 @@ td{padding:6px 10px;border-bottom:1px solid var(--line);white-space:nowrap}td.n,
 .chart{width:100%;max-width:640px;height:auto}.chart .lbl{font:12px Barlow,sans-serif;fill:var(--muted)}.chart .val{font:11.5px "IBM Plex Mono",monospace;fill:var(--ink)}.chart .bar{fill:var(--s2)}
 .heat rect{stroke:var(--panel);stroke-width:2}
 </style></head><body>
-<header><a href="/">← Over&amp;Out Ops</a></header>
+<header><a href="/">← Nowza Ops</a></header>
 <main>
 <div><h1>${escape(report.title)}</h1><p class="q">${escape(report.question)}</p>
 <p class="meta">Generated ${new Date(generatedAt).toISOString().slice(0, 16).replace("T", " ")} UTC from ${since.toISOString().slice(0, 10)} to ${until.toISOString().slice(0, 10)} (UTC). Totals only: no names or account IDs.</p></div>

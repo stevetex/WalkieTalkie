@@ -31,7 +31,7 @@
 //       Problem reports sent from the app.
 //
 //   node tools/beta.ts usage [--days 7]
-//       How Over&Out is used (the spec's usage analytics): the accounts now (pictures, friends,
+//       How Nowza is used (the spec's usage analytics): the accounts now (pictures, friends,
 //       devices, Ring Me On) and what people did in the last days (active accounts,
 //       conversations, talk time, invites, onboarding). Totals only.
 //
@@ -310,7 +310,7 @@ switch (command) {
   case "pull": {
     const id = await resolveTester(arg);
     await accounts.requestDiagnostics(id);
-    console.log(`Asked ${await nameOf(id)}'s devices for their logs. They upload the next time Over&Out refreshes (opening it, or the watch's idle reload); then run: node tools/beta.ts logs ${id}`);
+    console.log(`Asked ${await nameOf(id)}'s devices for their logs. They upload the next time Nowza refreshes (opening it, or the watch's idle reload); then run: node tools/beta.ts logs ${id}`);
     break;
   }
   case "logs": {

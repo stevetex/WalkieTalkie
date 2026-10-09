@@ -20,7 +20,7 @@ public enum ServiceContract {
     /// Every build plays both codecs (the contract requires it).
     public static let decodes = ["opus16k", "pcm16le16k"]
     /// Posted when the service says this build is too old (client-upgrade-required), from the
-    /// API or the relay: the app shows "Update Over&Out" and keeps the session.
+    /// API or the relay: the app shows "Update Nowza" and keeps the session.
     public static let upgradeRequiredNotification = Notification.Name("OverAndOutUpgradeRequired")
 }
 
@@ -292,7 +292,7 @@ public final class ServiceConfigStore: Sendable {
         return url
     }
 
-    /// The service no longer supports this build: show "Update Over&Out" (and keep the session).
+    /// The service no longer supports this build: show "Update Nowza" (and keep the session).
     public var upgradeRequired: Bool {
         guard let minimum = config?.minimumBuild(for: identity.kind) else { return false }
         return identity.buildNumber < minimum
@@ -301,13 +301,13 @@ public final class ServiceConfigStore: Sendable {
     /// The service's own words for the update screen, if it has any.
     public var upgradeMessage: String? { config?.compatibility?.message }
 
-    /// The relay host is ours: the bundled relay, or HTTPS on overandout.app or a host under it.
+    /// The relay host is ours: the bundled relay, or HTTPS on nowza.app or a host under it.
     /// A build pointed at this Mac (the simulator) only ever uses its own.
     public static func approved(_ url: URL, bundled: URL?) -> Bool {
         if let bundled, url.host == bundled.host, url.scheme == bundled.scheme, url.port == bundled.port { return true }
         guard url.scheme == "https", let host = url.host?.lowercased() else { return false }
         if let bundledHost = bundled?.host, bundledHost == "localhost" || bundledHost == "127.0.0.1" { return false }
-        return host == "overandout.app" || host.hasSuffix(".overandout.app")
+        return host == "nowza.app" || host.hasSuffix(".nowza.app")
     }
 
     /// Takes a config the service sent (GET /v2/config), keeping it for later launches. A config

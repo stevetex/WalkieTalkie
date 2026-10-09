@@ -20,7 +20,7 @@ gc services enable run.googleapis.com
 
 if ! gc iam service-accounts describe "$api_sa" >/dev/null 2>&1; then
   echo "Creating the account-api service account…"
-  gc iam service-accounts create account-api --display-name="Over&Out account API"
+  gc iam service-accounts create account-api --display-name="Nowza account API"
 fi
 # A new service account can take a few seconds to be usable in IAM policies.
 for attempt in 1 2 3 4 5 6; do
@@ -91,8 +91,9 @@ if [ -n "${ALERT_EMAIL:-}" ]; then
     echo "Run setup-uptime.sh first (it creates the email notification channel)." >&2
     exit 1
   fi
-  policy="Over&Out: user report"
-  if [ -z "$(gc monitoring policies list --filter="displayName=\"$policy\"" --format='value(name)')" ]; then
+  policy="Nowza: user report"
+  # Also "Over&Out: user report", its name before the rename (telemetry-monitoring.ts renames it).
+  if [ -z "$(gc monitoring policies list --filter="displayName=\"$policy\" OR displayName=\"Over&Out: user report\"" --format='value(name)')" ]; then
     echo "Creating the report alert…"
     policy_file=$(mktemp)
     cat >"$policy_file" <<EOF
@@ -108,7 +109,7 @@ if [ -n "${ALERT_EMAIL:-}" ]; then
   "alertStrategy": { "notificationRateLimit": { "period": "300s" }, "autoClose": "1800s" },
   "notificationChannels": ["$channel"],
   "documentation": {
-    "content": "Someone filed a report in Over&Out. The log line has the report ID. Review it in the Firestore console (reports collection, status open), and block or delete the reported account if needed.",
+    "content": "Someone filed a report in Nowza. The log line has the report ID. Review it in the Firestore console (reports collection, status open), and block or delete the reported account if needed.",
     "mimeType": "text/markdown"
   }
 }

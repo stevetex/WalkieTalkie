@@ -1,4 +1,4 @@
-// Shared build settings for Over&Out. Put your own values in Local.xcconfig (copy
+// Shared build settings for Nowza. Put your own values in Local.xcconfig (copy
 // Local.xcconfig.example); it is gitignored and overrides anything here.
 
 DEVELOPMENT_TEAM =
@@ -13,15 +13,15 @@ OAO_BUNDLE_ID = com.cypressoakstudios.overandout
 OAO_APP_GROUP = group.$(OAO_BUNDLE_ID)
 
 // Relay server host name, without a scheme (xcconfig treats "//" as a comment).
-OAO_SERVER_HOST = relay-1.overandout.app
+OAO_SERVER_HOST = relay-1.nowza.app
 
-// The account API (server/src/api.ts), at overandout.app/v1 through Firebase Hosting. For
+// The account API (server/src/api.ts), at nowza.app/v1 through Firebase Hosting. For
 // the simulator, a local relay run with SERVE_API=1 serves it too (OAO_API_HOST =
 // localhost:8080). Plain host names: xcconfig treats "//" as a comment.
-OAO_API_HOST = overandout.app
+OAO_API_HOST = nowza.app
 // Invite links (https://<domain>/i/<code>) open the iPhone app: its Associated Domains
 // entitlement and the site's apple-app-site-association file (web/public).
-OAO_LINK_DOMAIN = overandout.app
+OAO_LINK_DOMAIN = nowza.app
 
 // Push on the watch and the iPhone:
 //   yes  Push Notifications and Time Sensitive Notifications entitlements. Needs a

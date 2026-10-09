@@ -1,4 +1,4 @@
-// The Over&Out Ops dashboard (OPS_DASHBOARD_SPEC.md): the Canary against a relay with the
+// The Nowza Ops dashboard (OPS_DASHBOARD_SPEC.md): the Canary against a relay with the
 // always-on Test Bot, the relay nodes' live views summed, and the Ops service's routes.
 
 import { test } from "node:test";
@@ -142,7 +142,7 @@ test("the Ops service: IAP's user or nothing, the page, the cached live view, th
     const page = await fetch(`${url}/`, { headers: iap });
     assert.equal(page.status, 200);
     assert.match(page.headers.get("content-security-policy")!, /script-src 'self'/);
-    assert.match(await page.text(), /Over&amp;Out Ops/);
+    assert.match(await page.text(), /Nowza Ops/);
     assert.equal((await fetch(`${url}/ops.js`, { headers: iap })).status, 200);
     // The live view, once for both requests (cached 3 s).
     const live = await (await fetch(`${url}/api/live`, { headers: iap })).json();

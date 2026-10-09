@@ -187,7 +187,7 @@ struct RelayConnectionTests {
 
     /// A refusal at admission says why: an update is needed, or the session ended.
     @Test func aRefusedStreamSaysWhy() async throws {
-        RelayStub.reset(streamRefusal: (409, #"{"error":"client-upgrade-required","message":"Update Over&Out to keep talking.","minimumBuild":200}"#))
+        RelayStub.reset(streamRefusal: (409, #"{"error":"client-upgrade-required","message":"Update Nowza to keep talking.","minimumBuild":200}"#))
         let relay = connection(stampsArrivals: false)
         var refusal: RelayRefusal?
         var closed: String?
@@ -195,7 +195,7 @@ struct RelayConnectionTests {
         relay.onClose = { closed = $0 }
         relay.connect(baseURL: base, token: "t")
         try await waitUntil { closed != nil }
-        #expect(refusal == RelayRefusal(status: 409, code: "client-upgrade-required", message: "Update Over&Out to keep talking."))
+        #expect(refusal == RelayRefusal(status: 409, code: "client-upgrade-required", message: "Update Nowza to keep talking."))
         #expect(refusal?.requiresUpgrade == true)
         #expect(closed == "stream HTTP 409 client-upgrade-required")
         #expect(!relay.isReady)

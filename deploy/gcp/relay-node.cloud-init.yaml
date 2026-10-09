@@ -8,7 +8,7 @@
 #   relay-env        KEY=VALUE lines for the container (no secrets: those are read from
 #                    Secret Manager by the relay itself)
 #   relay-hostnames  per-instance (stateful metadata): the names Caddy serves, such as
-#                    "relay-1.overandout.app walkie.cypressoakstudios.com". None serves
+#                    "relay-1.nowza.app walkie.cypressoakstudios.com". None serves
 #                    plain HTTP only, for a test node.
 
 write_files:
@@ -54,7 +54,7 @@ write_files:
     permissions: "0644"
     content: |
       [Unit]
-      Description=Over&Out relay container
+      Description=Nowza relay container
       Requires=relay-data.service docker.service
       After=relay-data.service docker.service network-online.target
       Wants=network-online.target

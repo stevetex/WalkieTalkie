@@ -1,4 +1,4 @@
-// Over&Out Ops: fills the page from /api/live (every 5 s) and /api/summary (every 60 s), both
+// Nowza Ops: fills the page from /api/live (every 5 s) and /api/summary (every 60 s), both
 // paused while the tab is hidden so the service can scale back to zero. Every number comes from
 // the ops service; nothing here holds a token. OPS_DASHBOARD_SPEC.md defines each number.
 "use strict";

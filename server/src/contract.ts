@@ -253,7 +253,7 @@ export interface Admission {
 
 // A build that speaks no audio format the service still carries (format 1 only) must update.
 function upgradeRequired(minimumBuild?: number): ContractError {
-  return new ContractError(409, "client-upgrade-required", "Update Over&Out to keep talking.", minimumBuild === undefined ? {} : { minimumBuild });
+  return new ContractError(409, "client-upgrade-required", "Update Nowza to keep talking.", minimumBuild === undefined ? {} : { minimumBuild });
 }
 
 // Checks a relay request's headers before it opens a stream or joins anything

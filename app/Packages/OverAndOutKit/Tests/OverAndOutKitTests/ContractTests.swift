@@ -86,7 +86,7 @@ struct ContractTests {
     }
 
     @Test func theServiceConfigDecodesAndOnlyAnApprovedRelayIsUsed() throws {
-        let bundled = URL(string: "https://relay-1.overandout.app")!
+        let bundled = URL(string: "https://relay-1.nowza.app")!
         let suite = "contract-tests-\(UUID().uuidString)"
         defer { UserDefaults().removePersistentDomain(forName: suite) }
         let old = ClientIdentity(kind: .ios, version: "1.0", build: "160")
@@ -97,19 +97,22 @@ struct ContractTests {
         #expect(!store.upgradeRequired)
         // A later config: another of our relays, a minimum this build is below, fields it doesn't know.
         #expect(store.update(with: try Self.data("examples/future/config.json")) != nil)
-        #expect(store.relayBaseURL == URL(string: "https://relay-us.overandout.app"))
+        #expect(store.relayBaseURL == URL(string: "https://relay-us.nowza.app"))
         #expect(store.upgradeRequired)
         #expect(ServiceConfigStore(bundledRelay: bundled, suiteName: suite, identity: old).upgradeRequired, "kept between launches")
         // Never a relay that isn't ours, nor garbage.
         #expect(store.update(with: Data(#"{"schemaVersion":1,"relay":{"baseUrl":"https://relay.example.com","protocols":[2],"audioFormats":[2],"codecs":["opus16k"]}}"#.utf8)) != nil)
         #expect(store.relayBaseURL == bundled)
         #expect(store.update(with: Data("not json".utf8)) == nil)
-        #expect(ServiceConfigStore.approved(URL(string: "http://relay-2.overandout.app")!, bundled: bundled) == false)
-        #expect(ServiceConfigStore.approved(URL(string: "https://evil-overandout.app")!, bundled: bundled) == false)
+        #expect(ServiceConfigStore.approved(URL(string: "http://relay-2.nowza.app")!, bundled: bundled) == false)
+        #expect(ServiceConfigStore.approved(URL(string: "https://evil-nowza.app")!, bundled: bundled) == false)
+        #expect(ServiceConfigStore.approved(URL(string: "https://evilnowza.app")!, bundled: bundled) == false)
+        // Nor one on overandout.app, the domain before the rename (2026-10-09), now retired.
+        #expect(ServiceConfigStore.approved(URL(string: "https://relay-1.overandout.app")!, bundled: bundled) == false)
         // A relay that can't speak this build's protocol, or only the retired format 1, isn't used either.
-        #expect(store.update(with: Data(#"{"schemaVersion":1,"relay":{"baseUrl":"https://relay-3.overandout.app","protocols":[3],"audioFormats":[2],"codecs":["opus16k"]}}"#.utf8)) != nil)
+        #expect(store.update(with: Data(#"{"schemaVersion":1,"relay":{"baseUrl":"https://relay-3.nowza.app","protocols":[3],"audioFormats":[2],"codecs":["opus16k"]}}"#.utf8)) != nil)
         #expect(store.relayBaseURL == bundled)
-        #expect(store.update(with: Data(#"{"schemaVersion":1,"relay":{"baseUrl":"https://relay-3.overandout.app","protocols":[2],"audioFormats":[1],"codecs":["opus16k"]}}"#.utf8)) != nil)
+        #expect(store.update(with: Data(#"{"schemaVersion":1,"relay":{"baseUrl":"https://relay-3.nowza.app","protocols":[2],"audioFormats":[1],"codecs":["opus16k"]}}"#.utf8)) != nil)
         #expect(store.relayBaseURL == bundled)
     }
 

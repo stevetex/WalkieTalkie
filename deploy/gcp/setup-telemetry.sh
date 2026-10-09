@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # The Beta telemetry's Google Cloud setup (the "Over&Out Beta telemetry spec" Claude Doc):
 # TTL policies on the diagnostics and feedback collections, then the log-based metrics, the
-# "Over&Out Beta" dashboard and the alert policies (telemetry-monitoring.ts). Safe to re-run:
+# "Nowza Beta" dashboard and the alert policies (telemetry-monitoring.ts). Safe to re-run:
 # it updates what exists. Needs the email channel setup-uptime.sh creates.
 #
 #   deploy/gcp/setup-telemetry.sh
