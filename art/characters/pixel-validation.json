@@ -196,5 +196,16 @@
     ],
     "iconForegroundOutsideCircle": 0,
     "iconForegroundRadiusPx": 492.27
+  },
+  {
+    "id": "19-cow",
+    "alphaBounds": [
+      141,
+      46,
+      1121,
+      1208
+    ],
+    "iconForegroundOutsideCircle": 0,
+    "iconForegroundRadiusPx": 483.32
   }
 ]

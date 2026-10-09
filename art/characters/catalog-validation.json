@@ -183,5 +183,20 @@
     "name": "18-pirate-Watch",
     "exitCode": 0,
     "assetsCar": true
+  },
+  {
+    "name": "19-cow-iPhone",
+    "exitCode": 0,
+    "assetsCar": true
+  },
+  {
+    "name": "19-cow-Watch",
+    "exitCode": 0,
+    "assetsCar": true
+  },
+  {
+    "name": "19-cow-screen-art",
+    "exitCode": 0,
+    "assetsCar": true
   }
 ]

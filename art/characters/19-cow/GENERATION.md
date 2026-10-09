@@ -1,0 +1,13 @@
+# Cow provenance — October 9, 2026
+
+The built-in image generation tool produced the review comp from the original radio mascot and Fox as an animal-style reference. Steve approved the **first comp's lighter warm charcoal spots**, reversing a later black-spot correction. `master.png` is the approved comp's original 1254 × 1254 transparent PNG, copied without edits. No CLI image-generation fallback was used.
+
+## Exact approved-comp prompt
+
+Use case: stylized-concept. Asset type: review concept for the Nowza robot walkie-talkie mascot collection. Image 1 is the base mascot whose identity and proportions must be preserved. Image 2 is a style reference for how animal features are added to this existing radio mascot, not a fox to reproduce. Create ONE cow variation of the base radio mascot: warm porcelain/ivory casing with a few bold irregular near-black Holstein cow spots, short cream horns on top, soft cow ears with dusty rose pink interiors, and a small rounded dusty rose pink muzzle with two dark nostrils just beneath the knob eyes and above the speaker. Retain the tall tapered radio-body silhouette, black rotary knob eyes with cream diagonal indicators, enormous dark circular speaker mouth with silver rim, angled radio antenna, orange side push-to-talk button, thick near-black outlines, and simple clean cartoon shading. Cow markings should be on the casing, not cover the eyes or speaker; do not make a generic cow with legs. Match the existing collection's retro-futurist cartoon artwork exactly in feel. Friendly and slightly goofy. Center the whole character on a square transparent canvas with clear margins so horns, ears and antenna are fully visible. Genuine alpha transparency. No text, labels, wordmark, costume, scenery, shadow on the background, border, or icon mask. This is a concept to review, not a finished app screen.
+
+## Mechanical exports and size
+
+`bash art/characters/export-cow.sh` uniformly scales the approved master with the collection's existing `icon-from-master.swift` compositor: 872 px content height, 68 px top inset, no horizontal offset, flat indigo `#272D50`. This is a size/background export, with no redrawing or recoloring. Other sizes and 300 DPI metadata are exported with `sips`.
+
+At 1024 px, the radio casing's cross-section at row 819 is 547 px versus the existing collection's 576 px median (5.03% smaller), within the collection's size range. The full silhouette's largest foreground radius is 483.32 px, inside the circular crop. The approved ears, horns and antenna remain visible. The merch export preserves the master's exact pixels.
