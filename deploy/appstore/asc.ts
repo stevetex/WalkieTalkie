@@ -15,6 +15,10 @@
 //       again to see the review's state. Apple emails when the review is done; then the group's
 //       testers (and its public link) get the build.
 //
+//   node deploy/appstore/asc.ts withdraw <build> [--group "Early Testers"]
+//       Takes a build back from the external group, approved or not (the API can't cancel a
+//       Beta App Review submission). Its testers keep the group's other builds.
+//
 //   node deploy/appstore/asc.ts add-tester <email> [first name] [last name]
 //       Adds someone to the internal group. Internal testers must already be users on the
 //       App Store Connect team (Users and Access), with any role.
@@ -248,6 +252,21 @@ switch (command) {
       data: { type: "betaAppReviewSubmissions", relationships: { build: { data: { type: "builds", id: found.id } } } },
     });
     console.log(`Submitted for Beta App Review: ${submission.data.attributes.betaReviewState}. Apple emails when it's reviewed (often within a day).`);
+    break;
+  }
+  case "withdraw": {
+    const build = args[0] ?? fail('usage: withdraw <build> [--group "Early Testers"]');
+    const name = values.group || config.ASC_EXTERNAL_GROUP || "Early Testers";
+    const app = await appId();
+    const found = await findBuild(app, build);
+    if (!found) fail(`No build ${build} in App Store Connect.`);
+    const groups = await api("GET", `/v1/apps/${app}/betaGroups?limit=50`);
+    const group = groups.data.find((g: any) => g.attributes.name === name && !g.attributes.isInternalGroup);
+    if (!group) fail(`No external group named "${name}".`);
+    await api("DELETE", `/v1/betaGroups/${group.id}/relationships/builds`, { data: [{ type: "builds", id: found.id }] });
+    const left = await api("GET", `/v1/betaGroups/${group.id}/builds?limit=20`);
+    const versions = left.data.map((b: any) => b.attributes.version).join(", ") || "none";
+    console.log(`Took build ${build} back from "${name}"; it now has builds: ${versions}.`);
     break;
   }
   case "add-tester": {
