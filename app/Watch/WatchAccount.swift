@@ -98,6 +98,7 @@ final class WatchAccount: NSObject, ObservableObject {
     /// friends list reloaded, and the service's config read again (never on the ring path).
     func refresh() {
         guard session != nil, let client else { return askPhoneForSession() }
+        if !hasKeys { askPhoneForSession() }
         Task {
             await AppSettings.config.refresh(apiBase: client.baseURL)
             upgradeRequired = upgradeRequired || AppSettings.config.upgradeRequired
@@ -112,6 +113,12 @@ final class WatchAccount: NSObject, ObservableObject {
                 print("[oao] account refresh failed: \(error.localizedDescription)")
             }
         }
+    }
+
+    /// Only the friends list (and so their keys), for a Talk whose keys looked stale.
+    func refreshFriends() async {
+        guard session != nil, let client, let loaded = try? await client.friends() else { return }
+        setFriends(loaded)
     }
 
     /// Off the main actor, after a refresh. Telemetry: queued events, and the diagnostics log
@@ -196,17 +203,39 @@ final class WatchAccount: NSObject, ObservableObject {
         if askPhone { askPhoneForSession() }
     }
 
-    /// Tells the iPhone this watch's device ID and whether it needs a session. If the iPhone
-    /// is reachable, also asks straight away and takes the reply.
+    /// Signed in with this watch's device certificate. A watch signed in before E2EE (build
+    /// 246) has a session but no certificate; it registers without keys, and friends' senders
+    /// then refuse the whole account (`no-current-key`).
+    private var hasKeys: Bool {
+        guard let session else { return false }
+        return (try? e2ee.sender(userId: session.userId, deviceId: deviceId)) != nil
+    }
+
+    /// Signed in without keys: the account whose certificates the iPhone is asked for (only
+    /// those, so this session stays).
+    private var needsKeysFor: String? {
+        guard let session, !hasKeys else { return nil }
+        return session.userId
+    }
+
+    /// Tells the iPhone this watch's device ID and whether it needs a session, or only its
+    /// certificates. If the iPhone is reachable, also asks straight away and takes the reply.
     func askPhoneForSession() {
-        guard session == nil, WCSession.isSupported(), WCSession.default.activationState == .activated else { return }
+        guard session == nil || needsKeysFor != nil, WCSession.isSupported(),
+              WCSession.default.activationState == .activated else { return }
         updateContext()
         guard WCSession.default.isReachable else { return }
-        let requestId = sessionRequestId ?? UUID().uuidString.lowercased()
-        sessionRequestId = requestId
         let signingKey = try? e2ee.watchSigningKey(deviceId: deviceId)
-        var request: [String: Any] = [WatchLink.request: WatchLink.sessionRequest, WatchLink.deviceId: deviceId,
-                                      WatchLink.requestId: requestId, WatchLink.schemaVersion: WatchLink.currentSchemaVersion]
+        var request: [String: Any] = [WatchLink.deviceId: deviceId, WatchLink.schemaVersion: WatchLink.currentSchemaVersion]
+        if let account = needsKeysFor {
+            request[WatchLink.request] = WatchLink.keysRequest
+            request[WatchLink.keysFor] = account
+        } else {
+            let requestId = sessionRequestId ?? UUID().uuidString.lowercased()
+            sessionRequestId = requestId
+            request[WatchLink.request] = WatchLink.sessionRequest
+            request[WatchLink.requestId] = requestId
+        }
         request[WatchLink.signingKey] = signingKey
         // Both handlers run on a WatchConnectivity queue, so they're @Sendable, not main-actor.
         WCSession.default.sendMessage(request) { @Sendable [weak self] reply in
@@ -221,6 +250,7 @@ final class WatchAccount: NSObject, ObservableObject {
         guard WCSession.isSupported(), WCSession.default.activationState == .activated else { return }
         var context: [String: Any] = [WatchLink.deviceId: deviceId, WatchLink.needsSession: session == nil,
                                       WatchLink.schemaVersion: WatchLink.currentSchemaVersion]
+        context[WatchLink.keysFor] = needsKeysFor
         context[WatchLink.signingKey] = try? e2ee.watchSigningKey(deviceId: deviceId)
         try? WCSession.default.updateApplicationContext(context)
     }
@@ -228,7 +258,9 @@ final class WatchAccount: NSObject, ObservableObject {
     private func handle(_ message: PhoneMessage) {
         if let new = message.session, new.deviceId == deviceId {
             guard let phone = message.phoneCert, let device = message.deviceCert else {
-                askPhoneForSession()
+                // Signed in already: keep that session, and don't ask in a loop (the next
+                // launch or foreground asks again).
+                if session == nil { askPhoneForSession() }
                 return
             }
             do {
@@ -239,6 +271,19 @@ final class WatchAccount: NSObject, ObservableObject {
                 return
             }
             adopt(new)
+        } else if message.session == nil, let phone = message.phoneCert, let device = message.deviceCert,
+                  let current = session, needsKeysFor == current.userId {
+            // Only the certificates, for this session: register again, now with keys.
+            do {
+                _ = try e2ee.prepareWatch(userId: current.userId, deviceId: deviceId, phoneCert: phone,
+                                          deviceCert: device, now: Int64(Clock.nowMs()))
+            } catch {
+                print("[oao] watch key provisioning failed: \(error)")
+                return
+            }
+            Telemetry.shared.event("watchKeysProvisioned", [:])
+            updateContext()
+            onSessionChanged?(current)
         } else if message.signedOut {
             phoneSignedIn = false
             guard session != nil else { return }

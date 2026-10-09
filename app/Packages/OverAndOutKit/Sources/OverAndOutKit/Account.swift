@@ -680,13 +680,19 @@ public enum WatchLink {
     /// The same request again (a retry, or the same request by message, user info and context)
     /// gets the same session.
     public static let requestId = "requestId"
+    /// Watch → iPhone, signed in without certificates (signed in before E2EE): ["request": "keys",
+    /// "deviceId": …, "keysFor": its account ID, "signingKey": …]. The iPhone answers with only
+    /// the certificates, so the watch's session stays (a new one would end it mid-request).
+    /// Also in the watch's application context while it waits.
+    public static let keysRequest = "keys"
+    public static let keysFor = "keysFor"
     /// iPhone → watch: ["session": Data], or ["signedOut": true]
     public static let session = "session"
     public static let signedOut = "signedOut"
     public static let signingKey = "signingKey"
     public static let phoneCert = "phoneCert"
     public static let deviceCert = "deviceCert"
-    /// Application context, both ways: iPhone ["signedIn": Bool]; watch ["deviceId": …, "needsSession": Bool]
+    /// Application context, both ways: iPhone ["signedIn": Bool]; watch ["deviceId": …, "needsSession": Bool, "keysFor": …]
     public static let signedIn = "signedIn"
     public static let needsSession = "needsSession"
     public static let schemaVersion = "schemaVersion"
