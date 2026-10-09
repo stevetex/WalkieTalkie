@@ -10,6 +10,11 @@ export const RELAY_PROTOCOLS = [2] as const;
 // (plaintext) was retired by E2EE_SPEC.md's PR D; builds that speak only it are told to update.
 export const AUDIO_FORMATS = [2] as const;
 
+// The build the service's own clients (the Canary, the bot and test tools) say they are. They
+// speak the current contract, and admission compares builds with MINIMUM_BUILDS before it knows
+// the account, so they must never fall below a minimum.
+export const SERVICE_CLIENT_BUILD = "999999";
+
 export const CLIENT_KINDS = ["ios", "watchos", "android", "wearos"] as const;
 export type ClientKind = (typeof CLIENT_KINDS)[number];
 export const FORM_FACTORS = ["phone", "watch"] as const;
