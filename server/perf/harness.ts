@@ -4,9 +4,10 @@
 // Every Talk is format 2 (E2EE_SPEC.md), as the apps send it: each person's device registers
 // real certificates, and bursts are sealed to the friend's keys and opened by the listener. The
 // keys stay in this process (a registry by account), so sealing doesn't ask the API. Sealing a
-// burst (its bundle and every frame) happens before its press is timed, so the timings are the
-// relay's and the network's, not the bot's crypto; a listener opens each frame as it arrives
-// (microseconds for a 60-byte frame).
+// burst (its bundle and every frame) happens before its press is timed, so press-to-grant
+// timings are the relay's and the network's, not the bot's crypto. Timings measured from an
+// earlier event (C's turn gap, from the previous release) do include it: about a millisecond.
+// A listener opens each frame as it arrives (microseconds for a 60-byte frame).
 
 import { fork, type ChildProcess } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";

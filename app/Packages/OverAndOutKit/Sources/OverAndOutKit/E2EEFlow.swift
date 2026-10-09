@@ -35,7 +35,8 @@ public final class E2EEFlow {
     /// retired, so a friend with no current key can't be talked to (`noCurrentKey`): never
     /// plaintext instead. It's sealed to each listed device with a valid, unexpired key; one
     /// without (a watch left unused past its key's 30 days) is left out, as the relay leaves it
-    /// out of the ring. The directory lists only devices with keys.
+    /// out of the ring. The directory lists only devices with keys; a device listed twice is
+    /// sealed to once (its first usable key).
     public func start(peer: String, conversationId: String?, burstId: String, codec: String,
                       keys freshKeys: FriendKeys? = nil, now: Int64) throws -> (control: [String: Any], conversationId: String) {
         sending = nil

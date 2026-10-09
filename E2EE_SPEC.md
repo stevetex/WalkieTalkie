@@ -377,7 +377,8 @@ Store launch while every tester can be told to update.
   minimum (Early Testers have only 216 and 208 since 246 was withdrawn), and they need a build
   to update to; then `MINIMUM_BUILDS='{"ios":<that build>,"watchos":<that build>}'` in
   `deploy/gcp/config.sh`; then the API, relay and website deploys together. Until the services
-  are deployed, the new build works with the current ones (they carry format 2 already).
+  are deployed, the new build works with the current ones (they carry format 2 already), except
+  that until then a friend with a device left without keys can't be talked to, as with build 246.
 - **Unfriending mid-conversation:** a Talk refused as `not-friends` now ends the conversation
   for both (`conversation-ended`), as format 1's path did; PR B's format 2 path only refused
   the sender.
