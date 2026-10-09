@@ -1,4 +1,4 @@
-# Over&Out character collection
+# Nowza character collection
 
 Eighteen characters based on the approved lineup and subsequent additions. Open [preview.html](preview.html) to compare transparent artwork, iPhone and circular Watch previews, and 48-pixel icon exports. Each numbered folder is a self-contained asset set. All 18 characters are available in the iPhone avatar picker, with matching avatar artwork bundled in both apps.
 

@@ -1,8 +1,8 @@
 {
-  "brand": "Over&Out",
+  "brand": "Nowza",
   "direction": "09 Chrome Tomorrow",
   "created": "2026-09-27",
-  "asset_count": 41,
+  "asset_count": 42,
   "assets": [
     {
       "path": "documentation/over-and-out-avatar-512.png",
@@ -20,7 +20,7 @@
       "mode": "RGBA",
       "alpha": true,
       "dpi": null,
-      "sha256": "23fd27fc1e7a13a65320d32310edc54535c3f00a326235433ec580e3bdf831f4"
+      "sha256": "4d23d3bba7946c87ae4227c2fd1b427b990c362e0ee1409ba662b1c77d5869f8"
     },
     {
       "path": "documentation/over-and-out-horizontal-1800.png",
@@ -29,7 +29,7 @@
       "mode": "RGBA",
       "alpha": true,
       "dpi": null,
-      "sha256": "b789bdd483c86a73e191dc29d0fc5740ea622a63649238981d5235d071b16597"
+      "sha256": "93e06e5fc77d994c9398153aa1fe83ef1f9c21219cedad570754a4c4a49dd43d"
     },
     {
       "path": "documentation/over-and-out-horizontal-600.png",
@@ -38,7 +38,7 @@
       "mode": "RGBA",
       "alpha": true,
       "dpi": null,
-      "sha256": "d46f91065942903827e650aa618be6eab40ede2e9ac726339924ba1f90958859"
+      "sha256": "6d151d14c967676cafb55dbcb831414f865f1993557bf0b5d11dc4cab388528f"
     },
     {
       "path": "icons/Watch.xcassets/AppIcon.appiconset/OverAndOut-1024.png",
@@ -227,7 +227,7 @@
       "mode": "RGB",
       "alpha": false,
       "dpi": null,
-      "sha256": "20d6bd2997fb05878dd4434c7aa3de712a813630fd7ddcbea15941d6fbc2d579"
+      "sha256": "d901e3d7cdbe265d018fc87adfb0c9e86bbb52828013376d22f1dba4aee3a9c2"
     },
     {
       "path": "masters/icon-indigo.png",
@@ -245,7 +245,7 @@
       "mode": "RGBA",
       "alpha": true,
       "dpi": null,
-      "sha256": "e65298795b6474845564dc4b0dcd22c0c1e648153703177d0fb899e66cee0d0e"
+      "sha256": "8a1e97388a6f200b9a4151eb1751d621890f13b5d1c129a75de5c4bab457aac0"
     },
     {
       "path": "masters/mascot-color.png",
@@ -266,6 +266,15 @@
       "sha256": "dc75fdb74e083cfd35c4285308f8d8e7c41dfd2cb9c303b680e4597d631123c3"
     },
     {
+      "path": "masters/mascot-talk-2x.png",
+      "width": 1524,
+      "height": 2368,
+      "mode": "RGBA",
+      "alpha": true,
+      "dpi": null,
+      "sha256": "96c4a7fd311ebda785606a12caff343d5fe55915a6624acec02852a59887c404"
+    },
+    {
       "path": "merch/lockup-horizontal-dark-300dpi.png",
       "width": 2172,
       "height": 724,
@@ -275,7 +284,7 @@
         299.9994,
         299.9994
       ],
-      "sha256": "072f50d7a6e450aa4fd272bfd249b38ba152910bd4a56e23c46cac38e903338f"
+      "sha256": "ef0440b59a3d5855787779d989fcd29f8855e61fb557f2305e8f3304a2475908"
     },
     {
       "path": "merch/mascot-color-300dpi.png",
@@ -317,7 +326,7 @@
       "mode": "RGB",
       "alpha": false,
       "dpi": null,
-      "sha256": "894c4db9896cacf7dc2d02142f9d33938a6b59340485db2a46e932f4a6d8e8c9"
+      "sha256": "d9280fda1bbd5f7921a7d23290998fb10dad3cf231328e2784a9eabdd1c13d64"
     },
     {
       "path": "screens/ScreenArt.xcassets/OverAndOutBrand.imageset/OverAndOutBrand@2x.png",
@@ -326,7 +335,7 @@
       "mode": "RGB",
       "alpha": false,
       "dpi": null,
-      "sha256": "79a1fb978d8a04a32a41b196ce77cf768ee35123cc48d80cca68a432b13a090a"
+      "sha256": "fdffc62f3bf9b6ca5c817b69e38c8fcc9e6107e6431dc7ac9c70fdb0919b6f5a"
     },
     {
       "path": "screens/ScreenArt.xcassets/OverAndOutBrand.imageset/OverAndOutBrand@3x.png",
@@ -335,7 +344,7 @@
       "mode": "RGB",
       "alpha": false,
       "dpi": null,
-      "sha256": "bbc608d75a96755dc3b4ce77e9199cb865e885a3cda2aee215028fe0a62e492e"
+      "sha256": "acf247fe66d09ab4a3ab39501df6751b9bd8748b7b5d1d5a9a12e1b51d527292"
     },
     {
       "path": "screens/ScreenArt.xcassets/OverAndOutMascot.imageset/OverAndOutMascot@1x.png",
@@ -371,7 +380,7 @@
       "mode": "RGB",
       "alpha": false,
       "dpi": null,
-      "sha256": "def21a15a67a563ac826daab7a3898020e01b89449dc900581a1959445b8230c"
+      "sha256": "e73c213d9f7156f7fcab5e970b252f5b9ce28b80eec23000320e524d9ed135ba"
     },
     {
       "path": "screens/mascot-transparent-1024.png",
@@ -382,5 +391,6 @@
       "dpi": null,
       "sha256": "0c191012e6505af267796a1610635786a430105dd01c160f66d948110e1913fd"
     }
-  ]
+  ],
+  "updated": "2026-10-09"
 }

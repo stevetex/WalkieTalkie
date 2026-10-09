@@ -24,7 +24,7 @@ struct AboutView: View {
                             .scaledToFit()
                             .frame(width: 160, height: 160)
                             .clipShape(RoundedRectangle(cornerRadius: 34, style: .continuous))
-                            .accessibilityLabel("Over&Out")
+                            .accessibilityLabel("Nowza")
                         Text("Watch Walkie Talkie")
                             .font(.title3.weight(.semibold))
                             .padding(.top, 8)

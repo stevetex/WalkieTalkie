@@ -1,0 +1,34 @@
+{
+  "date": "2026-10-09",
+  "name": "Nowza",
+  "nameBearingImages": [
+    "art/masters/brand-stacked-indigo.png",
+    "art/masters/lockup-horizontal-dark.png",
+    "art/screens/about-welcome-1024.png",
+    "art/merch/lockup-horizontal-dark-300dpi.png",
+    "art/documentation/over-and-out-horizontal-1200.png",
+    "art/documentation/over-and-out-horizontal-1800.png",
+    "art/documentation/over-and-out-horizontal-600.png",
+    "art/screens/ScreenArt.xcassets/OverAndOutBrand.imageset/OverAndOutBrand@1x.png",
+    "art/screens/ScreenArt.xcassets/OverAndOutBrand.imageset/OverAndOutBrand@2x.png",
+    "art/screens/ScreenArt.xcassets/OverAndOutBrand.imageset/OverAndOutBrand@3x.png",
+    "app/iOS/Assets.xcassets/OverAndOutBrand.imageset/OverAndOutBrand@1x.png",
+    "app/iOS/Assets.xcassets/OverAndOutBrand.imageset/OverAndOutBrand@2x.png",
+    "app/iOS/Assets.xcassets/OverAndOutBrand.imageset/OverAndOutBrand@3x.png",
+    "app/Watch/Assets.xcassets/OverAndOutBrand.imageset/OverAndOutBrand@1x.png",
+    "app/Watch/Assets.xcassets/OverAndOutBrand.imageset/OverAndOutBrand@2x.png",
+    "app/Watch/Assets.xcassets/OverAndOutBrand.imageset/OverAndOutBrand@3x.png",
+    "web/public/img/brand-512.jpg",
+    "web/public/img/brand-768.jpg"
+  ],
+  "updatedImageCount": 18,
+  "unchangedImageCount": 337,
+  "horizontalAlpha": [
+    0,
+    255
+  ],
+  "printPixelsIdentical": true,
+  "printDPI": 300,
+  "appCopiesMatchScreenCatalog": true,
+  "previewReferencesResolve": true
+}

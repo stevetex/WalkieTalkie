@@ -1,4 +1,4 @@
-# Over&Out artwork
+# Nowza artwork
 
 Approved direction: **09 — Chrome Tomorrow**, with rotary knob eyes and an oversized circular speaker mouth. September 27, 2026.
 
@@ -47,7 +47,9 @@ Use the separate mascot with native text for flexible layouts and accessibility.
 
 ## Documentation and wordmark
 
-The horizontal lockup has a transparent background and dark lettering, intended for white, ivory or other light backgrounds. Its native master is **2172 × 724 px**. The supplied wordmark is raster artwork; there is no associated font file or editable typeface. Brand spelling is **Over&Out**.
+The horizontal lockup has a transparent background and dark lettering, intended for white, ivory or other light backgrounds. Its native master is **2172 × 724 px**. The supplied wordmark is raster artwork; there is no associated font file or editable typeface. Brand spelling is **Nowza**.
+
+The name-bearing masters and exports were updated on October 9, 2026. Run `bash art/export-brand.sh` from the repo to refresh screen catalogs, copies in both apps, website mastheads, documentation headers and the merch lockup from the two masters. Legacy filenames (`over-and-out-horizontal-*`) and asset names (`OverAndOutBrand`) remain stable; their visible lettering now says Nowza. Icons and standalone mascots contain no product lettering. Historical reference boards retain the original name.
 
 The preview is a local HTML document with relative image paths. Keep the `art` directory intact when sharing it. It does not require a network connection.
 

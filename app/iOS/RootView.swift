@@ -99,7 +99,7 @@ struct Masthead: View {
             .frame(maxWidth: .infinity)
             .padding(.bottom, 4)
             .background(Brand.artIndigo.ignoresSafeArea(edges: .top))
-            .accessibilityLabel("Over&Out")
+            .accessibilityLabel("Nowza")
             .accessibilityAddTraits(.isHeader)
     }
 }
