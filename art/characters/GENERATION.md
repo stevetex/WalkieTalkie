@@ -125,3 +125,7 @@ Production transparent master from the approved pirate radio comp. Preserve the 
 ### Icon adaptation prompt
 
 Create a square opaque app icon adaptation of this exact approved honey pirate radio mascot. Preserve design and proportions, the black eyepatch on viewer RIGHT next to orange button, exposed knob eye on viewer LEFT, silver speaker rim and small Jolly Roger flag on upper-right antenna. Place entire character centered on uniform solid indigo #272D50 extending to all four canvas edges. CRITICAL: reduce character to fit ALL details including far upper-right flag INSIDE a centered circular safe region of diameter 84% of square canvas. Character overall height about 72% of canvas and centered as a complete silhouette; use generous indigo padding. No cropping of flag or antenna in circular Watch mask. No drawn circle, no rounded corners, no border, no text, no added props, no drop shadow. Preserve crisp bold cartoon linework and honey palette. Output opaque square image.
+
+## 19-cow — October 9, 2026
+
+Steve approved the first cow comp with lighter warm charcoal spots, before the black-spot correction. The master is copied unchanged. Exact prompt, provenance and deterministic size/background export parameters: [19-cow/GENERATION.md](19-cow/GENERATION.md). Run `bash art/characters/export-cow.sh` to reproduce the collection and app exports.

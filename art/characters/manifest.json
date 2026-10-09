@@ -2286,6 +2286,133 @@
     ]
   },
   {
+    "path": "19-cow/app/CharacterArt.xcassets/OAOCow.imageset/OAOCow@1x.png",
+    "width": 256,
+    "height": 256,
+    "mode": "RGBA",
+    "dpi": null,
+    "sha256": "f3d8173894c5b945d676d76488e52af87dcea7d4c04a2ddb1dc1ea364c11c20b",
+    "alphaExtrema": [
+      0,
+      255
+    ]
+  },
+  {
+    "path": "19-cow/app/CharacterArt.xcassets/OAOCow.imageset/OAOCow@2x.png",
+    "width": 512,
+    "height": 512,
+    "mode": "RGBA",
+    "dpi": null,
+    "sha256": "4c89fde98dd52ee7915f618e4f824f0bf831c2cda21cf4aa37fec245a7830f6f",
+    "alphaExtrema": [
+      0,
+      255
+    ]
+  },
+  {
+    "path": "19-cow/app/CharacterArt.xcassets/OAOCow.imageset/OAOCow@3x.png",
+    "width": 768,
+    "height": 768,
+    "mode": "RGBA",
+    "dpi": null,
+    "sha256": "3a2ac42f1b673e0bac63ea7b848ae8c995ad19749ce5149892bdbf50da443d06",
+    "alphaExtrema": [
+      0,
+      255
+    ]
+  },
+  {
+    "path": "19-cow/icons/Watch.xcassets/OAOCowIcon.appiconset/icon-1024.png",
+    "width": 1024,
+    "height": 1024,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "985a7c40de337df0fdd64cc053f46a4ecb893828234ebf51c0ef80f9495ef312"
+  },
+  {
+    "path": "19-cow/icons/exports/icon-180.png",
+    "width": 180,
+    "height": 180,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "6d44346a9a031d01ddf0ff01287e4bd65f2a2399b9d46cc1c66cea7ce330920a"
+  },
+  {
+    "path": "19-cow/icons/exports/icon-256.png",
+    "width": 256,
+    "height": 256,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "fb710866b3d3a987f55dcd8a0d0323587c5d675f2804e998fc123966426908c5"
+  },
+  {
+    "path": "19-cow/icons/exports/icon-48.png",
+    "width": 48,
+    "height": 48,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "1dd0acd7fb66abc28622ec1e9b67d7efb482944fb628a558efb503a04dee17b6"
+  },
+  {
+    "path": "19-cow/icons/exports/icon-512.png",
+    "width": 512,
+    "height": 512,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "362f8c77418218879edfcf41a193df7fafc4f55afb3b688c04943dc6c1fded5b"
+  },
+  {
+    "path": "19-cow/icons/exports/icon-96.png",
+    "width": 96,
+    "height": 96,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "9bfa23ace3cf36c578e50bb3dea699784352194fccb874ffff9f6ed44502c033"
+  },
+  {
+    "path": "19-cow/icons/iPhone.xcassets/OAOCowIcon.appiconset/icon-1024.png",
+    "width": 1024,
+    "height": 1024,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "985a7c40de337df0fdd64cc053f46a4ecb893828234ebf51c0ef80f9495ef312"
+  },
+  {
+    "path": "19-cow/icons/icon-1024.png",
+    "width": 1024,
+    "height": 1024,
+    "mode": "RGB",
+    "dpi": null,
+    "sha256": "985a7c40de337df0fdd64cc053f46a4ecb893828234ebf51c0ef80f9495ef312"
+  },
+  {
+    "path": "19-cow/master.png",
+    "width": 1254,
+    "height": 1254,
+    "mode": "RGBA",
+    "dpi": null,
+    "sha256": "f59de27322e71720a8b9e8c6dea40c85815287425b932e7ccac5d0bd332cbbe7",
+    "alphaExtrema": [
+      0,
+      255
+    ]
+  },
+  {
+    "path": "19-cow/merch/color-300dpi.png",
+    "width": 1254,
+    "height": 1254,
+    "mode": "RGBA",
+    "dpi": [
+      299.9994,
+      299.9994
+    ],
+    "sha256": "8152ce745f994b51a89515c9ee93e4eefd0fa94e76c33b8e90ce3922235cbb62",
+    "alphaExtrema": [
+      0,
+      255
+    ]
+  },
+  {
     "path": "reference/approved-lineup.png",
     "width": 1536,
     "height": 1024,

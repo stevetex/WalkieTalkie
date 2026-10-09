@@ -23,6 +23,7 @@ public enum Mascot: String, CaseIterable, Identifiable, Sendable {
     case bowLashesHoney = "bow-lashes-honey"
     case bowLashesCocoa = "bow-lashes-cocoa"
     case pirate
+    case cow
 
     public static let `default` = Mascot.honey
 
@@ -54,6 +55,7 @@ public enum Mascot: String, CaseIterable, Identifiable, Sendable {
         case .bowLashesHoney: return "Honey Bow & Lashes"
         case .bowLashesCocoa: return "Cocoa Bow & Lashes"
         case .pirate: return "Pirate"
+        case .cow: return "Cow"
         }
     }
 

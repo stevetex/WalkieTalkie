@@ -1,6 +1,6 @@
 # Nowza character collection
 
-Eighteen characters based on the approved lineup and subsequent additions. Open [preview.html](preview.html) to compare transparent artwork, iPhone and circular Watch previews, and 48-pixel icon exports. Each numbered folder is a self-contained asset set. All 18 characters are available in the iPhone avatar picker, with matching avatar artwork bundled in both apps.
+Nineteen characters based on the approved lineup and subsequent additions. Open [preview.html](preview.html) to compare transparent artwork, iPhone and circular Watch previews, and 48-pixel icon exports. Each numbered folder is a self-contained asset set. All 19 characters are available in the iPhone avatar picker, with matching avatar artwork bundled in both apps.
 
 Character 04 has a dusty rose pink ribbon, and 05 uses the same pink in its rabbit ears. Characters 16 and 17 are honey and cocoa versions of 04, both with pink ribbons. The pink target is `#D982A2`; highlight and shadow targets are in `palette.json`. Orange side buttons are retained. The reference lineup records the earlier sketches and therefore predates these updates.
 
@@ -19,6 +19,8 @@ Character 04 has a dusty rose pink ribbon, and 05 uses the same pink in its rabb
 `characters.json` maps the stable folder IDs, names and unique Xcode asset names. `manifest.json` records PNG dimensions, alpha, DPI and SHA-256 hashes. The approved sketch sheet is preserved in `reference/approved-lineup.png`.
 
 ## App integration
+
+Character 19, **Cow**, uses stored ID `cow` and image name `MascotCow`. It retains the approved lighter warm charcoal spots. Its radio casing is sized within 5.1 percent of the collection's median width; the ears, horns and antenna fit the circular avatar. Run `bash art/characters/export-cow.sh` to reproduce its exports. The approved master and exact generation prompt are in [19-cow](19-cow/GENERATION.md).
 
 The shared `Mascot` enum supplies the avatar picker and stored IDs. Each app bundles a matching `Mascot<Name>` imageset under `Assets.xcassets/Mascots`. Character 18, Pirate, uses the stored ID `pirate` and image name `MascotPirate`. Its eyepatch covers the viewer-right eye beside the orange button. The iPhone avatar is 288 pixels at 3×; the Watch avatar is 96 pixels at 2×, matching the existing collection.
 

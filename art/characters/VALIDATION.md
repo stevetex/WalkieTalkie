@@ -1,5 +1,14 @@
 # Character asset validation
 
+## Cow addition — October 9, 2026
+
+- Character 19 uses the approved original comp with lighter warm charcoal spots. Its 1254 × 1254 transparent master is byte-identical to that comp. Added 13 PNGs in `19-cow/` (248 collection PNGs total) and bundled 288 px/3× iPhone and 96 px/2× Watch avatars.
+- Radio casing width at row 819 of the 1024 px icon is 547 px, versus the other 18 icons' median of 576 px (5.03% smaller, within the collection's range). The full artwork is uniformly scaled by 0.7498, without distortion, to 872 px tall with a 68 px top inset. Foreground radius is at most 483.32 px; no foreground lies outside the 510 px circular check. Ears, horns and antenna are visible in the picker.
+- Transparent app art remains 256/512/768 px. Merch preserves the master's decoded pixels and genuine alpha with 300 DPI metadata. Both platform icon catalogs contain identical opaque 1024 px sources. Catalog and gallery references resolve; manifests and hashes are refreshed. All 271 previously inventoried collection/app PNGs are unchanged.
+- Cow's iPhone icon, Watch icon and reusable app-art catalogs compiled with `actool`. The full Swift 6 iPhone, Watch and notification-extension Debug simulator build succeeded with no Swift warnings or errors; only Xcode's existing AppIntents metadata-skipped warnings were emitted. All four `MascotTests` pass, including the Cow ID and asset name.
+- Installed and launched an isolated build on paired simulators with a disposable local relay/API. Opened the iPhone picker, compared Cow with other mascots, selected it, and confirmed the new avatar appears and survives app relaunch. Watch artwork is bundled and compiled; Cow was not separately exercised as a friend's avatar on Watch. No audio-path changes, device tests, latency measurements, TestFlight upload, or deployment.
+- Results are recorded in `cow-validation.json` and in the feasibility document's mascot design decision. Alternative runtime app-icon switching remains a separate feature.
+
 ## Original 17-character delivery — September 27, 2026
 
 - All 17 characters have a transparent native 1254 × 1254 master, a print export, a 1×/2×/3× imageset, and iPhone/Watch icon catalogs.

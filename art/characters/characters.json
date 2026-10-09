@@ -178,5 +178,15 @@
       1254,
       1254
     ]
+  },
+  {
+    "id": "19-cow",
+    "name": "Cow",
+    "detail": "ivory radio housing with lighter warm charcoal spots, cream horns, pink ears and muzzle",
+    "assetName": "OAOCow",
+    "nativeSize": [
+      1254,
+      1254
+    ]
   }
 ]

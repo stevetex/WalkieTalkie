@@ -1,0 +1,31 @@
+{
+  "date": "2026-10-09",
+  "approvedVersion": "original lighter warm charcoal spots",
+  "masterMatchesApprovedComp": true,
+  "unchangedPreviousPNGs": 271,
+  "collectionPNGCount": 248,
+  "printPixelsIdentical": true,
+  "printDPI": 300,
+  "iconForegroundRadiusPx": 483.32,
+  "sizing": {
+    "method": "radio-casing cross-section at y=819 in 1024-pixel icon; accessories excluded",
+    "existingMedianWidthPx": 576.0,
+    "cowWidthPx": 547,
+    "differencePercent": -5.03,
+    "uniformMasterScale": 0.7498,
+    "contentHeightPx": 872,
+    "topPx": 68
+  },
+  "catalogsCompiled": [
+    "iphone icon",
+    "watch icon",
+    "reusable app art"
+  ],
+  "mascotTests": {
+    "passed": 4,
+    "failed": 0
+  },
+  "simulatorBuild": "passed; no Swift compiler warnings",
+  "pickerSelection": "Cow selected on iPhone against disposable local API; displayed as current avatar",
+  "pickerChoiceSurvivesRelaunch": true
+}
