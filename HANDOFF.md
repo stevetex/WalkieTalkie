@@ -30,7 +30,7 @@ Read this first. Nowza: Walkie Talkie + Watch (called Over&Out: Watch Walkie Tal
   - Before submitting, the beta app description in App Store Connect still began "Over&Out is…"; it now says "Nowza is…", matching `beta-review-notes.md`.
   - The review notes (Test Bot link on `nowza.app/i/…`), feedback email, privacy and marketing URLs were already on Nowza.
   - Export compliance stays "exempt" (`ITSAppUsesNonExemptEncryption = NO`, CryptoKit; E2EE_SPEC.md).
-- **Done by Steve (2026-10-10):** App Store Connect URLs and TestFlight test information; overandout.app lapsing at GoDaddy; nowza@ mail checked. The rename has nothing left open but the Test Bot's greeting, still a macOS `say` voice (backlog: record a real one). The Test Bot's greeting is still a macOS `say` voice (backlog: record a real one).
+- **Done by Steve (2026-10-10):** App Store Connect URLs and TestFlight test information; overandout.app lapsing at GoDaddy; nowza@ mail checked. The rename has nothing left open. The Test Bot's greeting is now a real recording (Steve's voice, 2026-10-10): `art/audio/test-bot-greeting.wav` (6.25 s, 16 kHz mono, trimmed from 7.85 s with 15 ms fades; speech −19.7 dBFS RMS, peak −1.8 dBFS), encoded with `node tools/bot.ts greeting --wav art/audio/test-bot-greeting.wav` into `server/src/test-bot-greeting.opus` (313 frames). It's live once the relay is redeployed. The Test Bot's greeting is still a macOS `say` voice (backlog: record a real one).
 
 **2026-10-09 (evening): Nowza is live on nowza.app, and overandout.app is retired from Google Cloud.** PRs #63 (apps and services), #64 (website) and #65 (docs) are merged.
 - **Live, all on `57746e5`:** the relay (relay-1.nowza.app), the API, Ops and both stats jobs; the website is from #64.
