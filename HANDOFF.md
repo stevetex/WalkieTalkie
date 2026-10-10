@@ -22,7 +22,11 @@ Read this first. Nowza: Walkie Talkie + Watch (called Over&Out: Watch Walkie Tal
   - **Never run `test-account.ts keys`/`register-keys` for the bot:** new keys would replace the always-on Test Bot's registration.
   - The bot's session file names `https://walkie-talkie-relay.web.app` as its API (same site), so it needs no change.
   - If a conversation is still open (the 45 s idle timer), a send goes into it with no ring ("already live"). Tap End on the watch first.
-- **Still open:** App Store Connect URLs and TestFlight test information (ask); retake store screenshots `iphone-2-locked`, `iphone-5-friends` and `iphone-7-ring-choice`; Steve lets overandout.app lapse at GoDaddy and test-mails nowza@. The Test Bot's greeting is still a macOS `say` voice (backlog: record a real one).
+- **Store screenshots retaken and uploaded (2026-10-10, Steve's OK):** slides 2, 5 and 7 no longer show Over&Out, and slide 6 shows the current three-column picker with "19 mascots" (the cow). The store description says 19 too. All 11 are on version 1.0 (`asc.ts screenshots --replace`).
+  - Slide 2 is Steve's Lock Screen on build 274, sent through chat at 921×2000.
+  - Slides 5–7 are simulator captures of demo account Alex, seeded through `/v2` on a local relay (port 8097).
+  - For a watch to register in the simulator (so the ring-choice dialog shows), the watch app needs notifications and the microphone allowed, plus keys certified by the iPhone ("Sign In on Watch Again").
+- **Done by Steve (2026-10-10):** App Store Connect URLs and TestFlight test information; overandout.app lapsing at GoDaddy; nowza@ mail checked. The rename has nothing left open but the Test Bot's greeting, still a macOS `say` voice (backlog: record a real one). The Test Bot's greeting is still a macOS `say` voice (backlog: record a real one).
 
 **2026-10-09 (evening): Nowza is live on nowza.app, and overandout.app is retired from Google Cloud.** PRs #63 (apps and services), #64 (website) and #65 (docs) are merged.
 - **Live, all on `57746e5`:** the relay (relay-1.nowza.app), the API, Ops and both stats jobs; the website is from #64.

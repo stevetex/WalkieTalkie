@@ -226,7 +226,7 @@ slide("iphone-2-locked", "Talk without\nunlocking", "Friends play right away, ev
 slide("iphone-3-talk", "Hold to talk.\nLet go to listen.", nil, "phone-talking")
 slide("iphone-4-listen", "Hear them\nright away", "Back and forth, as long as you like", "phone-listening")
 slide("iphone-5-friends", "Only friends\ncan ring you", "Invite them with a link in Messages", "phone-friends")
-slide("iphone-6-picture", "Pick a photo\nor a mascot", "18 mascots to choose from", "phone-picture")
+slide("iphone-6-picture", "Pick a photo\nor a mascot", "19 mascots to choose from", "phone-picture")
 slide("iphone-7-ring-choice", "Your watch\nrings first", "Or choose your iPhone. Only one rings.", "phone-ring-choice")
 
 // Watch: the captures as they are, in App Store order.

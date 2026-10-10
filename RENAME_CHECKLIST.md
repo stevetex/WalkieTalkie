@@ -171,7 +171,7 @@ State on 2026-10-09:
   - the app name, the "Renamed" note and the keywords (with `phone`) were already updated on 2026-10-09; recheck duplicates only if the name or subtitle changes
   - remove the "being renamed" note
 - [x] **`deploy/appstore/creative-assets/compose.swift`** and its outputs: the text is "Walkie-talkie for iPhone + Apple Watch", with no name in the strings. Check that the UI captures it composes don't show "Over&Out" (for example About). Regenerate and get Steve's approval if they do. *(OCR of its outputs finds no old name.)*
-- [ ] **`deploy/appstore/screenshots/`:** retake any screenshot that shows the old name. *(OCR, 2026-10-09: `iphone-2-locked` (Lock Screen "Over&Out", from Steve's iPhone), `iphone-5-friends` and `iphone-7-ring-choice` (masthead and text). Retake after PR A merges.)*
+- [x] **`deploy/appstore/screenshots/`:** retake any screenshot that shows the old name. *(Done 2026-10-10: slides 2 (Steve's Lock Screen on build 274), 5 and 7 retaken (`a11dfcb`), and slide 6 for the 19th mascot, the cow; uploaded to version 1.0 with `asc.ts screenshots --replace`.)*
 - [x] **`deploy/appstore/asc.ts` and `testflight.sh`:** check for hard-coded names (scheme and archive names stay, per section 0). *(Only section 0 identifiers.)*
 
 ## 6. Docs and repo (PR C)
