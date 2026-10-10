@@ -47,7 +47,7 @@ Here's how it works:
 
 • Invite the people you want to hear from. Send a link through Messages. They choose whether to add you, and only accepted friends can ring you. You can block or report someone if you need to.
 
-Pick a screen name and a picture your friends will recognize: your own photo or one of Nowza's 19 mascots. They'll see it when you ring. Nowza doesn't keep recordings or a message history.
+Pick a screen name and a picture your friends will recognize: your own photo or one of Nowza's mascots. They'll see it when you ring. Nowza doesn't keep recordings or a message history.
 
 Start on your iPhone with Sign in with Apple. If you have an Apple Watch, install Nowza on it and it signs in from your iPhone.
 
