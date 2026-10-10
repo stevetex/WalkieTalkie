@@ -1,10 +1,30 @@
-# Handoff: Nowza (Over&Out until 2026-10-09) — live on nowza.app, overandout.app retired; next a TestFlight build; Phase 0 (v2 only) cutover complete, baseline tagged commercial-baseline-v2 (2026-10-01)
+# Handoff: Nowza (Over&Out until 2026-10-09) — live on nowza.app, overandout.app retired; TestFlight build 274 measured (runs 116–122); Phase 0 (v2 only) cutover complete, baseline tagged commercial-baseline-v2 (2026-10-01)
 
 Read this first. Nowza: Walkie Talkie + Watch (called Over&Out: Watch Walkie Talkie, on overandout.app, until 2026-10-09; Steve retired that domain, and only internal identifiers keep the old name, RENAME_CHECKLIST.md section 0) replaces Apple's Watch Walkie-Talkie app, which Apple removed in watchOS 27. The watch and iPhone apps work end to end through relay nodes on Google Cloud. **TestFlight build 0.1 (76)** (the Leave fix) is out to the internal group "House" (Steve, Helen, Cooper). **Beta telemetry's server side is live** (2026-09-29, by Steve's OK: the privacy policy, the API and the relay run `a85b15a` from branch `telemetry`; `setup-telemetry.sh` made the metrics, dashboard and alerts). The apps' side is TestFlight builds 79, 81, 84 and **0.1 (89)** (build 6, 2026-09-29: the watch rings first, the back-on banner, the frontmost-watch download); runs 56–63 on Steve's devices. **As of 2026-09-30, the newest was TestFlight build 102** (the watch's friends list and per-friend Talk screens, the first press talking at once over a stream the Talk screen opens, network marks; runs 64–72). Usage analytics is live too (the spec's "Usage analytics"; `beta.ts usage`, `beta.ts stats`). On production push a locked iPhone plays a message 0.89–1.17 s after the push is sent (runs 53, 55), and a watch tap plays it in 0.67 s (run 51). There are no secrets in this file; tokens and keys live in gitignored files, Secret Manager and `~/.appstoreconnect`, listed under Local config.
 
 ## Start here
 
-**Newest (2026-10-09, evening): Nowza is live on nowza.app, and overandout.app is retired from Google Cloud.** PRs #63 (apps and services), #64 (website) and #65 (docs) are merged.
+**Newest (2026-10-10): TestFlight build 274 (`da59c09`) is in "House", and E2EE device runs 116–122 are measured.** Steve has build 274; the app says Nowza, and talking works back and forth with Helen's watch and iPhone. The Ops header now says "Nowza Ops" (`69f6992`, deployed by Steve; the old heading split the name with a `<span>`, so text searches missed it).
+- **iPhone, locked, PushToTalk, hearing aids (runs 116–118, 122):**
+  - Push → first audio was 1.47, 2.29 and 5.19 s, then 1.20 s in 122 (runs 90–95 median 1.14 s).
+  - Push delivery was 0.88, 1.45 and 4.34 s for three rings within a minute, then 0.29 s after 8 minutes' rest. APNs seems to throttle back-to-back pushes (one data point), so **space iPhone test rings minutes apart.**
+  - Push received → first audio was 0.59–0.90 s.
+- **Watch, app closed, tap (runs 119–121):**
+  - Tap → first audio was 0.98, 0.46 and 0.73 s (median 0.73 s). Run 120 is the fastest closed-app answer so far.
+  - The extension prefetched every message 10–14 s before the tap. The spread comes from audio-session activation on the main queue (119: stalls after a cold launch).
+  - The join over the iPhone took 1.8–3.5 s, but it isn't on the first-audio path.
+- **E2EE cost:**
+  - iPhone: unseal 3–4 ms; first frame arrived → scheduled 3–11 ms (the 11 ms includes decode).
+  - Watch: prefetch unseal 5–12 ms.
+  - That's at or near the 10 ms target, and the feasibility doc has both rows.
+- **Ringing from this Mac:** `cd server && SPIKE_SERVER=https://relay-1.nowza.app node tools/bot.ts send --to Steve`.
+  - It needs `server/data/test-bot-keys.json`, the same keys as the relay's Test Bot (secret `test-bot-e2ee`). Steve copied it with `gcloud secrets versions access latest --secret=test-bot-e2ee`.
+  - **Never run `test-account.ts keys`/`register-keys` for the bot:** new keys would replace the always-on Test Bot's registration.
+  - The bot's session file names `https://walkie-talkie-relay.web.app` as its API (same site), so it needs no change.
+  - If a conversation is still open (the 45 s idle timer), a send goes into it with no ring ("already live"). Tap End on the watch first.
+- **Still open:** App Store Connect URLs and TestFlight test information (ask); retake store screenshots `iphone-2-locked`, `iphone-5-friends` and `iphone-7-ring-choice`; Steve lets overandout.app lapse at GoDaddy and test-mails nowza@. The Test Bot's greeting is still a macOS `say` voice (backlog: record a real one).
+
+**2026-10-09 (evening): Nowza is live on nowza.app, and overandout.app is retired from Google Cloud.** PRs #63 (apps and services), #64 (website) and #65 (docs) are merged.
 - **Live, all on `57746e5`:** the relay (relay-1.nowza.app), the API, Ops and both stats jobs; the website is from #64.
   - `https://nowza.app/v2/config` names relay-1.nowza.app, and invites are `https://nowza.app/i/<code>`.
   - The pages, AASA and www redirect load, and `config.sh` has `SUPPORT_EMAIL` nowza@.
