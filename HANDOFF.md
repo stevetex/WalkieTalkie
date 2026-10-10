@@ -26,6 +26,10 @@ Read this first. Nowza: Walkie Talkie + Watch (called Over&Out: Watch Walkie Tal
   - Slide 2 is Steve's Lock Screen on build 274, sent through chat at 921×2000.
   - Slides 5–7 are simulator captures of demo account Alex, seeded through `/v2` on a local relay (port 8097).
   - For a watch to register in the simulator (so the ring-choice dialog shows), the watch app needs notifications and the microphone allowed, plus keys certified by the iPhone ("Sign In on Watch Again").
+- **Build 274 submitted to Beta App Review for "Early Testers" (2026-10-10, Steve's OK):** state WAITING_FOR_REVIEW; check with `node deploy/appstore/asc.ts beta-review 274`, and Apple emails when it's done. Early Testers' older builds can't reach anything since overandout.app was retired, so they wait for this approval.
+  - Before submitting, the beta app description in App Store Connect still began "Over&Out is…"; it now says "Nowza is…", matching `beta-review-notes.md`.
+  - The review notes (Test Bot link on `nowza.app/i/…`), feedback email, privacy and marketing URLs were already on Nowza.
+  - Export compliance stays "exempt" (`ITSAppUsesNonExemptEncryption = NO`, CryptoKit; E2EE_SPEC.md).
 - **Done by Steve (2026-10-10):** App Store Connect URLs and TestFlight test information; overandout.app lapsing at GoDaddy; nowza@ mail checked. The rename has nothing left open but the Test Bot's greeting, still a macOS `say` voice (backlog: record a real one). The Test Bot's greeting is still a macOS `say` voice (backlog: record a real one).
 
 **2026-10-09 (evening): Nowza is live on nowza.app, and overandout.app is retired from Google Cloud.** PRs #63 (apps and services), #64 (website) and #65 (docs) are merged.
